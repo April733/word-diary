@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Word Diary — 完整设计文档</title>
+<style>
+  :root {
+    --bg: #f8f9fb;
+    --card: #fff;
+    --text: #1a1a2e;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --border: #e5e7eb;
+    --tag-bg: #eef2ff;
+    --tag-text: #4338ca;
+    --code-bg: #1e1e2e;
+    --code-text: #e2e8f0;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    background: var(--bg); color: var(--text); line-height:1.8;
+    max-width: 1000px; margin: 0 auto; padding: 40px 24px 120px;
+  }
+  h1 { font-size: 2.2rem; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  h2 {
+    font-size: 1.5rem; margin: 48px 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent);
+  }
+  h3 { font-size: 1.15rem; margin: 28px 0 10px; color: var(--accent); }
+  h4 { margin: 16px 0 6px; }
+  p, li { color: var(--muted); }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+  .subtitle { color: var(--muted); font-size: 1.05rem; margin-bottom: 32px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin: 16px 0;
+  }
+  .tag {
+    display: inline-block; background: var(--tag-bg); color: var(--tag-text);
+    font-size: .8rem; padding: 2px 10px; border-radius: 99px; margin: 2px 4px 2px 0;
+  }
+  .tag.green { background: #ecfdf5; color: #065f46; }
+  .tag.amber { background: #fffbeb; color: #92400e; }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0;
+    font-size: .92rem;
+  }
+  th, td {
+    border: 1px solid var(--border); padding: 10px 14px; text-align: left;
+  }
+  th { background: #f9fafb; font-weight: 600; color: var(--text); }
+  td { color: var(--muted); }
+
+  pre {
+    background: var(--code-bg); color: var(--code-text);
+    border-radius: 10px; padding: 20px 24px; overflow-x: auto;
+    font-size: .85rem; line-height: 1.7; margin: 12px 0;
+  }
+  code { font-family: "JetBrains Mono", "Fira Code", monospace; }
+  .inline-code {
+    background: #eef2ff; color: #4338ca; padding: 1px 6px;
+    border-radius: 4px; font-size: .88em;
+  }
+
+  .arch-block {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 700px) { .arch-block { grid-template-columns: 1fr; } }
+
+  .flow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:16px 0; }
+  .flow-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 16px; font-weight: 600; font-size: .92rem;
+  }
+  .flow-arrow { color: var(--accent); font-size: 1.2rem; }
+
+  .state-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin: 16px 0;
+  }
+  .state-node {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .state-node .num { font-size: 2rem; font-weight: 700; color: var(--accent); }
+  .state-node .label { font-size: .9rem; color: var(--muted); margin-top: 4px; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 28px; margin: 24px 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1><span>Word Diary</span> 完整设计文档</h1>
+<p class="subtitle">私有艾宾浩斯背单词系统 · 前后端分离 · 单人项目</p>
+
+<div class="toc">
+  <strong>目录</strong>
+  <ol style="margin-top:8px;">
+    <li><a href="#s1">业务概述</a></li>
+    <li><a href="#s2">数据库设计</a></li>
+    <li><a href="#s3">艾宾浩斯核心逻辑</a></li>
+    <li><a href="#s4">后端架构</a></li>
+    <li><a href="#s5">前端架构</a></li>
+    <li><a href="#s6">API 接口设计</a></li>
+    <li><a href="#s7">页面与路由规划</a></li>
+    <li><a href="#s8">部署架构</a></li>
+    <li><a href="#s9">开发路线</a></li>
+  </ol>
+</div>
+
+<!-- ========== 1 ========== -->
+<h2 id="s1">一、业务概述</h2>
+
+<h3>1.1 核心层级</h3>
+<div class="flow">
+  <span class="flow-box">用户</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">单词本</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">单词</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">艾宾浩斯学习计划</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">每日背诵/复习</span>
+</div>
+
+<h3>1.2 核心原则</h3>
+<div class="card">
+  <p><strong>① 纯私有：</strong>所有单词、单词本、学习进度全绑定用户 ID，无公共共享库。</p>
+  <p><strong>② 没学过的词绝不出现：</strong>只有用户手动录入的单词才进入学习计划，未录入生词全程隐身。</p>
+  <p><strong>③ 配置表驱动：</strong>复习间隔天数、学习状态由配置表统一管理，改表不改代码。</p>
+</div>
+
+<h3>1.3 业务流转总览</h3>
+<div class="flow">
+  <span class="flow-box">注册登录</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">创建单词本</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">录入单词</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">自动生成学习计划</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">初次学习</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">每日复习</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">熟记结业</span>
+</div>
+
+<!-- ========== 2 ========== -->
+<h2 id="s2">二、数据库设计</h2>
+
+<h3>2.1 表一览（7 张表）</h3>
+<table>
+  <tr><th>表名</th><th>类型</th><th>用途</th></tr>
+  <tr><td><code>wd_user</code></td><td><span class="tag">业务</span></td><td>用户账号</td></tr>
+  <tr><td><code>wd_word_book</code></td><td><span class="tag">业务</span></td><td>单词本，归属用户</td></tr>
+  <tr><td><code>wd_word</code></td><td><span class="tag">业务</span></td><td>私有单词，归属单词本</td></tr>
+  <tr><td><code>wd_learn_plan</code></td><td><span class="tag green">核心</span></td><td>每个单词的学习计划（进度、层级、复习时间）</td></tr>
+  <tr><td><code>wd_learn_record</code></td><td><span class="tag">记录</span></td><td>每次学习行为留痕</td></tr>
+  <tr><td><code>sys_ebbinghaus_node</code></td><td><span class="tag amber">配置</span></td><td>艾宾浩斯复习节点（间隔天数）</td></tr>
+  <tr><td><code>sys_learn_status</code></td><td><span class="tag amber">配置</span></td><td>学习状态字典（0-4）</td></tr>
+</table>
+
+<h3>2.2 核心表：wd_learn_plan</h3>
+<table>
+  <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+  <tr><td>id</td><td>bigint</td><td>主键</td></tr>
+  <tr><td>user_id</td><td>bigint</td><td>归属用户</td></tr>
+  <tr><td>notebook_id</td><td>bigint</td><td>归属单词本</td></tr>
+  <tr><td>word_id</td><td>bigint</td><td>关联单词</td></tr>
+  <tr><td>learn_status</td><td>tinyint</td><td>学习状态 0-4</td></tr>
+  <tr><td>current_level</td><td>tinyint</td><td>当前艾宾浩斯层级 0-6</td></tr>
+  <tr><td>first_study_time</td><td>datetime</td><td>首次学习时间（基准日）</td></tr>
+  <tr><td>next_review_time</td><td>datetime</td><td>下次复习时间（系统筛选依据）</td></tr>
+  <tr><td>review_times</td><td>int</td><td>累计复习次数</td></tr>
+</table>
+
+<h3>2.3 配置表：sys_ebbinghaus_node</h3>
+<table>
+  <tr><th>id (level)</th><th>node_name</th><th>day_interval</th><th>说明</th></tr>
+  <tr><td>1</td><td>第1次复习</td><td>1</td><td>初学后第 1 天</td></tr>
+  <tr><td>2</td><td>第2次复习</td><td>2</td><td>初学后第 2 天</td></tr>
+  <tr><td>3</td><td>第3次复习</td><td>4</td><td>初学后第 4 天</td></tr>
+  <tr><td>4</td><td>第4次复习</td><td>7</td><td>初学后第 7 天</td></tr>
+  <tr><td>5</td><td>第5次复习</td><td>15</td><td>初学后第 15 天</td></tr>
+  <tr><td>6</td><td>第6次复习</td><td>30</td><td>初学后第 30 天（最高层级）</td></tr>
+</table>
+
+<h3>2.4 配置表：sys_learn_status</h3>
+<table>
+  <tr><th>status</th><th>status_name</th><th>含义</th></tr>
+  <tr><td>0</td><td>未学习</td><td>刚录入，尚未初次学习</td></tr>
+  <tr><td>1</td><td>已初学</td><td>完成初次学习，等待第 1 次复习</td></tr>
+  <tr><td>2</td><td>复习中</td><td>正在艾宾浩斯复习周期中</td></tr>
+  <tr><td>3</td><td>已熟记</td><td>走完 30 天周期，结业</td></tr>
+  <tr><td>4</td><td>遗忘重学</td><td>复习未通过，重置回待初学状态</td></tr>
+</table>
+
+<h3>2.5 ER 关系</h3>
+<pre>
+wd_user  1 ──── N  wd_word_book  1 ──── N  wd_word
+   │                    │                    │
+   │                    │                    │
+   └──────────── 1:1 ───┴────────────────────┘
+                        │
+                   wd_learn_plan  ──── N:1 ──── sys_ebbinghaus_node
+                        │                         sys_learn_status
+                        │
+                   wd_learn_record
+</pre>
+
+<!-- ========== 3 ========== -->
+<h2 id="s3">三、艾宾浩斯核心逻辑</h2>
+
+<h3>3.1 状态机</h3>
+<div class="state-grid">
+  <div class="state-node"><div class="num">0</div><div class="label">未学习</div></div>
+  <div class="state-node"><div class="num">1</div><div class="label">已初学</div></div>
+  <div class="state-node"><div class="num">2</div><div class="label">复习中</div></div>
+  <div class="state-node"><div class="num">3</div><div class="label">已熟记 ✓</div></div>
+  <div class="state-node"><div class="num">4</div><div class="label">遗忘重学</div></div>
+</div>
+
+<div class="flow" style="justify-content:center;">
+  <span class="flow-box">0 未学习</span><span class="flow-arrow">→</span>
+  <span class="flow-box">1 已初学</span><span class="flow-arrow">→</span>
+  <span class="flow-box">2 复习中</span><span class="flow-arrow">→</span>
+  <span class="flow-box">3 已熟记</span>
+</div>
+<div class="flow" style="justify-content:center; margin-top:0;">
+  <span class="flow-box">2 复习中</span><span class="flow-arrow">→</span>
+  <span class="flow-box">4 遗忘重学</span><span class="flow-arrow">→</span>
+  <span class="flow-box">0 未学习（重新开始）</span>
+</div>
+
+<h3>3.2 核心公式</h3>
+<div class="card">
+  <p><code>next_review_time = first_study_time + sys_ebbinghaus_node[current_level].day_interval</code></p>
+  <p style="margin-top:8px; font-size:.9rem;">注意：<span class="inline-code">day_interval</span> 是距离<strong>首次学习日期</strong>的天数，不是距上一次复习的天数。</p>
+</div>
+
+<h3>3.3 完整生命周期示例（单词 "apple"，7月5日录入）</h3>
+<table>
+  <tr><th>日期</th><th>事件</th><th>status</th><th>level</th><th>next_review_time</th><th>计算</th></tr>
+  <tr><td>7/5</td><td>录入，自动建计划</td><td>0</td><td>0</td><td>NULL</td><td>—</td></tr>
+  <tr><td>7/5</td><td>初次学习完成</td><td>1</td><td>1</td><td>7/6</td><td>7/5 + 1天</td></tr>
+  <tr><td>7/6</td><td>第1次复习 ✓</td><td>2</td><td>2</td><td>7/7</td><td>7/5 + 2天</td></tr>
+  <tr><td>7/7</td><td>第2次复习 ✓</td><td>2</td><td>3</td><td>7/9</td><td>7/5 + 4天</td></tr>
+  <tr><td>7/9</td><td>第3次复习 ✓</td><td>2</td><td>4</td><td>7/12</td><td>7/5 + 7天</td></tr>
+  <tr><td>7/12</td><td>第4次复习 ✓</td><td>2</td><td>5</td><td>7/20</td><td>7/5 + 15天</td></tr>
+  <tr><td>7/20</td><td>第5次复习 ✓</td><td>2</td><td>6</td><td>8/4</td><td>7/5 + 30天</td></tr>
+  <tr><td>8/4</td><td>第6次复习 ✓ 熟记！</td><td>3</td><td>6</td><td>—</td><td>到达最高层级，结业</td></tr>
+</table>
+
+<h3>3.4 遗忘流程</h3>
+<div class="card">
+  <p>假设 7/12 复习时<strong>没记住</strong>：</p>
+  <ul>
+    <li><code>learn_status</code> → 4（遗忘重学）</li>
+    <li><code>current_level</code> → 0（归零）</li>
+    <li><code>next_review_time</code> → NULL（清空）</li>
+    <li>单词重新出现在「待新学」列表，从头开始新一轮艾宾浩斯周期</li>
+    <li><code>first_study_time</code> 和 <code>review_times</code> 保留，不重置（用于统计）</li>
+  </ul>
+</div>
+
+<h3>3.5 每日推送规则</h3>
+<div class="card">
+  <p>系统每天筛选 <span class="inline-code">wd_learn_plan</span> 中满足以下条件的记录：</p>
+  <ul>
+    <li><code>user_id</code> = 当前用户</li>
+    <li><code>learn_status != 3</code>（排除已熟记）</li>
+    <li><code>next_review_time = 今天</code></li>
+  </ul>
+  <p style="margin-top:8px;">→ 推送到「今日复习」列表，前端展示为背诵卡片。</p>
+</div>
+
+<!-- ========== 4 ========== -->
+<h2 id="s4">四、后端架构</h2>
+
+<h3>4.1 技术栈</h3>
+<div>
+  <span class="tag">Java 21</span>
+  <span class="tag">Spring Boot 4.1</span>
+  <span class="tag">Spring AI 2.0</span>
+  <span class="tag">MyBatis 3.0</span>
+  <span class="tag">MySQL</span>
+  <span class="tag">Maven</span>
+  <span class="tag">Lombok</span>
+</div>
+
+<h3>4.2 项目结构</h3>
+<pre>
+src/main/java/spring/nexusfuture/word_diary/
+├── WordDiaryApplication.java        # 启动类
+├── common/                           # 公共模块
+│   ├── exception/                    # 全局异常处理 (@ControllerAdvice)
+│   ├── result/                       # 统一响应体 R&lt;T&gt;
+│   └── constant/                     # 常量定义
+├── config/                           # 配置
+│   ├── WebConfig.java                # CORS 跨域
+│   └── MyBatisConfig.java            # MyBatis 配置
+├── entity/                           # 实体（7个，对应7张表）
+│   ├── WdUser.java
+│   ├── WdWordBook.java
+│   ├── WdWord.java
+│   ├── WdLearnPlan.java
+│   ├── WdLearnRecord.java
+│   ├── SysEbbinghausNode.java
+│   └── SysLearnStatus.java
+├── dto/                              # 数据传输对象
+│   ├── request/                      # 入参 (LoginReq, WordAddReq, StudyReq...)
+│   └── response/                     # 出参 (UserVO, WordVO, StudyTaskVO...)
+├── mapper/                           # MyBatis Mapper
+│   ├── WdUserMapper.java
+│   ├── WdWordBookMapper.java
+│   ├── WdWordMapper.java
+│   ├── WdLearnPlanMapper.java
+│   ├── WdLearnRecordMapper.java
+│   ├── SysEbbinghausNodeMapper.java
+│   └── SysLearnStatusMapper.java
+├── service/                          # 业务逻辑
+│   ├── UserService.java
+│   ├── WordBookService.java
+│   ├── WordService.java
+│   ├── StudyService.java             # ★ 核心：状态机流转
+│   └── impl/                         # 实现类
+└── controller/                       # REST 接口
+    ├── UserController.java           # /api/user/*
+    ├── WordBookController.java       # /api/notebooks/*
+    ├── WordController.java           # /api/notebooks/{id}/words/*
+    └── StudyController.java          # /api/study/*
+</pre>
+
+<h3>4.3 分层职责</h3>
+<table>
+  <tr><th>层</th><th>职责</th><th>规则</th></tr>
+  <tr><td>Controller</td><td>接收请求、参数校验、调用 Service、返回 R&lt;T&gt;</td><td>不写业务逻辑</td></tr>
+  <tr><td>Service</td><td>核心业务逻辑、事务管理</td><td>一个 Service 可调用多个 Mapper</td></tr>
+  <tr><td>Mapper</td><td>数据库 CRUD</td><td>只做数据访问，不写业务</td></tr>
+  <tr><td>Entity</td><td>数据库表映射</td><td>纯 POJO，不暴露给前端</td></tr>
+  <tr><td>DTO</td><td>接口入参/出参</td><td>与 Entity 分离</td></tr>
+</table>
+
+<h3>4.4 统一响应体</h3>
+<pre>
+{
+  "code": 200,
+  "message": "success",
+  "data": { ... }
+}
+</pre>
+
+<h3>4.5 StudyService 核心方法</h3>
+<div class="card">
+  <table>
+    <tr><th>方法</th><th>触发场景</th><th>核心操作</th></tr>
+    <tr>
+      <td><code>generatePlan()</code></td>
+      <td>单词录入后自动调用</td>
+      <td>插入 wd_learn_plan，status=0, level=0</td>
+    </tr>
+    <tr>
+      <td><code>firstLearn()</code></td>
+      <td>用户完成初次学习</td>
+      <td>status→1, level→1, 记录 first_study_time, 计算 next_review_time</td>
+    </tr>
+    <tr>
+      <td><code>reviewRemember()</code></td>
+      <td>复习记住</td>
+      <td>review_times+1, level+1, 查配置表更新 next_review_time, 达最高层级→status=3</td>
+    </tr>
+    <tr>
+      <td><code>reviewForget()</code></td>
+      <td>复习遗忘</td>
+      <td>status→4, level→0, next_review_time=NULL</td>
+    </tr>
+    <tr>
+      <td><code>getTodayTasks()</code></td>
+      <td>查询今日待复习</td>
+      <td>筛选 next_review_time=今天 AND status!=3</td>
+    </tr>
+    <tr>
+      <td><code>getNewWords()</code></td>
+      <td>查询待新学单词</td>
+      <td>筛选 status=0</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ========== 5 ========== -->
+<h2 id="s5">五、前端架构</h2>
+
+<h3>5.1 技术栈</h3>
+<div>
+  <span class="tag">Vue 3</span>
+  <span class="tag">TypeScript</span>
+  <span class="tag">Vite</span>
+  <span class="tag">Vue Router 4</span>
+  <span class="tag">Pinia</span>
+  <span class="tag">Axios</span>
+  <span class="tag">TDesign</span>
+</div>
+
+<h3>5.2 项目结构</h3>
+<pre>
+frontend/
+├── index.html
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+├── .env.development              # 开发环境：API 代理到 localhost
+├── .env.production               # 生产环境：API 指向真实服务器
+└── src/
+    ├── main.ts                   # 入口
+    ├── App.vue                   # 根组件
+    ├── api/                      # Axios 接口封装（一个模块对应一个 Controller）
+    │   ├── user.ts               # 登录/注册
+    │   ├── notebook.ts           # 单词本 CRUD
+    │   ├── word.ts               # 单词 CRUD
+    │   └── study.ts              # 学习/复习
+    ├── views/                    # 页面组件
+    │   ├── LoginView.vue         # 登录/注册页
+    │   ├── DashboardView.vue     # 首页仪表盘
+    │   ├── NotebookListView.vue  # 单词本列表
+    │   ├── WordListView.vue      # 单词列表（录入/查看）
+    │   ├── StudyView.vue         # ★ 学习页（卡片翻转交互）
+    │   └── RecordView.vue        # 学习记录
+    ├── components/               # 通用组件
+    │   ├── WordCard.vue          # 单词卡片（正面单词/背面释义+例句）
+    │   ├── StudyProgress.vue     # 今日学习进度
+    │   └── AppLayout.vue         # 布局框架（侧边栏+顶栏）
+    ├── router/
+    │   └── index.ts              # 路由 + 导航守卫（未登录→/login）
+    ├── stores/
+    │   ├── user.ts               # 用户登录态（token、用户信息）
+    │   └── study.ts              # 当前学习会话状态
+    └── utils/
+        └── request.ts            # Axios 实例（baseURL、拦截器、token 注入）
+</pre>
+
+<h3>5.3 数据流</h3>
+<pre>
+用户操作 → Vue 组件 → api/*.ts → Axios → Spring Controller
+                                               ↓
+                                          Service（业务）
+                                               ↓
+                                          Mapper → MySQL
+                                               ↓
+                                         JSON 响应 ← Axios ← Vue 更新视图
+</pre>
+
+<!-- ========== 6 ========== -->
+<h2 id="s6">六、API 接口设计</h2>
+
+<h3>6.1 用户模块</h3>
+<table>
+  <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+  <tr><td>POST</td><td><code>/api/user/register</code></td><td>注册</td></tr>
+  <tr><td>POST</td><td><code>/api/user/login</code></td><td>登录，返回 token</td></tr>
+  <tr><td>GET</td><td><code>/api/user/info</code></td><td>获取当前用户信息</td></tr>
+</table>
+
+<h3>6.2 单词本模块</h3>
+<table>
+  <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+  <tr><td>POST</td><td><code>/api/notebooks</code></td><td>创建单词本</td></tr>
+  <tr><td>GET</td><td><code>/api/notebooks</code></td><td>我的单词本列表</td></tr>
+  <tr><td>GET</td><td><code>/api/notebooks/{id}</code></td><td>单词本详情</td></tr>
+  <tr><td>PUT</td><td><code>/api/notebooks/{id}</code></td><td>编辑单词本</td></tr>
+  <tr><td>DELETE</td><td><code>/api/notebooks/{id}</code></td><td>删除单词本</td></tr>
+</table>
+
+<h3>6.3 单词模块</h3>
+<table>
+  <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+  <tr><td>POST</td><td><code>/api/notebooks/{notebookId}/words</code></td><td>录入单词（自动生成学习计划）</td></tr>
+  <tr><td>GET</td><td><code>/api/notebooks/{notebookId}/words</code></td><td>单词本下单词列表</td></tr>
+  <tr><td>GET</td><td><code>/api/notebooks/{notebookId}/words/{id}</code></td><td>单词详情</td></tr>
+  <tr><td>DELETE</td><td><code>/api/notebooks/{notebookId}/words/{id}</code></td><td>删除单词</td></tr>
+</table>
+
+<h3>6.4 学习模块（核心）</h3>
+<table>
+  <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+  <tr><td>GET</td><td><code>/api/study/new-words</code></td><td>待新学单词列表（status=0）</td></tr>
+  <tr><td>GET</td><td><code>/api/study/today-review</code></td><td>今日复习列表（next_review_time=今天）</td></tr>
+  <tr><td>POST</td><td><code>/api/study/first-learn/{planId}</code></td><td>初次学习完成 → status 0→1</td></tr>
+  <tr><td>POST</td><td><code>/api/study/review/{planId}</code></td><td>复习完成，body: { result: 1记住 / 0遗忘 }</td></tr>
+  <tr><td>GET</td><td><code>/api/study/records</code></td><td>学习记录列表</td></tr>
+  <tr><td>GET</td><td><code>/api/study/stats</code></td><td>学习统计（累计/今日/熟记数）</td></tr>
+</table>
+
+<!-- ========== 7 ========== -->
+<h2 id="s7">七、页面与路由规划</h2>
+
+<table>
+  <tr><th>路由</th><th>页面</th><th>功能</th><th>需要登录</th></tr>
+  <tr><td><code>/login</code></td><td>LoginView</td><td>登录 / 注册切换</td><td>否</td></tr>
+  <tr><td><code>/dashboard</code></td><td>DashboardView</td><td>仪表盘：今日待学数、累计统计、快捷入口</td><td>是</td></tr>
+  <tr><td><code>/notebooks</code></td><td>NotebookListView</td><td>单词本列表，创建/编辑/删除</td><td>是</td></tr>
+  <tr><td><code>/notebooks/:id/words</code></td><td>WordListView</td><td>单词列表，录入新单词</td><td>是</td></tr>
+  <tr><td><code>/study</code></td><td>StudyView</td><td>★ 学习页：待新学 + 今日复习，卡片交互</td><td>是</td></tr>
+  <tr><td><code>/records</code></td><td>RecordView</td><td>历史学习记录</td><td>是</td></tr>
+</table>
+
+<h3>7.1 核心页面：StudyView 交互流程</h3>
+<div class="card">
+  <p><strong>布局：</strong>顶部 Tab 切换「待新学」/「今日复习」</p>
+  <p><strong>待新学：</strong></p>
+  <ul>
+    <li>卡片正面显示单词原型 + 音标</li>
+    <li>点击翻转 → 背面显示释义 + 例句 + 词根词缀</li>
+    <li>点击「已掌握」→ 调用 <code>POST /api/study/first-learn/{planId}</code></li>
+  </ul>
+  <p><strong>今日复习：</strong></p>
+  <ul>
+    <li>卡片正面只显示单词，用户先回忆</li>
+    <li>点击翻转查看释义</li>
+    <li>两个按钮：「记住了」→ reviewRemember / 「没记住」→ reviewForget</li>
+  </ul>
+</div>
+
+<!-- ========== 8 ========== -->
+<h2 id="s8">八、部署架构</h2>
+
+<h3>8.1 拓扑</h3>
+<pre>
+┌─────────────────────────────────────────┐
+│              用户浏览器                    │
+│       https://word.yourdomain.com        │
+└──────────────┬──────────────────────────┘
+               │
+       ┌───────┴───────┐
+       │               │
+       ▼               ▼
+┌──────────────┐ ┌──────────────┐
+│  服务器 A     │ │  服务器 B     │
+│  Nginx       │ │  Java 21     │
+│  前端静态文件  │ │  Spring Boot │
+│  (Vue build)  │ │  :8080       │
+└──────────────┘ └──────┬───────┘
+                        │
+                        ▼
+                ┌──────────────┐
+                │  服务器 C     │
+                │   MySQL 8    │
+                │   :3306      │
+                └──────────────┘
+</pre>
+
+<h3>8.2 关键配置</h3>
+<table>
+  <tr><th>配置项</th><th>说明</th></tr>
+  <tr><td>后端 CORS</td><td><code>WebConfig.java</code> 允许前端域名跨域</td></tr>
+  <tr><td>前端 baseURL</td><td><code>.env.production</code> 指向 <code>https://api.yourdomain.com</code></td></tr>
+  <tr><td>Nginx</td><td>托管前端静态文件 + 可选反向代理 /api 到后端</td></tr>
+  <tr><td>数据库</td><td><code>application.yml</code> 中配置 MySQL 连接（生产用环境变量注入）</td></tr>
+  <tr><td>AI API Key</td><td>通过环境变量注入，不写死在配置文件</td></tr>
+</table>
+
+<!-- ========== 9 ========== -->
+<h2 id="s9">九、开发路线</h2>
+
+<h3>9.1 开发顺序</h3>
+<table>
+  <tr><th>阶段</th><th>内容</th><th>产出</th></tr>
+  <tr><td>①</td><td>数据库建表 + 初始化数据</td><td>schema.sql 执行，配置表数据插入</td></tr>
+  <tr><td>②</td><td>后端基础骨架</td><td>统一响应体、全局异常、CORS、MyBatis 配置</td></tr>
+  <tr><td>③</td><td>用户模块</td><td>注册/登录/认证拦截</td></tr>
+  <tr><td>④</td><td>单词本 + 单词 CRUD</td><td>创建单词本、录入单词（自动生成计划）</td></tr>
+  <tr><td>⑤</td><td>学习计划核心</td><td>初次学习、复习记住/遗忘、每日任务查询</td></tr>
+  <tr><td>⑥</td><td>前端脚手架</td><td>Vue 3 + Vite + 路由 + Axios 封装</td></tr>
+  <tr><td>⑦</td><td>前端页面开发</td><td>登录 → 单词本 → 单词 → 学习页 → 记录</td></tr>
+  <tr><td>⑧</td><td>联调测试</td><td>完整流程走通</td></tr>
+  <tr><td>⑨</td><td>AI 集成（可选）</td><td>通义千问辅助生成例句/释义</td></tr>
+  <tr><td>⑩</td><td>部署上线</td><td>后端 jar 部署 + 前端 Nginx 静态托管</td></tr>
+</table>
+
+<h3>9.2 当前进度</h3>
+<div class="card">
+  <p>✅ 项目脚手架已创建（Spring Boot + Maven）</p>
+  <p>✅ 7 个 Entity 实体类已创建</p>
+  <p>✅ schema.sql 建表脚本已完成</p>
+  <p>✅ OpenAI starter 依赖已配置（占位 API Key）</p>
+  <p>⬜ 后端骨架待搭建</p>
+  <p>⬜ 前端项目待创建</p>
+</div>
+
+<hr>
+<p style="text-align:center; color:var(--muted); font-size:.85rem;">
+  Word Diary Design Document · 2026-07-05
+</p>
+
+</body>
+</html>

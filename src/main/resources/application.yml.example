@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: word-diary
+  datasource:
+    url: jdbc:mysql://localhost:3306/db-word-diary?useSSL=false&serverTimezone=UTC
+    username: root
+    password: your_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:sk-placeholder}
