@@ -7,7 +7,7 @@
         </t-button>
         <h1>{{ notebookName }}</h1>
       </div>
-      <t-button theme="primary" @click="showAddDialog = true">添加单词</t-button>
+      <t-button theme="primary" @click="openAddDialog">添加单词</t-button>
     </header>
 
     <div class="page-body">
@@ -21,11 +21,25 @@
               </t-tag>
             </template>
             <template #description>
-              <div v-if="word.usPhonetic" class="phonetic">US: {{ word.usPhonetic }}</div>
-              <div class="meaning">{{ word.partSpeechMean }}</div>
+              <div class="word-detail">
+                <div v-if="word.usPhonetic" class="phonetic">
+                  <span class="label">US</span> {{ word.usPhonetic }}
+                </div>
+                <div v-if="word.ukPhonetic" class="phonetic">
+                  <span class="label">UK</span> {{ word.ukPhonetic }}
+                </div>
+                <div class="meaning">{{ word.partSpeechMean }}</div>
+                <div v-if="word.sentenceExample" class="example">
+                  <span class="label">例句</span> {{ word.sentenceExample }}
+                </div>
+                <div v-if="word.rootAffix" class="root">
+                  <span class="label">词根</span> {{ word.rootAffix }}
+                </div>
+              </div>
             </template>
           </t-list-item-meta>
           <template #action>
+            <t-button variant="text" theme="primary" @click="openEditDialog(word)">修改</t-button>
             <t-popconfirm content="确认删除该单词？" @confirm="handleDelete(word.id)">
               <t-button variant="text" theme="danger">删除</t-button>
             </t-popconfirm>
@@ -35,8 +49,14 @@
       <t-empty v-else description="还没有单词，点击右上角添加" />
     </div>
 
-    <t-dialog v-model:visible="showAddDialog" header="添加单词" @confirm="handleAdd" :confirm-btn="{ content: '确认添加', loading: saving }">
-      <t-form>
+    <!-- 添加/编辑弹窗 -->
+    <t-dialog
+      v-model:visible="showDialog"
+      :header="dialogTitle"
+      :confirm-btn="{ content: '确认', loading: saving }"
+      @confirm="handleSubmit"
+    >
+      <t-form :data="form" label-width="80px">
         <t-form-item label="单词" name="wordProto">
           <t-input v-model="form.wordProto" placeholder="请输入单词原型" />
         </t-form-item>
@@ -61,22 +81,47 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getWords, addWord, deleteWord } from '../api'
+import { getWords, addWord, updateWord, deleteWord } from '../api'
 
 const route = useRoute()
 const router = useRouter()
 const notebookId = Number(route.params.id)
 const notebookName = ref('')
 const words = ref<any[]>([])
-const showAddDialog = ref(false)
+const showDialog = ref(false)
+const editingId = ref<number | null>(null)
 const saving = ref(false)
+
+const dialogTitle = computed(() => (editingId.value == null ? '添加单词' : '编辑单词'))
+
 const form = reactive({
   wordProto: '', usPhonetic: '', ukPhonetic: '', partSpeechMean: '',
   sentenceExample: '', rootAffix: ''
 })
+
+function resetForm() {
+  Object.keys(form).forEach(k => (form as any)[k] = '')
+}
+
+function openAddDialog() {
+  editingId.value = null
+  resetForm()
+  showDialog.value = true
+}
+
+function openEditDialog(word: any) {
+  editingId.value = word.id
+  form.wordProto = word.wordProto ?? ''
+  form.usPhonetic = word.usPhonetic ?? ''
+  form.ukPhonetic = word.ukPhonetic ?? ''
+  form.partSpeechMean = word.partSpeechMean ?? ''
+  form.sentenceExample = word.sentenceExample ?? ''
+  form.rootAffix = word.rootAffix ?? ''
+  showDialog.value = true
+}
 
 onMounted(() => loadWords())
 
@@ -89,20 +134,30 @@ async function loadWords() {
   }
 }
 
-async function handleAdd() {
+async function handleSubmit() {
   if (!form.wordProto.trim()) {
     MessagePlugin.warning('请输入单词')
     return false
   }
+  if (!form.partSpeechMean.trim()) {
+    MessagePlugin.warning('请输入释义')
+    return false
+  }
   saving.value = true
   try {
-    await addWord(notebookId, { ...form })
-    MessagePlugin.success('添加成功')
-    showAddDialog.value = false
-    Object.keys(form).forEach(k => (form as any)[k] = '')
+    if (editingId.value == null) {
+      await addWord(notebookId, { ...form })
+      MessagePlugin.success('添加成功')
+    } else {
+      await updateWord(notebookId, editingId.value, { ...form })
+      MessagePlugin.success('修改成功')
+    }
+    showDialog.value = false
+    resetForm()
+    editingId.value = null
     await loadWords()
   } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.message || '添加失败')
+    MessagePlugin.error(e.response?.data?.message || '操作失败')
     return false
   } finally {
     saving.value = false
@@ -142,7 +197,7 @@ function statusLabel(status: number) {
   align-items: center;
   padding: 16px 24px;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .page-header > div {
@@ -167,14 +222,35 @@ function statusLabel(status: number) {
   color: #1a1a2e;
 }
 
-.phonetic {
-  font-size: 13px;
-  color: #9ca3af;
-}
-
-.meaning {
+.word-detail {
   font-size: 14px;
   color: #374151;
+  line-height: 1.8;
+}
+
+.word-detail .phonetic {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.word-detail .label {
+  display: inline-block;
+  min-width: 36px;
+  padding: 0 6px;
+  margin-right: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.word-detail .meaning {
   margin-top: 4px;
+}
+
+.word-detail .example,
+.word-detail .root {
+  color: #4b5563;
 }
 </style>

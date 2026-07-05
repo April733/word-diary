@@ -38,6 +38,7 @@ export const deleteNotebook = (id: number) => api.delete(`/notebooks/${id}`)
 // Words
 export const addWord = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words`, data)
 export const getWords = (notebookId: number) => api.get(`/notebooks/${notebookId}/words`)
+export const updateWord = (notebookId: number, wordId: number, data: any) => api.put(`/notebooks/${notebookId}/words/${wordId}`, data)
 export const deleteWord = (notebookId: number, wordId: number) => api.delete(`/notebooks/${notebookId}/words/${wordId}`)
 
 // Study

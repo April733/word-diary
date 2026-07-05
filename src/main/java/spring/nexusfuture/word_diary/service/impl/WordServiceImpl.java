@@ -94,4 +94,20 @@ public class WordServiceImpl implements WordService {
         }
         wordMapper.deleteById(wordId);
     }
+
+    @Override
+    @Transactional
+    public void updateWord(Long userId, Long wordId, WordAddReq req) {
+        WdWord word = wordMapper.selectById(wordId);
+        if (word == null || !word.getUserId().equals(userId)) {
+            throw new BizException("单词不存在");
+        }
+        word.setWordProto(req.getWordProto());
+        word.setUsPhonetic(req.getUsPhonetic());
+        word.setUkPhonetic(req.getUkPhonetic());
+        word.setPartSpeechMean(req.getPartSpeechMean());
+        word.setSentenceExample(req.getSentenceExample());
+        word.setRootAffix(req.getRootAffix());
+        wordMapper.update(word);
+    }
 }

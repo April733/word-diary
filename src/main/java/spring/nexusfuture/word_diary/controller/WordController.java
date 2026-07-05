@@ -33,4 +33,10 @@ public class WordController {
         wordService.delete(userId, wordId);
         return R.ok();
     }
+
+    @PutMapping("/{wordId}")
+    public R<Void> update(@RequestAttribute Long userId, @PathVariable Long notebookId, @PathVariable Long wordId, @RequestBody WordAddReq req) {
+        wordService.updateWord(userId, wordId, req);
+        return R.ok();
+    }
 }

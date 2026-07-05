@@ -20,6 +20,12 @@ public interface WdWordMapper {
     @Select("SELECT * FROM wd_word WHERE id = #{id} AND is_deleted = 0")
     WdWord selectById(Long id);
 
+    @Update("UPDATE wd_word SET word_proto = #{wordProto}, us_phonetic = #{usPhonetic}, " +
+            "uk_phonetic = #{ukPhonetic}, part_speech_mean = #{partSpeechMean}, " +
+            "sentence_example = #{sentenceExample}, root_affix = #{rootAffix}, " +
+            "update_time = NOW() WHERE id = #{id} AND is_deleted = 0")
+    int update(WdWord word);
+
     @Delete("UPDATE wd_word SET is_deleted = 1, update_time = NOW() WHERE id = #{id}")
     int deleteById(Long id);
 }
