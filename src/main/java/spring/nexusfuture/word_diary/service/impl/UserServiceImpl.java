@@ -32,6 +32,7 @@ public class UserServiceImpl implements UserService {
                 .nickname(req.getNickname() != null ? req.getNickname() : req.getUsername())
                 .email(req.getEmail())
                 .phone(req.getPhone())
+                .isMember(req.getIsMember() != null ? req.getIsMember() : 0)
                 .build();
         userMapper.insert(user);
     }
@@ -52,6 +53,7 @@ public class UserServiceImpl implements UserService {
                 .username(user.getUsername())
                 .nickname(user.getNickname())
                 .token(token)
+                .isMember(user.getIsMember())
                 .build();
     }
 }

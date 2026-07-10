@@ -9,4 +9,6 @@ public class RegisterReq {
     private String nickname;
     private String email;
     private String phone;
+    /** 是否会员 1是 0否 */
+    private Integer isMember;
 }

@@ -21,14 +21,17 @@ public interface WdLearnPlanMapper {
     @Select("SELECT * FROM wd_learn_plan WHERE user_id = #{userId} AND word_id = #{wordId} AND is_deleted = 0")
     WdLearnPlan selectByUserIdAndWordId(@Param("userId") Long userId, @Param("wordId") Long wordId);
 
-    // Today's new words to learn (status=0, not yet studied)
-    @Select("SELECT * FROM wd_learn_plan WHERE user_id = #{userId} AND learn_status = 0 AND is_deleted = 0")
+    // Today's new words to learn (status=0 not yet studied, status=4 forgotten and need relearn)
+    @Select("SELECT * FROM wd_learn_plan WHERE user_id = #{userId} AND learn_status IN (0, 4) AND is_deleted = 0")
     List<WdLearnPlan> selectNewWords(Long userId);
 
-    // Today's review tasks (next_review_time <= now and status is 1 or 2)
+    // Today's review tasks: next_review_time date < today, or date = today AND now >= 7:00
+    // Ensures reviews only appear after 7am, regardless of when the word was learned yesterday
     @Select("SELECT * FROM wd_learn_plan WHERE user_id = #{userId} AND learn_status IN (1, 2) " +
-            "AND next_review_time <= #{now} AND is_deleted = 0 ORDER BY next_review_time ASC")
-    List<WdLearnPlan> selectReviewTasks(@Param("userId") Long userId, @Param("now") LocalDateTime now);
+            "AND (DATE(next_review_time) < CURDATE() " +
+            "OR (DATE(next_review_time) = CURDATE() AND HOUR(NOW()) >= 7)) " +
+            "AND is_deleted = 0 ORDER BY next_review_time ASC")
+    List<WdLearnPlan> selectReviewTasks(Long userId);
 
     @Update("UPDATE wd_learn_plan SET learn_status = #{learnStatus}, current_level = #{currentLevel}, " +
             "first_study_time = #{firstStudyTime}, next_review_time = #{nextReviewTime}, " +
@@ -40,4 +43,7 @@ public interface WdLearnPlanMapper {
 
     @Select("SELECT * FROM wd_learn_plan WHERE user_id = #{userId} AND is_deleted = 0")
     List<WdLearnPlan> selectAllByUserId(Long userId);
+
+    @Update("UPDATE wd_learn_plan SET is_deleted = 1, update_time = NOW() WHERE word_id = #{wordId} AND is_deleted = 0")
+    int deleteByWordId(Long wordId);
 }

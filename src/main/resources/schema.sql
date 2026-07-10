@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   `password` varchar(64) NOT NULL COMMENT '密码',
   `email` varchar(128) DEFAULT '' COMMENT '邮箱地址',
   `phone` varchar(20) DEFAULT '' COMMENT '手机号',
+  `is_member` tinyint NOT NULL DEFAULT 0 COMMENT '是否会员 1是 0否',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
@@ -122,6 +123,28 @@ CREATE TABLE IF NOT EXISTS `wd_learn_record` (
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='背诵行为记录';
+
+-- 大模型调用历史记录
+CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '调用用户ID',
+  `model_name` varchar(64) NOT NULL COMMENT '模型名称，如 deepseek-chat',
+  `prompt_tokens` int NOT NULL DEFAULT 0 COMMENT '提示词token数量',
+  `completion_tokens` int NOT NULL DEFAULT 0 COMMENT '返回token数量',
+  `total_tokens` int NOT NULL DEFAULT 0 COMMENT '总token数量',
+  `system_prompt` text COMMENT '系统提示词',
+  `user_prompt` text COMMENT '用户提示词',
+  `response_data` mediumtext COMMENT '大模型返回的原始数据',
+  `duration_ms` int DEFAULT NULL COMMENT '调用耗时（毫秒）',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大模型调用历史记录';
 
 -- =============================================
 -- 种子数据：艾宾浩斯复习节点配置

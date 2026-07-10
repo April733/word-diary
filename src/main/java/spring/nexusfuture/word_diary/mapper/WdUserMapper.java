@@ -6,8 +6,8 @@ import spring.nexusfuture.word_diary.entity.WdUser;
 @Mapper
 public interface WdUserMapper {
 
-    @Insert("INSERT INTO wd_user(username, nickname, password, email, phone, create_time, update_time) " +
-            "VALUES(#{username}, #{nickname}, #{password}, #{email}, #{phone}, NOW(), NOW())")
+    @Insert("INSERT INTO wd_user(username, nickname, password, email, phone, is_member, create_time, update_time) " +
+            "VALUES(#{username}, #{nickname}, #{password}, #{email}, #{phone}, #{isMember}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdUser user);
 

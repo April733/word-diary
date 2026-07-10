@@ -7,6 +7,7 @@ interface UserInfo {
   username: string
   nickname: string
   token: string
+  isMember: number
 }
 
 export const useUserStore = defineStore('user', () => {

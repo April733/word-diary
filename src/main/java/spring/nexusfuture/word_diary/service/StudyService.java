@@ -8,6 +8,7 @@ import java.util.List;
 public interface StudyService {
     List<StudyTaskVO> getNewWords(Long userId);
     List<StudyTaskVO> getTodayReview(Long userId);
+    List<StudyTaskVO> getTodayCompleted(Long userId);
     void firstLearn(Long userId, Long planId, Integer result);
     void review(Long userId, Long planId, Integer result);
     List<StudyRecordVO> getRecords(Long userId);

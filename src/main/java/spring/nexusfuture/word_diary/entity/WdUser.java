@@ -34,6 +34,9 @@ public class WdUser {
     /** 手机号 */
     private String phone;
 
+    /** 是否会员 1是 0否 */
+    private Integer isMember;
+
     /** 创建人 */
     private Long createBy;
 

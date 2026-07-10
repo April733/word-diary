@@ -10,6 +10,7 @@ import spring.nexusfuture.word_diary.dto.StudyTaskVO;
 import spring.nexusfuture.word_diary.entity.*;
 import spring.nexusfuture.word_diary.mapper.*;
 import spring.nexusfuture.word_diary.service.StudyService;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -36,13 +37,53 @@ public class StudyServiceImpl implements StudyService {
     @Override
     public List<StudyTaskVO> getNewWords(Long userId) {
         List<WdLearnPlan> plans = planMapper.selectNewWords(userId);
-        return plans.stream().map(this::toTaskVO).collect(Collectors.toList());
+        // Dedup by word_id: if same word appears in multiple notebooks, only keep one
+        return plans.stream()
+                .collect(Collectors.toMap(
+                        WdLearnPlan::getWordId,
+                        p -> p,
+                        (existing, replacement) -> existing))
+                .values().stream()
+                .map(this::toTaskVO)
+                .collect(Collectors.toList());
     }
 
     @Override
     public List<StudyTaskVO> getTodayReview(Long userId) {
-        List<WdLearnPlan> plans = planMapper.selectReviewTasks(userId, LocalDateTime.now());
-        return plans.stream().map(this::toTaskVO).collect(Collectors.toList());
+        // Day-based comparison: all words whose next_review_time date <= today
+        List<WdLearnPlan> plans = planMapper.selectReviewTasks(userId);
+        // Exclude words already completed today (result=1 in today's records)
+        List<Long> todayCompletedWordIds = recordMapper.selectTodayCompletedWordIds(userId);
+        // Dedup by word_id: if same word appears in multiple notebooks, only keep one
+        return plans.stream()
+                .filter(p -> !todayCompletedWordIds.contains(p.getWordId()))
+                .collect(Collectors.toMap(
+                        WdLearnPlan::getWordId,
+                        p -> p,
+                        (existing, replacement) -> existing))
+                .values().stream()
+                .map(this::toTaskVO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<StudyTaskVO> getTodayCompleted(Long userId) {
+        // Get word IDs that have been remembered (result=1) today
+        List<Long> todayWordIds = recordMapper.selectTodayCompletedWordIds(userId);
+        if (todayWordIds.isEmpty()) {
+            return List.of();
+        }
+        // Find corresponding plans for those words, dedup by word id
+        List<WdLearnPlan> allPlans = planMapper.selectAllByUserId(userId);
+        return allPlans.stream()
+                .filter(p -> todayWordIds.contains(p.getWordId()))
+                .collect(Collectors.toMap(
+                        WdLearnPlan::getWordId,
+                        p -> p,
+                        (existing, replacement) -> existing))
+                .values().stream()
+                .map(this::toTaskVO)
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -57,19 +98,21 @@ public class StudyServiceImpl implements StudyService {
         }
 
         LocalDateTime now = LocalDateTime.now();
+        LocalDate today = now.toLocalDate();
 
         if (result == LearnStatus.RESULT_REMEMBER) {
             // Remembered: status -> FIRST_LEARNED, level -> 1
             plan.setLearnStatus(LearnStatus.FIRST_LEARNED);
             plan.setCurrentLevel(1);
-            plan.setFirstStudyTime(plan.getFirstStudyTime() != null ? plan.getFirstStudyTime() : now);
+            // For forgotten words relearning, reset firstStudyTime to now as the new baseline
+            plan.setFirstStudyTime(now);
             plan.setReviewTimes(plan.getReviewTimes() + 1);
 
-            // Calculate next review time
+            // Next review time = today 00:00 + N days (day-based, not hour-based)
             List<SysEbbinghausNode> nodes = ebbinghausMapper.selectAll();
             if (nodes.size() > 1) {
                 SysEbbinghausNode nextNode = nodes.get(1); // level 1 -> index 1
-                plan.setNextReviewTime(plan.getFirstStudyTime().plusDays(nextNode.getDayInterval()));
+                plan.setNextReviewTime(today.atStartOfDay().plusDays(nextNode.getDayInterval()));
             }
         } else {
             // Forgot: status stays 0, wait for retry
@@ -95,6 +138,7 @@ public class StudyServiceImpl implements StudyService {
         }
 
         LocalDateTime now = LocalDateTime.now();
+        LocalDate today = now.toLocalDate();
 
         if (result == LearnStatus.RESULT_REMEMBER) {
             plan.setReviewTimes(plan.getReviewTimes() + 1);
@@ -112,7 +156,8 @@ public class StudyServiceImpl implements StudyService {
                 plan.setLearnStatus(LearnStatus.REVIEWING);
                 plan.setCurrentLevel(nextLevel);
                 SysEbbinghausNode nextNode = nodes.get(nextLevel);
-                plan.setNextReviewTime(plan.getFirstStudyTime().plusDays(nextNode.getDayInterval()));
+                // Next review time = today 00:00 + N days (day-based)
+                plan.setNextReviewTime(today.atStartOfDay().plusDays(nextNode.getDayInterval()));
             }
         } else {
             // Forgot -> reset to status 4 (FORGOTTEN), level 0
@@ -146,11 +191,12 @@ public class StudyServiceImpl implements StudyService {
     @Override
     public StatsVO getStats(Long userId) {
         List<WdLearnPlan> allPlans = planMapper.selectAllByUserId(userId);
-        List<WdLearnPlan> reviewTasks = planMapper.selectReviewTasks(userId, LocalDateTime.now());
+        List<WdLearnPlan> reviewTasks = planMapper.selectReviewTasks(userId);
 
         return StatsVO.builder()
                 .totalWords(allPlans.size())
-                .newWords(allPlans.stream().filter(p -> p.getLearnStatus() == LearnStatus.NOT_LEARNED).count())
+                .newWords(allPlans.stream().filter(p -> p.getLearnStatus() == LearnStatus.NOT_LEARNED
+                        || p.getLearnStatus() == LearnStatus.FORGOTTEN).count())
                 .reviewingWords(allPlans.stream()
                         .filter(p -> p.getLearnStatus() == LearnStatus.FIRST_LEARNED
                                 || p.getLearnStatus() == LearnStatus.REVIEWING).count())

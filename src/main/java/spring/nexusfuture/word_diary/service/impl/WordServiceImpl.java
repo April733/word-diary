@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.LearnStatus;
+import spring.nexusfuture.word_diary.dto.AiParseResult;
 import spring.nexusfuture.word_diary.dto.WordAddReq;
 import spring.nexusfuture.word_diary.dto.WordVO;
 import spring.nexusfuture.word_diary.entity.WdLearnPlan;
@@ -13,6 +14,7 @@ import spring.nexusfuture.word_diary.mapper.WdLearnPlanMapper;
 import spring.nexusfuture.word_diary.mapper.WdWordBookMapper;
 import spring.nexusfuture.word_diary.mapper.WdWordMapper;
 import spring.nexusfuture.word_diary.service.WordService;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -87,12 +89,56 @@ public class WordServiceImpl implements WordService {
     }
 
     @Override
+    @Transactional
     public void delete(Long userId, Long wordId) {
         WdWord word = wordMapper.selectById(wordId);
         if (word == null || !word.getUserId().equals(userId)) {
             throw new BizException("单词不存在");
         }
         wordMapper.deleteById(wordId);
+        // Also mark the associated learn plan as deleted
+        planMapper.deleteByWordId(wordId);
+    }
+
+    @Override
+    @Transactional
+    public void batchAddWords(Long userId, Long notebookId, List<AiParseResult> words) {
+        WdWordBook book = bookMapper.selectById(notebookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("单词本不存在");
+        }
+        List<String> errors = new ArrayList<>();
+        for (AiParseResult r : words) {
+            try {
+                WdWord word = WdWord.builder()
+                        .notebookId(notebookId)
+                        .userId(userId)
+                        .wordProto(r.getWordProto())
+                        .usPhonetic(r.getUsPhonetic())
+                        .ukPhonetic(r.getUkPhonetic())
+                        .partSpeechMean(r.getPartSpeechMean())
+                        .sentenceExample(r.getSentenceExample())
+                        .rootAffix(r.getRootAffix())
+                        .isPublic(0)
+                        .build();
+                wordMapper.insert(word);
+
+                WdLearnPlan plan = WdLearnPlan.builder()
+                        .userId(userId)
+                        .notebookId(notebookId)
+                        .wordId(word.getId())
+                        .learnStatus(LearnStatus.NOT_LEARNED)
+                        .currentLevel(0)
+                        .reviewTimes(0)
+                        .build();
+                planMapper.insert(plan);
+            } catch (Exception e) {
+                errors.add(r.getWordProto() + ": " + e.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new BizException("部分单词导入失败: " + String.join("; ", errors));
+        }
     }
 
     @Override

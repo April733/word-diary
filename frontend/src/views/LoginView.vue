@@ -13,7 +13,7 @@
             <t-form-item label="密码" name="password">
               <t-input v-model="loginForm.password" type="password" placeholder="请输入密码" />
             </t-form-item>
-            <t-form-item>
+            <t-form-item class="submit-item">
               <t-button theme="primary" type="submit" block :loading="loading">登录</t-button>
             </t-form-item>
           </t-form>
@@ -33,7 +33,10 @@
             <t-form-item label="邮箱" name="email">
               <t-input v-model="registerForm.email" placeholder="请输入邮箱（选填）" />
             </t-form-item>
-            <t-form-item>
+            <t-form-item label="会员" name="isMember">
+              <t-switch v-model="registerForm.isMember" :label="['是', '否']" />
+            </t-form-item>
+            <t-form-item class="submit-item">
               <t-button theme="primary" type="submit" block :loading="loading">注册</t-button>
             </t-form-item>
           </t-form>
@@ -55,7 +58,7 @@ const tab = ref('login')
 const loading = ref(false)
 
 const loginForm = reactive({ username: '', password: '' })
-const registerForm = reactive({ username: '', nickname: '', password: '', email: '' })
+const registerForm = reactive({ username: '', nickname: '', password: '', email: '', isMember: false })
 
 async function handleLogin() {
   if (!loginForm.username || !loginForm.password) {
@@ -81,7 +84,7 @@ async function handleRegister() {
   }
   loading.value = true
   try {
-    await userStore.registerAction({ ...registerForm })
+    await userStore.registerAction({ ...registerForm, isMember: registerForm.isMember ? 1 : 0 })
     MessagePlugin.success('注册成功，请登录')
     tab.value = 'login'
     loginForm.username = registerForm.username
@@ -99,32 +102,65 @@ async function handleRegister() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #6a82fb 0%, #8458B3 50%, #5b3fa8 100%);
+  background-attachment: fixed;
 }
 
 .login-card {
-  background: #fff;
+  background: #ffffff;
   border-radius: 16px;
-  padding: 48px 40px;
+  padding: 40px 36px;
   width: 420px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  box-shadow:
+    0 24px 48px -12px rgba(50, 30, 100, 0.25),
+    0 12px 24px -6px rgba(80, 50, 150, 0.15),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  backdrop-filter: blur(8px);
 }
 
 .app-title {
   text-align: center;
   font-size: 28px;
+  font-weight: 600;
   margin-bottom: 8px;
   color: #1a1a2e;
+  letter-spacing: 0.5px;
 }
 
 .app-desc {
   text-align: center;
   color: #6b7280;
   font-size: 14px;
-  margin-bottom: 32px;
+  margin-bottom: 28px;
 }
 
 .login-tabs {
   width: 100%;
+}
+
+.login-tabs :deep(.t-tab-panel) {
+  padding-top: 12px;
+}
+
+.login-tabs :deep(.t-form__item) {
+  margin-bottom: 20px;
+}
+
+.submit-item {
+  margin-top: 12px !important;
+  margin-bottom: 0 !important;
+}
+
+.login-tabs :deep(.t-form__label) {
+  margin-bottom: 4px;
+}
+
+.login-tabs :deep(.t-input) {
+  border-radius: 8px;
+}
+
+.login-tabs :deep(.t-button--theme-primary) {
+  border-radius: 8px;
+  font-weight: 500;
 }
 </style>

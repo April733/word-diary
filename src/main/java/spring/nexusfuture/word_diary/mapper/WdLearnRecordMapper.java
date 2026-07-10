@@ -19,4 +19,14 @@ public interface WdLearnRecordMapper {
     @Select("SELECT * FROM wd_learn_record WHERE user_id = #{userId} AND word_id = #{wordId} AND is_deleted = 0 " +
             "ORDER BY study_time DESC")
     List<WdLearnRecord> selectByUserIdAndWordId(@Param("userId") Long userId, @Param("wordId") Long wordId);
+
+    // Today's studied word IDs (distinct, to avoid duplicates from multiple study actions)
+    @Select("SELECT DISTINCT word_id FROM wd_learn_record WHERE user_id = #{userId} " +
+            "AND DATE(study_time) = CURDATE() AND is_deleted = 0")
+    List<Long> selectTodayStudiedWordIds(Long userId);
+
+    // Today's completed (remembered) word IDs
+    @Select("SELECT DISTINCT word_id FROM wd_learn_record WHERE user_id = #{userId} " +
+            "AND DATE(study_time) = CURDATE() AND result = 1 AND is_deleted = 0")
+    List<Long> selectTodayCompletedWordIds(Long userId);
 }

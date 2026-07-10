@@ -10,4 +10,6 @@ public class UserVO {
     private String username;
     private String nickname;
     private String token;
+    /** 是否会员 1是 0否 */
+    private Integer isMember;
 }

@@ -5,6 +5,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import spring.nexusfuture.word_diary.common.BizException;
+import spring.nexusfuture.word_diary.entity.WdUser;
+import spring.nexusfuture.word_diary.mapper.WdUserMapper;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -13,6 +15,12 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     // Simple in-memory token store (TODO: replace with Redis/JWT in production)
     private static final Map<String, Long> TOKEN_STORE = new ConcurrentHashMap<>();
+
+    private final WdUserMapper userMapper;
+
+    public AuthInterceptor(WdUserMapper userMapper) {
+        this.userMapper = userMapper;
+    }
 
     public static void storeToken(String token, Long userId) {
         TOKEN_STORE.put(token, userId);
@@ -35,6 +43,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             }
         }
         request.setAttribute("userId", userId);
+
+        // Load user info for membership check
+        WdUser user = userMapper.selectById(userId);
+        request.setAttribute("isMember", user != null && user.getIsMember() != null ? user.getIsMember() : 0);
         return true;
 
         // String path = request.getRequestURI();
