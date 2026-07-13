@@ -37,6 +37,9 @@ public class WdUser {
     /** 是否会员 1是 0否 */
     private Integer isMember;
 
+    /** 偏好语言，如 zh-CN / en / id / vi / th */
+    private String preferredLocale;
+
     /** 创建人 */
     private Long createBy;
 

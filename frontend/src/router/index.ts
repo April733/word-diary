@@ -37,6 +37,18 @@ const router = createRouter({
       name: 'Records',
       component: () => import('../views/RecordView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/bookshelf',
+      name: 'Bookshelf',
+      component: () => import('../views/BookshelfView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/reader/:id',
+      name: 'Reader',
+      component: () => import('../views/ReaderView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

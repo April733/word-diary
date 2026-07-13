@@ -54,6 +54,12 @@ public class UserServiceImpl implements UserService {
                 .nickname(user.getNickname())
                 .token(token)
                 .isMember(user.getIsMember())
+                .preferredLocale(user.getPreferredLocale())
                 .build();
+    }
+
+    @Override
+    public void updateLocale(Long userId, String locale) {
+        userMapper.updateLocale(userId, locale);
     }
 }

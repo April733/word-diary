@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as userApi from '../api'
+import { getStoredLocale, setStoredLocale, type SupportedLocale } from '../i18n'
 
 interface UserInfo {
   id: number
@@ -8,6 +9,7 @@ interface UserInfo {
   nickname: string
   token: string
   isMember: number
+  preferredLocale?: string
 }
 
 export const useUserStore = defineStore('user', () => {
@@ -17,6 +19,10 @@ export const useUserStore = defineStore('user', () => {
     const stored = localStorage.getItem('user')
     if (stored) {
       user.value = JSON.parse(stored)
+      // 用服务端保存的 locale 覆盖本地
+      if (user.value?.preferredLocale) {
+        setStoredLocale(user.value.preferredLocale as SupportedLocale)
+      }
     }
   }
 
@@ -25,6 +31,10 @@ export const useUserStore = defineStore('user', () => {
     user.value = res.data.data
     localStorage.setItem('token', user.value!.token)
     localStorage.setItem('user', JSON.stringify(user.value))
+    // 登录后用服务端保存的 locale 初始化 i18n
+    if (user.value?.preferredLocale) {
+      setStoredLocale(user.value.preferredLocale as SupportedLocale)
+    }
   }
 
   async function registerAction(data: any) {
@@ -37,5 +47,17 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('user')
   }
 
-  return { user, loadFromStorage, loginAction, registerAction, logout }
+  async function updateLocale(locale: string) {
+    try {
+      await userApi.updateUserLocale(locale)
+      if (user.value) {
+        user.value.preferredLocale = locale
+        localStorage.setItem('user', JSON.stringify(user.value))
+      }
+    } catch {
+      // 静默失败，本地已经生效
+    }
+  }
+
+  return { user, loadFromStorage, loginAction, registerAction, logout, updateLocale }
 })

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   `email` varchar(128) DEFAULT '' COMMENT '邮箱地址',
   `phone` varchar(20) DEFAULT '' COMMENT '手机号',
   `is_member` tinyint NOT NULL DEFAULT 0 COMMENT '是否会员 1是 0否',
+  `preferred_locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
@@ -147,6 +148,76 @@ CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大模型调用历史记录';
 
 -- =============================================
+-- 书籍表（阅读器）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_book` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '所属用户ID',
+  `title` varchar(256) NOT NULL COMMENT '书名',
+  `author` varchar(128) DEFAULT '' COMMENT '作者',
+  `cover_url` varchar(512) DEFAULT '' COMMENT '封面图URL',
+  `file_path` varchar(512) NOT NULL COMMENT '文件在服务器上的存储路径',
+  `file_type` varchar(16) NOT NULL DEFAULT 'epub' COMMENT '文件类型 epub/pdf/txt',
+  `file_size` bigint DEFAULT 0 COMMENT '文件大小(字节)',
+  `total_chapters` int DEFAULT 0 COMMENT '总章节数',
+  `current_chapter` int DEFAULT 0 COMMENT '当前阅读章节索引',
+  `current_cfi` varchar(256) DEFAULT '' COMMENT '当前阅读位置(EPUB CFI)',
+  `progress_percent` decimal(5,2) DEFAULT 0.00 COMMENT '阅读进度百分比',
+  `last_read_at` datetime DEFAULT NULL COMMENT '最近阅读时间',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_user_deleted_read` (`user_id`, `is_deleted`, `last_read_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='书籍表';
+
+-- =============================================
+-- 划线/笔记表（阅读器）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_annotation` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `book_id` bigint NOT NULL COMMENT '所属书籍ID',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `chapter_index` int NOT NULL DEFAULT 0 COMMENT '章节索引',
+  `cfi_start` varchar(256) NOT NULL COMMENT 'EPUB CFI 起始位置',
+  `cfi_end` varchar(256) DEFAULT '' COMMENT 'EPUB CFI 结束位置',
+  `text_content` text NOT NULL COMMENT '被划线的原文内容',
+  `note` text COMMENT '用户笔记',
+  `color` varchar(16) DEFAULT '#FFD700' COMMENT '高亮颜色',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_book_user` (`book_id`, `user_id`),
+  KEY `idx_chapter` (`book_id`, `chapter_index`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='划线笔记表';
+
+-- =============================================
+-- 用户阅读设置表（阅读器偏好）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_reader_settings` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '所属用户ID',
+  `font_size` int NOT NULL DEFAULT 16 COMMENT '字体大小(px)',
+  `line_height` decimal(3,1) NOT NULL DEFAULT 1.6 COMMENT '行间距',
+  `background_color` varchar(16) NOT NULL DEFAULT '#ffffff' COMMENT '背景颜色',
+  `text_color` varchar(16) NOT NULL DEFAULT '#1a1a2e' COMMENT '文字颜色',
+  `flow` varchar(16) NOT NULL DEFAULT 'paginated' COMMENT '翻页方式: paginated/scrolled-doc',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户阅读设置表';
+
+-- =============================================
 -- 种子数据：艾宾浩斯复习节点配置
 -- =============================================
 INSERT IGNORE INTO `sys_ebbinghaus_node` (`id`, `node_name`, `day_interval`, `sort`) VALUES
@@ -167,3 +238,47 @@ INSERT IGNORE INTO `sys_learn_status` (`status`, `status_name`, `remark`) VALUES
 (2, '复习中', '已进入艾宾浩斯复习周期'),
 (3, '已熟记', '已通过全部复习节点，进入熟记状态'),
 (4, '遗忘重学', '复习时未记住，需重新开始学习');
+
+-- =============================================
+-- AI 阅读功能配置表（可动态扩展的功能选项）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `feature_key` varchar(32) NOT NULL COMMENT '功能标识，如 word, meaning, collocation',
+  `feature_name` varchar(32) NOT NULL COMMENT '功能名称，用户可见',
+  `description` varchar(255) NOT NULL COMMENT '功能描述，给用户看的简短说明',
+  `prompt` text COMMENT 'AI提示词，传递给大模型的详细指令',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_feature_key` (`feature_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI阅读功能配置表';
+
+-- 种子数据：默认AI阅读功能
+INSERT IGNORE INTO `sys_ai_feature` (`feature_key`, `feature_name`, `description`, `prompt`, `sort_num`) VALUES
+('word', '单词', '讲解重难点单词的词性、含义和用法', '对句子中出现的重难点单词进行讲解，包括词性、含义、用法等。要求简洁，不要啰嗦。', 1),
+('meaning', '释义', '翻译和释义选中的句子或段落', '对选中的句子或段落进行翻译和释义，帮助理解整体意思。要求简洁，不要啰嗦。', 2),
+('collocation', '固搭', '分析固定搭配和短语用法', '分析句子中的固定搭配和短语用法，说明其含义和使用场景。要求简洁，不要啰嗦。', 3),
+('sentence_pattern', '句式', '分析语法结构和句式特点', '分析句子中的语法结构和句式特点，帮助理解语法。要求简洁，不要啰嗦。', 4),
+('phonetic', '连读音标', '分析发音技巧：连读、吞音、重读、不发音字母等', '分析选中句子的发音技巧，包括：连读（linking）、吞音/省略（elision）、重读/弱读（stressed/unstressed）、哪个字母不发音（silent letters）、轻音/浊化等。给出具体的发音音标和技巧说明。要求简洁，不要啰嗦。', 5),
+('root_affix', '词根词缀', '分析词根词缀构成和词义演变', '分析句子中单词的词根词缀构成，帮助记忆和理解词义演变。要求简洁，不要啰嗦。', 6),
+('example', '例句', '提供类似例句帮助理解用法', '根据选中的内容，提供类似的例句帮助理解用法。要求简洁，不要啰嗦。', 7);
+
+-- =============================================
+-- 用户 AI 功能偏好表（记住用户勾选了哪些功能）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_user_ai_preference` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `feature_keys` varchar(1024) NOT NULL DEFAULT '' COMMENT '用户启用的功能feature_key列表，JSON数组，如 ["word","collocation","example"]',
+  `feature_order` varchar(1024) NOT NULL DEFAULT '' COMMENT '用户自定义功能排序，JSON数组，如 ["word","example","collocation"]',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户AI功能偏好表';

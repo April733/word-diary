@@ -16,4 +16,7 @@ public interface WdUserMapper {
 
     @Select("SELECT * FROM wd_user WHERE id = #{id} AND is_deleted = 0")
     WdUser selectById(Long id);
+
+    @Update("UPDATE wd_user SET preferred_locale = #{locale}, update_time = NOW() WHERE id = #{userId}")
+    int updateLocale(@Param("userId") Long userId, @Param("locale") String locale);
 }

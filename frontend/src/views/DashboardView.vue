@@ -2,30 +2,33 @@
   <div class="dashboard">
     <header class="dash-header">
       <div class="header-left">
-        <h1>📖 Word Diary</h1>
-        <span class="greeting">你好，{{ userStore.user?.nickname }}</span>
+        <h1>{{ $t('common.appName') }}</h1>
+        <span class="greeting">{{ $t('dashboard.greeting') }}{{ userStore.user?.nickname }}</span>
       </div>
-      <t-button variant="outline" @click="handleLogout">退出登录</t-button>
+      <div class="header-right">
+        <LocaleSwitcher />
+        <t-button variant="outline" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
+      </div>
     </header>
 
     <div class="dash-content">
-      <h2>学习概览</h2>
+      <h2>{{ $t('nav.dashboard') }}</h2>
       <div class="stats-grid">
         <div class="stat-card blue">
           <div class="stat-num">{{ stats.totalWords }}</div>
-          <div class="stat-label">总单词数</div>
+          <div class="stat-label">{{ $t('dashboard.totalWords') }}</div>
         </div>
         <div class="stat-card yellow">
           <div class="stat-num">{{ stats.newWords }}</div>
-          <div class="stat-label">待学习</div>
+          <div class="stat-label">{{ $t('dashboard.toLearn') }}</div>
         </div>
         <div class="stat-card green">
           <div class="stat-num">{{ stats.reviewingWords }}</div>
-          <div class="stat-label">复习中</div>
+          <div class="stat-label">{{ $t('dashboard.reviewing') }}</div>
         </div>
         <div class="stat-card purple">
           <div class="stat-num">{{ stats.masteredWords }}</div>
-          <div class="stat-label">已熟记</div>
+          <div class="stat-label">{{ $t('dashboard.mastered') }}</div>
         </div>
       </div>
 
@@ -33,8 +36,17 @@
         <t-card :bordered="false" class="action-card" @click="router.push('/study')">
           <div class="action-icon">📝</div>
           <div class="action-info">
-            <h3>开始学习</h3>
-            <p>今日待复习 {{ stats.todayReviewCount }} 个单词</p>
+            <h3>{{ $t('nav.study') }}</h3>
+            <p>{{ $t('dashboard.todayReview', { count: stats.todayReviewCount }) }}</p>
+          </div>
+          <t-icon name="chevron-right" size="24px" />
+        </t-card>
+
+        <t-card :bordered="false" class="action-card" @click="router.push('/bookshelf')">
+          <div class="action-icon">📖</div>
+          <div class="action-info">
+            <h3>{{ $t('nav.reading') }}</h3>
+            <p>{{ $t('dashboard.readingDesc') }}</p>
           </div>
           <t-icon name="chevron-right" size="24px" />
         </t-card>
@@ -42,8 +54,8 @@
         <t-card :bordered="false" class="action-card" @click="router.push('/notebooks')">
           <div class="action-icon">📚</div>
           <div class="action-info">
-            <h3>单词本管理</h3>
-            <p>创建和管理你的单词本</p>
+            <h3>{{ $t('nav.wordbook') }}</h3>
+            <p>{{ $t('dashboard.wordbookDesc') }}</p>
           </div>
           <t-icon name="chevron-right" size="24px" />
         </t-card>
@@ -51,8 +63,8 @@
         <t-card :bordered="false" class="action-card" @click="router.push('/records')">
           <div class="action-icon">📊</div>
           <div class="action-info">
-            <h3>学习记录</h3>
-            <p>查看历史学习记录</p>
+            <h3>{{ $t('nav.records') }}</h3>
+            <p>{{ $t('dashboard.recordsDesc') }}</p>
           </div>
           <t-icon name="chevron-right" size="24px" />
         </t-card>
@@ -66,6 +78,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { getStats } from '../api'
+import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -106,6 +119,12 @@ function handleLogout() {
 .header-left h1 {
   font-size: 22px;
   color: #1a1a2e;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .greeting {

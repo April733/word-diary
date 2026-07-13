@@ -1,5 +1,6 @@
 package spring.nexusfuture.word_diary.common;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -7,8 +8,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(BizException.class)
-    public R<Void> handleBizException(BizException e) {
-        return R.fail(e.getCode(), e.getMessage());
+    public ResponseEntity<R<Void>> handleBizException(BizException e) {
+        return ResponseEntity.status(e.getCode()).body(R.fail(e.getCode(), e.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)

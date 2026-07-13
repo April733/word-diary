@@ -28,6 +28,7 @@ api.interceptors.response.use(
 // User
 export const register = (data: any) => api.post('/user/register', data)
 export const login = (data: any) => api.post('/user/login', data)
+export const updateUserLocale = (locale: string) => api.put('/user/locale', { locale })
 
 // Notebooks
 export const createNotebook = (data: any) => api.post('/notebooks', data)
@@ -68,3 +69,43 @@ export const getRecords = () => api.get('/study/records')
 export const getStats = () => api.get('/study/stats')
 
 export default api
+
+// ========== 阅读器 ==========
+export const getAiFeatures = () => api.get('/books/ai-features')
+export const getAiFeaturePreferences = () => api.get('/books/ai-features/preferences')
+export const saveAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
+  api.put('/books/ai-features/preferences', data)
+
+export const uploadBook = (file: File) => {
+  console.log('[API] uploadBook 请求, 文件名:', file.name, '大小:', (file.size / 1024).toFixed(1), 'KB')
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post('/books/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  }).then(res => {
+    console.log('[API] uploadBook 响应:', res.status, res.data)
+    return res
+  }).catch(err => {
+    console.error('[API] uploadBook 失败:', err.response?.status, err.response?.data || err.message)
+    throw err
+  })
+}
+export const getBooks = () => api.get('/books')
+export const getBookDetail = (bookId: number) => api.get(`/books/${bookId}`)
+export const deleteBook = (bookId: number) => api.delete(`/books/${bookId}`)
+export const updateProgress = (bookId: number, data: any) => api.post(`/books/${bookId}/progress`, data)
+export const getBookFileUrl = (bookId: number) => `/api/books/${bookId}/file`
+
+// Annotations
+export const getAnnotations = (bookId: number) => api.get(`/books/${bookId}/annotations`)
+export const getChapterAnnotations = (bookId: number, chapterIndex: number) =>
+  api.get(`/books/${bookId}/annotations/chapter/${chapterIndex}`)
+export const addAnnotation = (bookId: number, data: any) => api.post(`/books/${bookId}/annotations`, data)
+export const updateAnnotation = (bookId: number, id: number, data: any) =>
+  api.put(`/books/${bookId}/annotations/${id}`, data)
+export const deleteAnnotation = (bookId: number, id: number) => api.delete(`/books/${bookId}/annotations/${id}`)
+
+// Reader Settings
+export const getReaderSettings = () => api.get('/books/reader-settings')
+export const saveReaderSettings = (data: any) => api.put('/books/reader-settings', data)

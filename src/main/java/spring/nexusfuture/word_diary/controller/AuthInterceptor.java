@@ -33,38 +33,27 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // TODO: 临时放行，后续恢复鉴权
+        String path = request.getRequestURI();
+
+        // Skip auth for login/register
+        if (path.contains("/api/user/login") || path.contains("/api/user/register")) {
+            return true;
+        }
+
         String token = request.getHeader("Authorization");
-        Long userId = 1L;
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
-            if (TOKEN_STORE.containsKey(token)) {
-                userId = TOKEN_STORE.get(token);
-            }
         }
+        if (token == null || !TOKEN_STORE.containsKey(token)) {
+            throw new BizException(401, "未登录或登录已过期");
+        }
+
+        Long userId = TOKEN_STORE.get(token);
         request.setAttribute("userId", userId);
 
         // Load user info for membership check
         WdUser user = userMapper.selectById(userId);
         request.setAttribute("isMember", user != null && user.getIsMember() != null ? user.getIsMember() : 0);
         return true;
-
-        // String path = request.getRequestURI();
-        // // Skip auth for login/register
-        // if (path.contains("/api/user/login") || path.contains("/api/user/register")) {
-        //     return true;
-        // }
-        //
-        // String token = request.getHeader("Authorization");
-        // if (token != null && token.startsWith("Bearer ")) {
-        //     token = token.substring(7);
-        // }
-        // if (token == null || !TOKEN_STORE.containsKey(token)) {
-        //     throw new BizException(401, "未登录或登录已过期");
-        // }
-        //
-        // Long userId = TOKEN_STORE.get(token);
-        // request.setAttribute("userId", userId);
-        // return true;
     }
 }
