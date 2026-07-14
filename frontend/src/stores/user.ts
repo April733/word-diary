@@ -38,7 +38,10 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function registerAction(data: any) {
-    await userApi.register(data)
+    const res = await userApi.register(data)
+    if (res.data.code !== 200) {
+      throw new Error(res.data.message || '注册失败')
+    }
   }
 
   function logout() {

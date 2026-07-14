@@ -9,4 +9,5 @@ public interface UserService {
     UserVO login(LoginReq req);
     void updateLocale(Long userId, String locale);
     boolean isPhoneExists(String phone);
+    void resetPassword(String phone, String newPassword);
 }

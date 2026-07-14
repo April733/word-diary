@@ -31,6 +31,10 @@ export const login = (data: any) => api.post('/user/login', data)
 export const updateUserLocale = (locale: string) => api.put('/user/locale', { locale })
 export const checkPhone = (phone: string) => api.get('/user/check-phone', { params: { phone } })
 export const checkInviteCode = (code: string) => api.get('/user/check-invite-code', { params: { code } })
+export const sendSms = (phone: string) => api.post('/user/send-sms', { phone })
+export const sendResetSms = (phone: string) => api.post('/user/send-reset-sms', { phone })
+export const resetPassword = (data: { phone: string; smsCode: string; newPassword: string }) =>
+  api.post('/user/reset-password', data)
 
 // Notebooks
 export const createNotebook = (data: any) => api.post('/notebooks', data)

@@ -22,4 +22,7 @@ public interface WdUserMapper {
 
     @Update("UPDATE wd_user SET preferred_locale = #{locale}, update_time = NOW() WHERE id = #{userId}")
     int updateLocale(@Param("userId") Long userId, @Param("locale") String locale);
+
+    @Update("UPDATE wd_user SET password = #{password}, update_time = NOW() WHERE id = #{userId}")
+    int updatePassword(@Param("userId") Long userId, @Param("password") String password);
 }

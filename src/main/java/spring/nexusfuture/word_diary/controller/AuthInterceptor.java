@@ -42,7 +42,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         String path = request.getRequestURI();
 
         // Skip auth for login/register and public user APIs
-        if (path.contains("/api/user/login") || path.contains("/api/user/register") || path.contains("/api/user/check-phone") || path.contains("/api/user/check-invite-code")) {
+        if (path.contains("/api/user/login") || path.contains("/api/user/register") || path.contains("/api/user/check-phone") || path.contains("/api/user/check-invite-code") || path.contains("/api/user/send-sms") || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/reset-password")) {
             return true;
         }
 

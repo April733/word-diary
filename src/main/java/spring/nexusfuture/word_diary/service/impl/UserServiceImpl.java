@@ -1,5 +1,6 @@
 package spring.nexusfuture.word_diary.service.impl;
 
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
@@ -26,6 +27,7 @@ public class UserServiceImpl implements UserService {
     private final WdInviteCodeMapper inviteCodeMapper;
     private final WdUserBenefitMapper userBenefitMapper;
     private final MemberTierService memberTierService;
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public UserServiceImpl(WdUserMapper userMapper, WdInviteCodeMapper inviteCodeMapper,
                            WdUserBenefitMapper userBenefitMapper,
@@ -62,7 +64,7 @@ public class UserServiceImpl implements UserService {
 
         WdUser user = WdUser.builder()
                 .username(req.getUsername())
-                .password(req.getPassword()) // TODO: 后续使用 BCrypt 加密
+                .password(passwordEncoder.encode(req.getPassword()))
                 .nickname(req.getUsername())
                 .phone(req.getPhone())
                 .isMember(0)
@@ -97,7 +99,7 @@ public class UserServiceImpl implements UserService {
         if (user == null) {
             throw new BizException("用户名或密码错误");
         }
-        if (!user.getPassword().equals(req.getPassword())) { // TODO: BCrypt match
+        if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
             throw new BizException("用户名或密码错误");
         }
         String token = UUID.randomUUID().toString().replace("-", "");
@@ -121,5 +123,14 @@ public class UserServiceImpl implements UserService {
     @Override
     public boolean isPhoneExists(String phone) {
         return userMapper.selectByPhone(phone) != null;
+    }
+
+    @Override
+    public void resetPassword(String phone, String newPassword) {
+        WdUser user = userMapper.selectByPhone(phone);
+        if (user == null) {
+            throw new BizException("该手机号未注册");
+        }
+        userMapper.updatePassword(user.getId(), passwordEncoder.encode(newPassword));
     }
 }

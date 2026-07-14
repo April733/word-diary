@@ -20,6 +20,9 @@ public class RegisterReq {
     @NotBlank(message = "邀请码不能为空")
     private String inviteCode;
 
+    @NotBlank(message = "验证码不能为空")
+    private String smsCode;
+
     /** 是否会员 1是 0否（兼容旧字段，新版注册不再使用） */
     private Integer isMember;
 }
