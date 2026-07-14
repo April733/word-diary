@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   `email` varchar(128) DEFAULT '' COMMENT '邮箱地址',
   `phone` varchar(20) DEFAULT '' COMMENT '手机号',
   `is_member` tinyint NOT NULL DEFAULT 0 COMMENT '是否会员 1是 0否',
+  `member_tier` int NOT NULL DEFAULT 1 COMMENT '会员等级，关联 sys_member_tier.tier',
   `preferred_locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -216,6 +217,77 @@ CREATE TABLE IF NOT EXISTS `wd_reader_settings` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户阅读设置表';
+
+-- =============================================
+-- 会员等级配置表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_member_tier` (
+  `tier` int NOT NULL COMMENT '会员等级',
+  `tier_name` varchar(32) NOT NULL COMMENT '等级名称',
+  `max_bookshelves` int NOT NULL DEFAULT 3 COMMENT '书架数量上限',
+  `max_wordbooks` int NOT NULL DEFAULT 3 COMMENT '单词本数量上限',
+  `max_words_per_book` int NOT NULL DEFAULT 200 COMMENT '每个单词本单词上限',
+  `daily_import_limit` int NOT NULL DEFAULT 10 COMMENT '每日批量导入次数上限',
+  `daily_ai_reading_limit` int NOT NULL DEFAULT 50 COMMENT '每日AI阅读次数上限',
+  `is_ai_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '是否启用AI功能 1是 0否',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`tier`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员等级配置表';
+
+-- 种子数据：默认会员等级
+INSERT IGNORE INTO `sys_member_tier` (`tier`, `tier_name`, `max_bookshelves`, `max_wordbooks`, `max_words_per_book`, `daily_import_limit`, `daily_ai_reading_limit`, `is_ai_enabled`) VALUES
+(1, '免费版', 3, 3, 200, 10, 50, 1),
+(2, '会员版', 6, 6, 400, 20, 100, 1);
+
+-- =============================================
+-- 邀请码表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_invite_code` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `seq_no` int NOT NULL COMMENT '序号',
+  `invite_code` varchar(32) NOT NULL COMMENT '邀请码',
+  `member_tier` int NOT NULL DEFAULT 1 COMMENT '对应会员等级，关联 sys_member_tier.tier',
+  `used_by` bigint DEFAULT NULL COMMENT '核销用户ID，NULL表示未核销',
+  `used_time` datetime DEFAULT NULL COMMENT '核销时间',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_invite_code` (`invite_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邀请码表';
+
+-- =============================================
+-- 用户权益记录表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_user_benefit` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `tier_snapshot` int NOT NULL COMMENT '会员等级快照',
+  `max_bookshelves` int NOT NULL COMMENT '书架数量上限',
+  `max_wordbooks` int NOT NULL COMMENT '单词本数量上限',
+  `max_words_per_book` int NOT NULL COMMENT '每个单词本单词上限',
+  `daily_import_limit` int NOT NULL COMMENT '每日批量导入次数上限',
+  `daily_ai_reading_limit` int NOT NULL COMMENT '每日AI阅读次数上限',
+  `is_ai_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '是否启用AI功能 1是 0否',
+  `channel` varchar(32) NOT NULL COMMENT '获取渠道: invite_code/purchase/gift/admin',
+  `channel_ref_id` bigint DEFAULT NULL COMMENT '渠道关联ID，如邀请码ID、订单ID等',
+  `acquired_at` datetime NOT NULL COMMENT '获取时间',
+  `expired_at` datetime DEFAULT NULL COMMENT '过期时间，NULL表示永久',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_acquired` (`user_id`, `acquired_at` DESC),
+  KEY `idx_user_channel` (`user_id`, `channel`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户权益记录表';
 
 -- =============================================
 -- 种子数据：艾宾浩斯复习节点配置

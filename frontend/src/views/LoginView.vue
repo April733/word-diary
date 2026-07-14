@@ -10,10 +10,10 @@
       <t-tabs v-model="tab" class="login-tabs">
         <t-tab-panel value="login" :label="$t('login.loginBtn')">
           <t-form :data="loginForm" @submit="handleLogin">
-            <t-form-item :label="$t('login.username')" name="username">
+            <t-form-item :label="$t('login.username')" name="username" required-mark>
               <t-input v-model="loginForm.username" :placeholder="$t('login.usernamePlaceholder')" />
             </t-form-item>
-            <t-form-item :label="$t('login.password')" name="password">
+            <t-form-item :label="$t('login.password')" name="password" required-mark>
               <t-input v-model="loginForm.password" type="password" :placeholder="$t('login.passwordPlaceholder')" />
             </t-form-item>
             <t-form-item class="submit-item">
@@ -23,21 +23,33 @@
         </t-tab-panel>
 
         <t-tab-panel value="register" :label="$t('login.registerBtn')">
-          <t-form :data="registerForm" @submit="handleRegister">
-            <t-form-item :label="$t('login.username')" name="username">
+          <t-form
+            :data="registerForm"
+            :rules="registerRules"
+            @submit="handleRegister"
+          >
+            <t-form-item :label="$t('login.username')" name="username" required-mark :help="$t('login.usernameHint')">
               <t-input v-model="registerForm.username" :placeholder="$t('login.usernamePlaceholder')" />
             </t-form-item>
-            <t-form-item :label="$t('login.nickname')" name="nickname">
-              <t-input v-model="registerForm.nickname" :placeholder="$t('login.nicknamePlaceholder')" />
+            <t-form-item :label="$t('login.password')" name="password" required-mark :help="$t('login.passwordHint')">
+              <t-input
+                v-model="registerForm.password"
+                type="password"
+                :placeholder="$t('login.passwordPlaceholder')"
+              />
             </t-form-item>
-            <t-form-item :label="$t('login.password')" name="password">
-              <t-input v-model="registerForm.password" type="password" :placeholder="$t('login.passwordPlaceholder')" />
+            <t-form-item :label="$t('login.confirmPassword')" name="confirmPassword" required-mark>
+              <t-input
+                v-model="registerForm.confirmPassword"
+                type="password"
+                :placeholder="$t('login.confirmPasswordPlaceholder')"
+              />
             </t-form-item>
-            <t-form-item :label="$t('login.email')" name="email">
-              <t-input v-model="registerForm.email" :placeholder="$t('login.emailPlaceholder')" />
+            <t-form-item :label="$t('login.phone')" name="phone" required-mark>
+              <t-input v-model="registerForm.phone" :placeholder="$t('login.phonePlaceholder')" />
             </t-form-item>
-            <t-form-item :label="$t('login.isMember')" name="isMember">
-              <t-switch v-model="registerForm.isMember" :label="[$t('common.yes'), $t('common.no')]" />
+            <t-form-item :label="$t('login.inviteCode')" name="inviteCode" required-mark :help="$t('login.inviteCodeHint')">
+              <t-input v-model="registerForm.inviteCode" :placeholder="$t('login.inviteCodePlaceholder')" />
             </t-form-item>
             <t-form-item class="submit-item">
               <t-button theme="primary" type="submit" block :loading="loading">{{ $t('login.registerBtn') }}</t-button>
@@ -55,6 +67,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useUserStore } from '../stores/user'
+import { checkPhone, checkInviteCode } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 const router = useRouter()
@@ -64,7 +77,130 @@ const tab = ref('login')
 const loading = ref(false)
 
 const loginForm = reactive({ username: '', password: '' })
-const registerForm = reactive({ username: '', nickname: '', password: '', email: '', isMember: false })
+const registerForm = reactive({
+  username: '',
+  password: '',
+  confirmPassword: '',
+  phone: '',
+  inviteCode: ''
+})
+
+// 用户名：4-32位，字母开头，支持字母/数字/下划线
+const usernamePattern = /^[a-zA-Z][a-zA-Z0-9_]{3,31}$/
+// 密码：6-20位，必须包含大小写字母、数字和符号
+const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{6,20}$/
+// 简单的手机号格式校验（不发验证码）
+const phonePattern = /^\+?\d{6,20}$/
+
+/** 手机号失焦时异步校验是否已注册 */
+async function phoneExistsValidator(val: string) {
+  if (!val || !phonePattern.test(val)) return { result: true }
+  try {
+    const res = await checkPhone(val)
+    if (res.data?.data === true) {
+      return { result: false, message: t('login.errorPhoneExists') }
+    }
+    return { result: true }
+  } catch (e) {
+    // 401 时 axios 拦截器已跳转 /login，这里返回 false 阻断提交
+    const status = (e as any)?.response?.status
+    if (status === 401) {
+      return { result: false, message: t('login.errorPhoneExists') }
+    }
+    // 其它网络异常：抛出错误让 t-form 显示并阻断提交
+    throw e
+  }
+}
+
+/** 邀请码异步校验：调后端 check-invite-code 确认存在且未被核销 */
+async function inviteCodeValidator(val: string) {
+  if (!val) return { result: true } // required 规则会处理空值
+  if (val.length < 4 || val.length > 32) {
+    return { result: false, message: t('login.errorInviteCodeFormat') }
+  }
+  try {
+    const res = await checkInviteCode(val)
+    if (res.data?.data !== true) {
+      return { result: false, message: t('login.errorInviteCodeInvalid') }
+    }
+    return { result: true }
+  } catch (e) {
+    const status = (e as any)?.response?.status
+    if (status === 401) {
+      return { result: false, message: t('login.errorInviteCodeInvalid') }
+    }
+    throw e
+  }
+}
+
+const registerRules = {
+  username: [
+    { required: true, message: t('login.errorUsernameRequired'), trigger: 'blur' },
+    {
+      pattern: usernamePattern,
+      message: t('login.errorUsernameFormat'),
+      trigger: 'blur'
+    }
+  ],
+  password: [
+    { required: true, message: t('login.errorPasswordRequired'), trigger: 'blur' },
+    {
+      pattern: passwordPattern,
+      message: t('login.errorPasswordFormat'),
+      trigger: 'blur'
+    }
+  ],
+  confirmPassword: [
+    { required: true, message: t('login.errorConfirmPasswordRequired'), trigger: 'blur' },
+    {
+      validator: (val: string) => val === registerForm.password,
+      message: t('login.errorPasswordMismatch'),
+      trigger: 'blur'
+    }
+  ],
+  phone: [
+    { required: true, message: t('login.errorPhoneRequired'), trigger: 'blur' },
+    {
+      pattern: phonePattern,
+      message: t('login.errorPhoneFormat'),
+      trigger: 'blur'
+    },
+    {
+      validator: phoneExistsValidator,
+      message: t('login.errorPhoneExists'),
+      trigger: 'blur'
+    },
+    // input/change 时也校验，提交时再次校验
+    {
+      validator: phoneExistsValidator,
+      message: t('login.errorPhoneExists'),
+      trigger: 'change'
+    },
+    {
+      validator: phoneExistsValidator,
+      message: t('login.errorPhoneExists'),
+      trigger: 'submit'
+    }
+  ],
+  inviteCode: [
+    { required: true, message: t('login.errorInviteCodeRequired'), trigger: 'blur' },
+    {
+      validator: inviteCodeValidator,
+      message: t('login.errorInviteCodeFormat'),
+      trigger: 'blur'
+    },
+    {
+      validator: inviteCodeValidator,
+      message: t('login.errorInviteCodeFormat'),
+      trigger: 'change'
+    },
+    {
+      validator: inviteCodeValidator,
+      message: t('login.errorInviteCodeFormat'),
+      trigger: 'submit'
+    }
+  ]
+}
 
 async function handleLogin() {
   if (!loginForm.username || !loginForm.password) {
@@ -84,13 +220,50 @@ async function handleLogin() {
 }
 
 async function handleRegister() {
-  if (!registerForm.username || !registerForm.password) {
-    MessagePlugin.warning(t('login.error'))
+  // 二次前端兜底校验
+  if (!registerForm.username || !registerForm.password || !registerForm.confirmPassword || !registerForm.phone || !registerForm.inviteCode) {
+    MessagePlugin.warning(t('login.errorAllRequired'))
     return
   }
+  if (!usernamePattern.test(registerForm.username)) {
+    MessagePlugin.warning(t('login.errorUsernameFormat'))
+    return
+  }
+  if (!passwordPattern.test(registerForm.password)) {
+    MessagePlugin.warning(t('login.errorPasswordFormat'))
+    return
+  }
+  if (registerForm.password !== registerForm.confirmPassword) {
+    MessagePlugin.warning(t('login.errorPasswordMismatch'))
+    return
+  }
+  if (!phonePattern.test(registerForm.phone)) {
+    MessagePlugin.warning(t('login.errorPhoneFormat'))
+    return
+  }
+
   loading.value = true
   try {
-    await userStore.registerAction({ ...registerForm, isMember: registerForm.isMember ? 1 : 0 })
+    // 1. 手机号查重
+    const phoneCheck = await checkPhone(registerForm.phone)
+    if (phoneCheck.data?.data === true) {
+      MessagePlugin.error(t('login.errorPhoneExists'))
+      return
+    }
+
+    // 2. 邀请码有效性
+    const inviteCheck = await checkInviteCode(registerForm.inviteCode)
+    if (inviteCheck.data?.data !== true) {
+      MessagePlugin.error(t('login.errorInviteCodeInvalid'))
+      return
+    }
+
+    await userStore.registerAction({
+      username: registerForm.username,
+      password: registerForm.password,
+      phone: registerForm.phone,
+      inviteCode: registerForm.inviteCode
+    })
     MessagePlugin.success(t('login.registerSuccess'))
     tab.value = 'login'
     loginForm.username = registerForm.username
@@ -165,6 +338,13 @@ async function handleRegister() {
 
 .login-tabs :deep(.t-form__label) {
   margin-bottom: 4px;
+}
+
+/* TDesign required-mark 自带红色 *，并保留一定字距 */
+.login-tabs :deep(.t-form__label--required::before) {
+  color: #e34d59;
+  margin-right: 4px;
+  font-weight: 600;
 }
 
 .login-tabs :deep(.t-input) {

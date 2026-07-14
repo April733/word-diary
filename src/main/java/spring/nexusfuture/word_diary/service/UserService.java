@@ -8,4 +8,5 @@ public interface UserService {
     void register(RegisterReq req);
     UserVO login(LoginReq req);
     void updateLocale(Long userId, String locale);
+    boolean isPhoneExists(String phone);
 }

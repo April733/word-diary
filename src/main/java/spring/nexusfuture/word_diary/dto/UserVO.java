@@ -12,6 +12,8 @@ public class UserVO {
     private String token;
     /** 是否会员 1是 0否 */
     private Integer isMember;
+    /** 会员等级 */
+    private Integer memberTier;
     /** 偏好语言，如 zh-CN / en / id / vi / th */
     private String preferredLocale;
 }

@@ -29,6 +29,8 @@ api.interceptors.response.use(
 export const register = (data: any) => api.post('/user/register', data)
 export const login = (data: any) => api.post('/user/login', data)
 export const updateUserLocale = (locale: string) => api.put('/user/locale', { locale })
+export const checkPhone = (phone: string) => api.get('/user/check-phone', { params: { phone } })
+export const checkInviteCode = (code: string) => api.get('/user/check-invite-code', { params: { code } })
 
 // Notebooks
 export const createNotebook = (data: any) => api.post('/notebooks', data)

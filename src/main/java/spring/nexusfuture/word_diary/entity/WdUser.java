@@ -37,6 +37,9 @@ public class WdUser {
     /** 是否会员 1是 0否 */
     private Integer isMember;
 
+    /** 会员等级，关联 sys_member_tier.tier */
+    private Integer memberTier;
+
     /** 偏好语言，如 zh-CN / en / id / vi / th */
     private String preferredLocale;
 
