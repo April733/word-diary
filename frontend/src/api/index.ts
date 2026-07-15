@@ -115,3 +115,12 @@ export const deleteAnnotation = (bookId: number, id: number) => api.delete(`/boo
 // Reader Settings
 export const getReaderSettings = () => api.get('/books/reader-settings')
 export const saveReaderSettings = (data: any) => api.put('/books/reader-settings', data)
+
+// AI Sessions
+export const getAiSessions = (bookId?: number) =>
+  api.get('/books/ai-sessions', { params: bookId != null ? { bookId } : {} })
+export const createAiSession = (data: { bookId?: number }) => api.post('/books/ai-sessions', data)
+export const getAiMessages = (sessionId: number) => api.get(`/books/ai-sessions/${sessionId}/messages`)
+export const getAiMessagesPaged = (sessionId: number, offset: number, limit: number) =>
+  api.get(`/books/ai-sessions/${sessionId}/messages/paged`, { params: { offset, limit } })
+export const deleteAiSession = (sessionId: number) => api.delete(`/books/ai-sessions/${sessionId}`)

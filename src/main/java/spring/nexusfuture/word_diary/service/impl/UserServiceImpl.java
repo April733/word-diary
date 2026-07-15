@@ -4,7 +4,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
-import spring.nexusfuture.word_diary.controller.AuthInterceptor;
+import spring.nexusfuture.word_diary.common.JwtUtil;
 import spring.nexusfuture.word_diary.dto.LoginReq;
 import spring.nexusfuture.word_diary.dto.RegisterReq;
 import spring.nexusfuture.word_diary.dto.UserVO;
@@ -18,7 +18,6 @@ import spring.nexusfuture.word_diary.mapper.WdUserMapper;
 import spring.nexusfuture.word_diary.service.MemberTierService;
 import spring.nexusfuture.word_diary.service.UserService;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -27,15 +26,18 @@ public class UserServiceImpl implements UserService {
     private final WdInviteCodeMapper inviteCodeMapper;
     private final WdUserBenefitMapper userBenefitMapper;
     private final MemberTierService memberTierService;
+    private final JwtUtil jwtUtil;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public UserServiceImpl(WdUserMapper userMapper, WdInviteCodeMapper inviteCodeMapper,
                            WdUserBenefitMapper userBenefitMapper,
-                           MemberTierService memberTierService) {
+                           MemberTierService memberTierService,
+                           JwtUtil jwtUtil) {
         this.userMapper = userMapper;
         this.inviteCodeMapper = inviteCodeMapper;
         this.userBenefitMapper = userBenefitMapper;
         this.memberTierService = memberTierService;
+        this.jwtUtil = jwtUtil;
     }
 
     @Override
@@ -102,8 +104,7 @@ public class UserServiceImpl implements UserService {
         if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
             throw new BizException("用户名或密码错误");
         }
-        String token = UUID.randomUUID().toString().replace("-", "");
-        AuthInterceptor.storeToken(token, user.getId());
+        String token = jwtUtil.generateToken(user.getId());
         return UserVO.builder()
                 .id(user.getId())
                 .username(user.getUsername())

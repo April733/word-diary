@@ -354,3 +354,37 @@ CREATE TABLE IF NOT EXISTS `wd_user_ai_preference` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户AI功能偏好表';
+
+-- =============================================
+-- AI 对话会话表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_ai_session` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '所属用户ID',
+  `book_id` bigint DEFAULT NULL COMMENT '关联书籍ID，按书隔离会话',
+  `title` varchar(256) NOT NULL DEFAULT '新对话' COMMENT '会话标题',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_book` (`user_id`, `book_id`),
+  KEY `idx_user_book_time` (`user_id`, `book_id`, `update_time` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI对话会话表';
+
+-- =============================================
+-- AI 对话消息表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_ai_message` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `session_id` bigint NOT NULL COMMENT '所属会话ID',
+  `parent_id` bigint DEFAULT NULL COMMENT '关联的问题ID（assistant消息指向对应user消息的id）',
+  `role` varchar(20) NOT NULL COMMENT '角色: user / assistant',
+  `content` text NOT NULL COMMENT '消息内容',
+  `feature_key` varchar(255) DEFAULT NULL COMMENT '触发此消息的AI功能标识',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_session_id` (`session_id`),
+  KEY `idx_parent_id` (`parent_id`),
+  KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI对话消息表';

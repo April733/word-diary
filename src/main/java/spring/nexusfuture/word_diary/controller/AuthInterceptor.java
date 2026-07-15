@@ -6,30 +6,21 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+import spring.nexusfuture.word_diary.common.JwtUtil;
 import spring.nexusfuture.word_diary.common.R;
 import spring.nexusfuture.word_diary.entity.WdUser;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
-import spring.nexusfuture.word_diary.service.MemberTierService;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
-    // Simple in-memory token store (TODO: replace with Redis/JWT in production)
-    private static final Map<String, Long> TOKEN_STORE = new ConcurrentHashMap<>();
-
+    private final JwtUtil jwtUtil;
     private final WdUserMapper userMapper;
-    private final MemberTierService memberTierService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AuthInterceptor(WdUserMapper userMapper, MemberTierService memberTierService) {
+    public AuthInterceptor(JwtUtil jwtUtil, WdUserMapper userMapper) {
+        this.jwtUtil = jwtUtil;
         this.userMapper = userMapper;
-        this.memberTierService = memberTierService;
-    }
-
-    public static void storeToken(String token, Long userId) {
-        TOKEN_STORE.put(token, userId);
     }
 
     @Override
@@ -42,7 +33,10 @@ public class AuthInterceptor implements HandlerInterceptor {
         String path = request.getRequestURI();
 
         // Skip auth for login/register and public user APIs
-        if (path.contains("/api/user/login") || path.contains("/api/user/register") || path.contains("/api/user/check-phone") || path.contains("/api/user/check-invite-code") || path.contains("/api/user/send-sms") || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/reset-password")) {
+        if (path.contains("/api/user/login") || path.contains("/api/user/register")
+                || path.contains("/api/user/check-phone") || path.contains("/api/user/check-invite-code")
+                || path.contains("/api/user/send-sms") || path.contains("/api/user/send-reset-sms")
+                || path.contains("/api/user/reset-password")) {
             return true;
         }
 
@@ -50,14 +44,21 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
         }
-        if (token == null || !TOKEN_STORE.containsKey(token)) {
+        if (token == null || token.isEmpty()) {
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write(objectMapper.writeValueAsString(R.fail(401, "未登录或登录已过期")));
             return false;
         }
 
-        Long userId = TOKEN_STORE.get(token);
+        Long userId = jwtUtil.getUserIdFromToken(token);
+        if (userId == null) {
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write(objectMapper.writeValueAsString(R.fail(401, "未登录或登录已过期")));
+            return false;
+        }
+
         request.setAttribute("userId", userId);
 
         // Load user info for membership check

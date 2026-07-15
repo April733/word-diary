@@ -27,4 +27,6 @@ if (userStore.user?.preferredLocale) {
 // 同步设置 html lang，避免浏览器自动提示翻译
 document.documentElement.lang = i18n.global.locale.value
 
-app.mount('#app')
+router.isReady().then(() => {
+  app.mount('#app')
+})

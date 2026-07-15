@@ -33,7 +33,7 @@ build/
 .vscode/
 
 ### Application Config ###
-src/main/resources/application.yml
+src/main/resources/application*.yml
 
 ### Frontend ###
 frontend/node_modules/
