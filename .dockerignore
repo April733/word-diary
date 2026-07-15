@@ -1,0 +1,16 @@
+frontend/
+frontend
+.git/
+.gitignore
+.gitattributes
+.mvn/
+mvnw.cmd
+.claude/
+.codebuddy/
+.idea/
+.tk
+prd/
+HELP.md
+target/
+*.zip
+.DS_Store

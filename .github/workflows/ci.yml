@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-tests:
+    name: Backend tests (Maven)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Maven local repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
+      - name: Build and run backend tests
+        run: ./mvnw -B -V test
+
+      - name: Upload Surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports
+
+      - name: Generate HTML test report (purpose-date)
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p report
+          # try to generate maven surefire HTML report (target/site/surefire-report.html)
+          if ./mvnw -q surefire-report:report-only; then
+            if [ -f target/site/surefire-report.html ]; then
+              PURPOSE="完整链路测试"
+              DATESTR=$(date +%Y%m%d)
+              cp target/site/surefire-report.html "report/${PURPOSE}-${DATESTR}.html"
+              echo "Generated report: report/${PURPOSE}-${DATESTR}.html"
+            fi
+          fi
+          # fallback: if surefire-report not created, synthesize a simple HTML from surefire xmls
+          if [ ! -f report/完整链路测试-$(date +%Y%m%d).html ]; then
+            DATESTR=$(date +%Y%m%d)
+            OUT=report/完整链路测试-${DATESTR}.html
+            echo "<html><head><meta charset=\"utf-8\"><title>完整链路测试 - ${DATESTR}</title></head><body><h1>完整链路测试 - ${DATESTR}</h1>" > "$OUT"
+            echo "<h2>Test summary</h2><ul>" >> "$OUT"
+            if compgen -G "target/surefire-reports/*.xml" > /dev/null; then
+              for f in target/surefire-reports/*.xml; do
+                name=$(basename "$f")
+                tests=$(xmllint --xpath 'string(/testsuite/@tests)' "$f" 2>/dev/null || echo "0")
+                failures=$(xmllint --xpath 'string(/testsuite/@failures)' "$f" 2>/dev/null || echo "0")
+                errors=$(xmllint --xpath 'string(/testsuite/@errors)' "$f" 2>/dev/null || echo "0")
+                skipped=$(xmllint --xpath 'string(/testsuite/@skipped)' "$f" 2>/dev/null || echo "0")
+                echo "<li>$name: tests=$tests failures=$failures errors=$errors skipped=$skipped</li>" >> "$OUT"
+              done
+            else
+              echo "<li>No surefire XML reports found.</li>" >> "$OUT"
+            fi
+            echo "</ul><p>See uploaded surefire-reports artifact for raw XML.</p></body></html>" >> "$OUT"
+            echo "Synthesized fallback report: $OUT"
+          fi
+
+      - name: Upload project report folder if present
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-reports
+          path: report
+
+  frontend-build:
+    name: Frontend (optional) build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install and build (skip if no package.json)
+        if: filesExists('frontend/package.json')
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend dist (if exists)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
