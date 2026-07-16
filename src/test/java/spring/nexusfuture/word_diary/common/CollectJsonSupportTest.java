@@ -62,6 +62,22 @@ class CollectJsonSupportTest {
         assertTrue(instruction.contains(CollectJsonSupport.MARKER));
         assertTrue(instruction.contains("entryType"));
         assertTrue(instruction.contains("wordProto"));
+        assertTrue(instruction.contains("rootAffix"));
+        assertTrue(instruction.contains("sentenceExample"));
+        assertTrue(instruction.contains("固定搭配") || instruction.contains("phrase"));
+    }
+
+    @Test
+    void parseEntries_keepsRootAffixAndExample() throws Exception {
+        String raw = """
+                讲解。
+                %s
+                {"entries":[{"entryType":"word","wordProto":"require","partSpeechMean":"v. 需要","rootAffix":"re- + quire","sentenceExample":"This task requires care."}]}
+                """.formatted(CollectJsonSupport.MARKER);
+        List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(raw, mapper);
+        assertEquals(1, entries.size());
+        assertEquals("re- + quire", entries.get(0).getRootAffix());
+        assertEquals("This task requires care.", entries.get(0).getSentenceExample());
     }
 
     @Test

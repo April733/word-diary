@@ -361,17 +361,17 @@ function toggleAll(checked: boolean) {
 
 function addCheckedToBasket() {
   if (!notebookId.value || checkedEntries.value.length === 0) return
+  const count = checkedEntries.value.length
   basket.value = mergeIntoBasket(props.bookId, notebookId.value, checkedEntries.value)
   refreshCounts()
   MessagePlugin.success(
     t('reader.collectBasketAdded', {
-      count: checkedEntries.value.length,
+      count,
       name: activeNotebookName.value
     })
   )
-  viewMode.value = 'basket'
-  basketTab.value = 'pending'
-  checkedKeys.value = new Set(basket.value.map(e => e.basketKey))
+  // 成功提示即可，不跳转到未收录列表
+  visibleModel.value = false
 }
 
 function clearBasketLocal() {
@@ -400,7 +400,7 @@ async function saveToNotebook() {
         partSpeechMean: e.partSpeechMean,
         usPhonetic: e.usPhonetic,
         ukPhonetic: e.ukPhonetic,
-        sentenceExample: e.sentenceExample || props.sourceSnippet || '',
+        sentenceExample: props.sourceSnippet || e.sentenceExample || '',
         rootAffix: e.rootAffix,
         appendExample: true
       }))
@@ -422,7 +422,12 @@ async function saveToNotebook() {
     }
     checkedKeys.value = new Set()
     emit('saved')
-    // 保存后切到已收录，方便立刻核对
+    // 从本次识别直接保存：成功提示后关闭，不跳列表
+    if (viewMode.value === 'current') {
+      visibleModel.value = false
+      return
+    }
+    // 从收录篮保存：切到已收录便于核对
     if (viewMode.value === 'basket' && notebookId.value) {
       basketTab.value = 'saved'
       await loadSavedWords(notebookId.value)

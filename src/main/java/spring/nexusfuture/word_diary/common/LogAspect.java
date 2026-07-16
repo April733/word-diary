@@ -79,12 +79,17 @@ public class LogAspect {
 
         long elapsed = System.currentTimeMillis() - start;
 
-        // 出参
+        // 出参（跳过流式类型，避免 Jackson 误订阅 Flux）
         String resultStr;
-        try {
-            resultStr = objectMapper.writeValueAsString(result);
-        } catch (Exception e) {
-            resultStr = String.valueOf(result);
+        if (result instanceof org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+                || result instanceof org.reactivestreams.Publisher) {
+            resultStr = result.getClass().getSimpleName();
+        } else {
+            try {
+                resultStr = objectMapper.writeValueAsString(result);
+            } catch (Exception e) {
+                resultStr = String.valueOf(result);
+            }
         }
 
         // 如果出参过长截断

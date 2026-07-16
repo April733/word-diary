@@ -147,9 +147,22 @@ export function migrateLegacyBasketIfNeeded(bookId: number, notebookIds: number[
 
 export const COLLECT_JSON_MARKER = '---COLLECT_JSON---'
 
+/** 去掉收录标记及其后的 JSON；流式拆包时也去掉末尾不完整前缀 */
 export function stripCollectMarker(text: string): string {
+  if (!text) return ''
   const idx = text.indexOf(COLLECT_JSON_MARKER)
-  return idx >= 0 ? text.substring(0, idx).trim() : text
+  if (idx >= 0) return text.substring(0, idx).trimEnd()
+
+  // 完整标记尚未到齐时，模型可能已吐出 ---COLLECT_JSON 等前缀
+  const soft = text.indexOf('---COLLECT_JSON')
+  if (soft >= 0) return text.substring(0, soft).trimEnd()
+
+  for (let len = Math.min(COLLECT_JSON_MARKER.length - 1, text.length); len >= 3; len--) {
+    if (text.endsWith(COLLECT_JSON_MARKER.slice(0, len))) {
+      return text.slice(0, -len).trimEnd()
+    }
+  }
+  return text
 }
 
 /** 从入库的完整 AI 回复中解析可收录词条（历史会话恢复用） */
@@ -171,7 +184,7 @@ export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): C
         partSpeechMean: String(e.partSpeechMean).trim(),
         usPhonetic: e.usPhonetic,
         ukPhonetic: e.ukPhonetic,
-        sentenceExample: e.sentenceExample || sourceSnippet || undefined,
+        sentenceExample: sourceSnippet || e.sentenceExample || undefined,
         rootAffix: e.rootAffix,
         sourceSnippet: sourceSnippet || undefined
       }))

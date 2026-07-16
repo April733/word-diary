@@ -142,9 +142,11 @@ const emit = defineEmits<{
 
 const SCALE_STEP = 0.2
 const MAX_SELECTION_LENGTH = 800
-const RENDER_MARGIN = '600px'
-/** 视口外超过此缓冲的已渲染页释放 canvas，控制内存 */
-const KEEP_BUFFER = 3
+const RENDER_MARGIN = '1200px'
+/** 视口外超过此缓冲的已渲染页才考虑释放 */
+const KEEP_BUFFER = 6
+/** 离开视口后延迟释放，避免来回滚动闪白 */
+const RELEASE_DELAY_MS = 3000
 const MIN_SELECT_SIZE = 8
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -160,11 +162,14 @@ const renderedPages = reactive(new Set<number>())
 const renderingPages = new Set<number>()
 const placeholderHeights = reactive<Record<number, number>>({})
 const pageAspect = reactive<Record<number, number>>({})
+const releaseTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
 let observer: IntersectionObserver | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let currentPage = 1
 let destroyed = false
+let lastHighlightEmit = 0
+let lastHighlightPage = -1
 
 // 框选 OCR 状态
 const selectPage = ref<number | null>(null)
@@ -433,7 +438,16 @@ function setupObserver() {
   pages.forEach((el) => observer!.observe(el))
 }
 
+function cancelPendingRelease(pageNum: number) {
+  const timer = releaseTimers.get(pageNum)
+  if (timer) {
+    clearTimeout(timer)
+    releaseTimers.delete(pageNum)
+  }
+}
+
 function scheduleRender(pageNum: number) {
+  cancelPendingRelease(pageNum)
   if (renderedPages.has(pageNum) || renderingPages.has(pageNum) || !pdfDoc) return
   renderingPages.add(pageNum)
   renderPage(pageNum).finally(() => renderingPages.delete(pageNum))
@@ -453,21 +467,36 @@ async function renderPage(pageNum: number) {
     const canvas = canvasMap.get(pageNum)
     if (!canvas) return
 
-    // 高 DPI 清晰渲染
+    // 离屏渲染完成后再贴到可见 canvas，避免清空瞬间闪白
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    canvas.width = Math.floor(viewport.width * dpr)
-    canvas.height = Math.floor(viewport.height * dpr)
-    canvas.style.width = Math.floor(viewport.width) + 'px'
-    canvas.style.height = Math.floor(viewport.height) + 'px'
-    placeholderHeights[pageNum] = Math.floor(viewport.height)
+    const cssW = Math.floor(viewport.width)
+    const cssH = Math.floor(viewport.height)
+    const offscreen = document.createElement('canvas')
+    offscreen.width = Math.floor(cssW * dpr)
+    offscreen.height = Math.floor(cssH * dpr)
+    const offCtx = offscreen.getContext('2d')
+    if (!offCtx) return
+    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-    const task = page.render({ canvasContext: ctx, viewport })
+    const task = page.render({ canvasContext: offCtx, viewport })
     await task.promise
     if (destroyed) return
+
+    const prevH = placeholderHeights[pageNum]
+    if (!prevH || Math.abs(prevH - cssH) > 2) {
+      placeholderHeights[pageNum] = cssH
+    }
+
+    canvas.width = offscreen.width
+    canvas.height = offscreen.height
+    canvas.style.width = cssW + 'px'
+    canvas.style.height = cssH + 'px'
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(offscreen, 0, 0)
+
     renderedPages.add(pageNum)
     redrawMarkupLayer(pageNum)
   } catch (e) {
@@ -478,12 +507,30 @@ async function renderPage(pageNum: number) {
 function maybeReleasePage(pageNum: number) {
   if (!renderedPages.has(pageNum)) return
   if (Math.abs(pageNum - currentPage) <= KEEP_BUFFER) return
+  if (releaseTimers.has(pageNum)) return
+  releaseTimers.set(
+    pageNum,
+    setTimeout(() => {
+      releaseTimers.delete(pageNum)
+      doReleasePage(pageNum)
+    }, RELEASE_DELAY_MS)
+  )
+}
+
+function doReleasePage(pageNum: number) {
+  if (!renderedPages.has(pageNum)) return
+  if (Math.abs(pageNum - currentPage) <= KEEP_BUFFER) return
   const canvas = canvasMap.get(pageNum)
   if (canvas) {
     const ctx = canvas.getContext('2d')
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-    canvas.width = 0
-    canvas.height = 0
+    canvas.width = 1
+    canvas.height = 1
+  }
+  const layer = markupCanvasMap.get(pageNum)
+  if (layer) {
+    layer.width = 1
+    layer.height = 1
   }
   renderedPages.delete(pageNum)
 }
@@ -513,7 +560,13 @@ function updateCurrentPageFromScroll() {
     }
   }
   currentPage = page
-  emit('chapter-highlight', page)
+  // 节流目录高亮，避免滚动时频繁触发父组件重绘
+  const now = Date.now()
+  if (page !== lastHighlightPage && now - lastHighlightEmit > 120) {
+    lastHighlightPage = page
+    lastHighlightEmit = now
+    emit('chapter-highlight', page)
+  }
 }
 
 function getPageOffsetRatio(pageNum: number): number {
@@ -599,6 +652,9 @@ function zoomOut() {
 
 async function rerenderVisible() {
   // 释放全部 canvas，按新缩放懒加载
+  for (const pageNum of [...releaseTimers.keys()]) {
+    cancelPendingRelease(pageNum)
+  }
   renderedPages.clear()
   initPlaceholders()
   await nextTick()
@@ -985,6 +1041,8 @@ onBeforeUnmount(() => {
   destroyed = true
   window.removeEventListener('keydown', onKeyDown)
   if (saveTimer) clearTimeout(saveTimer)
+  for (const timer of releaseTimers.values()) clearTimeout(timer)
+  releaseTimers.clear()
   observer?.disconnect()
   observer = null
   const container = containerRef.value

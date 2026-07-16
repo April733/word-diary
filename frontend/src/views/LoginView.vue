@@ -4,7 +4,7 @@
       <div class="bg-wash" />
     </div>
 
-    <div class="login-shell">
+    <div class="login-shell" :class="{ 'login-shell--wide': tab !== 'login' }">
       <div class="login-card">
         <div class="card-top">
           <div class="card-brand">
@@ -18,7 +18,13 @@
         </div>
 
       <template v-if="tab === 'login'">
-        <t-form class="login-form" :data="loginForm" @submit="handleLogin">
+        <t-form
+          class="login-form"
+          label-align="right"
+          label-width="80px"
+          :data="loginForm"
+          @submit="handleLogin"
+        >
           <t-form-item :label="$t('login.username')" name="username">
             <t-input v-model="loginForm.username" :placeholder="$t('login.usernamePlaceholder')" size="large" />
           </t-form-item>
@@ -41,7 +47,9 @@
       <template v-else-if="tab === 'register'">
         <t-form
           ref="registerFormRef"
-          class="login-form"
+          class="login-form login-form--register"
+          label-align="right"
+          label-width="96px"
           :data="registerForm"
           :rules="registerRules"
           @submit="handleRegister"
@@ -86,21 +94,36 @@
 
       <template v-else>
         <p class="panel-hint">{{ $t('login.forgotPasswordDesc') }}</p>
-        <t-form class="login-form" :data="forgotForm" @submit="handleForgotPassword">
-          <t-form-item :label="$t('login.phone')" name="phone">
+        <t-form
+          class="login-form login-form--register"
+          label-align="right"
+          label-width="96px"
+          :data="forgotForm"
+          @submit="handleForgotPassword"
+        >
+          <t-form-item :label="$t('login.resetType')">
+            <t-radio-group v-model="forgotType" variant="default-filled" @change="onForgotTypeChange">
+              <t-radio-button value="phone">{{ $t('login.phone') }}</t-radio-button>
+              <t-radio-button value="email">{{ $t('login.email') }}</t-radio-button>
+            </t-radio-group>
+          </t-form-item>
+          <t-form-item v-if="forgotType === 'phone'" :label="$t('login.phone')" name="phone">
             <t-input v-model="forgotForm.phone" :placeholder="$t('login.phonePlaceholder')" size="large" />
           </t-form-item>
-          <t-form-item :label="$t('login.smsCode')" name="smsCode">
+          <t-form-item v-else :label="$t('login.email')" name="email">
+            <t-input v-model="forgotForm.email" :placeholder="$t('login.emailPlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.verifyCode')" name="code">
             <div class="sms-row">
-              <t-input v-model="forgotForm.smsCode" :placeholder="$t('login.smsCodePlaceholder')" class="sms-input" maxlength="6" size="large" />
+              <t-input v-model="forgotForm.code" :placeholder="$t('login.verifyCodePlaceholder')" class="sms-input" maxlength="6" size="large" />
               <t-button
                 variant="outline"
                 class="sms-btn"
-                :disabled="forgotCooldown > 0 || !phonePattern.test(forgotForm.phone)"
-                :loading="forgotSmsSending"
-                @click="handleSendForgotSms"
+                :disabled="forgotCooldown > 0 || !canSendForgotCode"
+                :loading="forgotCodeSending"
+                @click="handleSendForgotCode"
               >
-                {{ forgotCooldown > 0 ? $t('login.sendSmsRetry', { seconds: forgotCooldown }) : $t('login.sendSms') }}
+                {{ forgotCooldown > 0 ? $t('login.sendSmsRetry', { seconds: forgotCooldown }) : $t('login.sendCode') }}
               </t-button>
             </div>
           </t-form-item>
@@ -145,7 +168,7 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { reportIssue, reportIssuePublic } from '../api'
 import { useUserStore } from '../stores/user'
-import { checkPhone, checkEmail, sendSms, sendMailCode, sendResetSms, resetPassword } from '../api'
+import { checkPhone, checkEmail, sendSms, sendMailCode, sendResetSms, sendResetMail, resetPassword } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 import { isPhoneRegisterAllowed } from '../utils/region'
 
@@ -157,7 +180,7 @@ const tab = ref('login')
 const loading = ref(false)
 const codeSending = ref(false)
 const codeCooldown = ref(0)
-const forgotSmsSending = ref(false)
+const forgotCodeSending = ref(false)
 const forgotCooldown = ref(0)
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let forgotCooldownTimer: ReturnType<typeof setInterval> | null = null
@@ -166,6 +189,7 @@ const loginForm = reactive({ username: '', password: '' })
 /** 仅中文（中国）可用手机号注册；其它语言地区置灰并默认邮箱 */
 const phoneRegisterAllowed = computed(() => isPhoneRegisterAllowed(locale.value))
 const registerType = ref<'phone' | 'email'>(phoneRegisterAllowed.value ? 'phone' : 'email')
+const forgotType = ref<'phone' | 'email'>('phone')
 const registerForm = reactive({
   username: '',
   password: '',
@@ -196,7 +220,8 @@ const reportForm = reactive({
 })
 const forgotForm = reactive({
   phone: '',
-  smsCode: '',
+  email: '',
+  code: '',
   newPassword: ''
 })
 
@@ -217,6 +242,13 @@ const canSendCode = computed(() => {
   return emailPattern.test(registerForm.email)
 })
 
+const canSendForgotCode = computed(() => {
+  if (forgotType.value === 'phone') {
+    return phonePattern.test(forgotForm.phone)
+  }
+  return emailPattern.test(forgotForm.email)
+})
+
 /** 切换注册方式时清空对应字段 */
 function onRegisterTypeChange() {
   if (!phoneRegisterAllowed.value && registerType.value === 'phone') {
@@ -231,6 +263,18 @@ function onRegisterTypeChange() {
     cooldownTimer = null
   }
   codeCooldown.value = 0
+}
+
+/** 切换找回方式时清空对应字段 */
+function onForgotTypeChange() {
+  forgotForm.phone = ''
+  forgotForm.email = ''
+  forgotForm.code = ''
+  if (forgotCooldownTimer) {
+    clearInterval(forgotCooldownTimer)
+    forgotCooldownTimer = null
+  }
+  forgotCooldown.value = 0
 }
 
 /** 手机号异步校验是否已注册 */
@@ -495,16 +539,26 @@ async function handleRegister() {
   }
 }
 
-/** 发送密码找回短信验证码 */
-async function handleSendForgotSms() {
-  if (!phonePattern.test(forgotForm.phone)) {
-    MessagePlugin.warning(t('login.errorPhoneFormat'))
+/** 发送密码找回验证码（手机或邮箱） */
+async function handleSendForgotCode() {
+  if (forgotType.value === 'phone') {
+    if (!phonePattern.test(forgotForm.phone)) {
+      MessagePlugin.warning(t('login.errorPhoneFormat'))
+      return
+    }
+  } else if (!emailPattern.test(forgotForm.email)) {
+    MessagePlugin.warning(t('login.errorEmailFormat'))
     return
   }
-  forgotSmsSending.value = true
+
+  forgotCodeSending.value = true
   try {
-    await sendResetSms(forgotForm.phone)
-    MessagePlugin.success(t('login.sendSmsSuccess'))
+    if (forgotType.value === 'phone') {
+      await sendResetSms(forgotForm.phone)
+    } else {
+      await sendResetMail(forgotForm.email)
+    }
+    MessagePlugin.success(t('login.sendCodeSuccess'))
     forgotCooldown.value = 60
     forgotCooldownTimer = setInterval(() => {
       forgotCooldown.value--
@@ -516,20 +570,25 @@ async function handleSendForgotSms() {
       }
     }, 1000)
   } catch (e: any) {
-    const msg = e.response?.data?.message || e.message || t('login.sendSmsFailed')
+    const msg = e.response?.data?.message || e.message || t('login.sendCodeFailed')
     MessagePlugin.error(msg)
   } finally {
-    forgotSmsSending.value = false
+    forgotCodeSending.value = false
   }
 }
 
 /** 密码找回提交 */
 async function handleForgotPassword() {
-  if (!phonePattern.test(forgotForm.phone)) {
-    MessagePlugin.warning(t('login.errorPhoneFormat'))
+  if (forgotType.value === 'phone') {
+    if (!phonePattern.test(forgotForm.phone)) {
+      MessagePlugin.warning(t('login.errorPhoneFormat'))
+      return
+    }
+  } else if (!emailPattern.test(forgotForm.email)) {
+    MessagePlugin.warning(t('login.errorEmailFormat'))
     return
   }
-  if (!/^\d{6}$/.test(forgotForm.smsCode)) {
+  if (!/^\d{6}$/.test(forgotForm.code)) {
     MessagePlugin.warning(t('login.errorSmsCodeFormat'))
     return
   }
@@ -541,8 +600,10 @@ async function handleForgotPassword() {
   loading.value = true
   try {
     await resetPassword({
-      phone: forgotForm.phone,
-      smsCode: forgotForm.smsCode,
+      resetType: forgotType.value,
+      phone: forgotType.value === 'phone' ? forgotForm.phone : undefined,
+      email: forgotType.value === 'email' ? forgotForm.email : undefined,
+      code: forgotForm.code,
       newPassword: forgotForm.newPassword
     })
     MessagePlugin.success(t('login.resetPasswordSuccess'))
@@ -590,7 +651,12 @@ async function handleForgotPassword() {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
+  transition: max-width 0.2s ease;
+}
+
+.login-shell--wide {
+  max-width: 520px;
 }
 
 .login-card {
@@ -599,6 +665,10 @@ async function handleForgotPassword() {
   border-radius: 20px;
   background: #FFFFFF;
   box-shadow: 0 8px 28px -12px rgba(49, 92, 52, 0.16);
+}
+
+.login-shell--wide .login-card {
+  padding: 36px 40px 28px;
 }
 
 .card-top {
@@ -646,25 +716,85 @@ async function handleForgotPassword() {
   flex-shrink: 0;
 }
 
-.login-form :deep(.t-form__item) {
-  margin-bottom: 18px;
+.login-form {
+  --login-label-w: 80px;
 }
 
-.login-form :deep(.t-form__label) {
+.login-form--register {
+  --login-label-w: 96px;
+}
+
+.login-form :deep(.t-form__item) {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.login-form--register :deep(.t-form__item) {
+  margin-bottom: 14px;
+}
+
+.login-form :deep(.t-form__label),
+.login-form :deep(.t-form__label--top),
+.login-form :deep(.t-form__label--left),
+.login-form :deep(.t-form__label--right) {
+  float: none !important;
+  flex: 0 0 var(--login-label-w);
+  width: var(--login-label-w) !important;
+  max-width: var(--login-label-w);
+  margin-bottom: 0 !important;
+  padding-right: 10px;
   color: #315C34;
   font-weight: 500;
-  margin-bottom: 6px;
+  text-align: right;
+  line-height: 40px;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.login-form :deep(.t-form__controls) {
+  flex: 1;
+  min-width: 0;
+  margin-left: 0 !important;
+}
+
+.login-form :deep(.t-form__controls-content) {
+  width: 100%;
+}
+
+.login-form :deep(.t-form__help) {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .login-form :deep(.t-input),
 .login-form :deep(.t-input__wrap) {
   border-radius: 10px;
+  width: 100%;
+}
+
+.login-form :deep(.t-radio-group) {
+  width: 100%;
+  display: flex;
+}
+
+.login-form :deep(.t-radio-button) {
+  flex: 1;
+  justify-content: center;
+}
+
+.login-form .primary-btn {
+  margin-top: 4px;
+  width: 100%;
 }
 
 .form-extra {
   display: flex;
   justify-content: flex-end;
   margin: -6px 0 20px;
+  padding-left: var(--login-label-w);
 }
 
 .link-btn {
@@ -731,12 +861,31 @@ async function handleForgotPassword() {
 }
 
 @media (max-width: 640px) {
-  .login-card {
+  .login-shell,
+  .login-shell--wide {
+    max-width: 100%;
+  }
+
+  .login-card,
+  .login-shell--wide .login-card {
     padding: 28px 22px 24px;
   }
 
   .product-title {
     font-size: 18px;
+  }
+
+  .login-form,
+  .login-form--register {
+    --login-label-w: 72px;
+  }
+
+  .login-form :deep(.t-form__label),
+  .login-form :deep(.t-form__label--top),
+  .login-form :deep(.t-form__label--left),
+  .login-form :deep(.t-form__label--right) {
+    padding-right: 8px;
+    font-size: 13px;
   }
 }
 </style>

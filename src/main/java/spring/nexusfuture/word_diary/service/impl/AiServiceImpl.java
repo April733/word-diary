@@ -109,31 +109,16 @@ public class AiServiceImpl implements AiService {
 
         log.info("开始AI流式调用, userId={}, words={}", userId, words);
 
-        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
         StringBuilder fullResponseText = new StringBuilder();
-
         SceneCall call = resolveCall(SCENE_WORD_PARSE);
         return call.client().prompt()
                 .options(call.options())
                 .system(systemPrompt)
                 .user(userPrompt)
                 .stream()
-                .chatResponse()
-                .doOnNext(lastResponse::set)
-                .<String>handle((chatResponse, sink) -> {
-                    try {
-                        Generation generation = chatResponse.getResult();
-                        if (generation != null && generation.getOutput() != null) {
-                            String text = generation.getOutput().getText();
-                            if (text != null && !text.isEmpty()) {
-                                fullResponseText.append(text);
-                                sink.next(text);
-                            }
-                        }
-                    } catch (Exception ex) {
-                        log.warn("处理流式chunk异常: {}", ex.getMessage());
-                    }
-                })
+                .content()
+                .filter(text -> text != null && !text.isEmpty())
+                .doOnNext(fullResponseText::append)
                 .doOnError(e -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     log.error("AI流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
@@ -144,12 +129,10 @@ public class AiServiceImpl implements AiService {
                 })
                 .doOnComplete(() -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    ChatResponse finalResponse = lastResponse.get();
                     String fullText = fullResponseText.toString();
-                    log.info("AI流式调用完成, 耗时: {}ms, tokens将从usage提取, 响应长度={}",
-                            durationMs, fullText.length());
+                    log.info("AI流式调用完成, 耗时: {}ms, 响应长度={}", durationMs, fullText.length());
                     saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
-                            fullText, finalResponse, durationMs);
+                            fullText, null, durationMs);
                 });
     }
 
@@ -167,31 +150,18 @@ public class AiServiceImpl implements AiService {
         log.info("AI阅读助手流式对话开始, userId={}, scene={}, inputWords={}",
                 userId, scene, TextMetrics.wordCount(rawInput));
 
-        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
         StringBuilder fullResponseText = new StringBuilder();
 
         SceneCall call = resolveCall(scene);
+        // 使用 content() 拿增量 token，避免 chatResponse 在部分供应商下整段回传
         return call.client().prompt()
                 .options(call.options())
                 .system(systemPrompt)
                 .user(userPrompt)
                 .stream()
-                .chatResponse()
-                .doOnNext(lastResponse::set)
-                .<String>handle((chatResponse, sink) -> {
-                    try {
-                        Generation generation = chatResponse.getResult();
-                        if (generation != null && generation.getOutput() != null) {
-                            String text = generation.getOutput().getText();
-                            if (text != null && !text.isEmpty()) {
-                                fullResponseText.append(text);
-                                sink.next(text);
-                            }
-                        }
-                    } catch (Exception ex) {
-                        log.warn("AI阅读助手处理流式chunk异常: {}", ex.getMessage());
-                    }
-                })
+                .content()
+                .filter(text -> text != null && !text.isEmpty())
+                .doOnNext(fullResponseText::append)
                 .doOnError(e -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     log.error("AI阅读助手流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
@@ -202,11 +172,10 @@ public class AiServiceImpl implements AiService {
                 })
                 .doOnComplete(() -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    ChatResponse finalResponse = lastResponse.get();
                     log.info("AI阅读助手流式调用完成, 耗时: {}ms, 响应总长度={}",
                             durationMs, fullResponseText.length());
                     saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
-                            fullResponseText.toString(), finalResponse, durationMs);
+                            fullResponseText.toString(), null, durationMs);
                 });
     }
 
@@ -220,7 +189,8 @@ public class AiServiceImpl implements AiService {
                 chatClientRouter.require(endpoint.provider()),
                 OpenAiChatOptions.builder()
                         .model(endpoint.modelKey())
-                        .streamUsage(true)
+                        // 部分兼容网关不支持 stream_options，开启会导致整段缓冲、前端感觉“流式失效”
+                        .streamUsage(false)
                         .build()
         );
     }

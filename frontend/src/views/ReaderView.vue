@@ -641,7 +641,7 @@ function openNotebookBasket(notebookId: number) {
   showCollectDrawer.value = true
 }
 
-/** 某条 AI 回复旁的收录 */
+/** 某条 AI 回复旁的收录：打开列表供勾选，确认后弹成功提示（不跳到未收录篮） */
 function openCollectForMessage(msg: AiMessage) {
   if (!msg.collectEntries?.length) return
   if (linkedNotebooks.value.length === 0) {
@@ -685,7 +685,7 @@ function normalizeCollectEntries(rawEntries: any[], snippet: string): CollectEnt
       partSpeechMean: String(e.partSpeechMean).trim(),
       usPhonetic: e.usPhonetic,
       ukPhonetic: e.ukPhonetic,
-      sentenceExample: e.sentenceExample || snippet,
+      sentenceExample: snippet || e.sentenceExample,
       rootAffix: e.rootAffix,
       sourceSnippet: snippet
     }))

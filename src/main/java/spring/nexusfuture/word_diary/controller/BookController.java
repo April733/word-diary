@@ -2,6 +2,7 @@ package spring.nexusfuture.word_diary.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -42,6 +43,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @RestController
@@ -63,6 +66,7 @@ public class BookController {
     private final BookCollectService bookCollectService;
     private final PdfMarkupService pdfMarkupService;
     private final ObjectMapper objectMapper;
+    private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
     /** 上传书籍 */
     @PostMapping("/upload")
@@ -263,7 +267,7 @@ public class BookController {
     }
 
     /** AI 流式对话（支持会话记忆） */
-    @PostMapping("/ai-chat")
+    @PostMapping(value = "/ai-chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter aiChat(@RequestAttribute Long userId,
                              @RequestBody Map<String, Object> body) {
         String question = (String) body.get("question");
@@ -334,74 +338,100 @@ public class BookController {
         if (collectEnabled) {
             systemPrompt = systemPrompt + CollectJsonSupport.collectInstruction();
         }
+        final String finalSystemPrompt = systemPrompt;
+        final String finalUserPrompt = userPrompt;
 
         final Long finalSessionId = sessionId;
         final String finalFeatureKey = savedFeatureKey;
         final StringBuilder fullResponseText = new StringBuilder();
 
         // 原始输入：优先选中上下文，否则用提问（用于成本字数统计）
-        String rawInput = (context != null && !context.isBlank()) ? context
+        final String rawInput = (context != null && !context.isBlank()) ? context
                 : (question != null ? question : "");
-        String callScene = (featureKeys != null && !featureKeys.isEmpty()) || (featureKey != null && !featureKey.isEmpty())
+        final String callScene = (featureKeys != null && !featureKeys.isEmpty()) || (featureKey != null && !featureKey.isEmpty())
                 ? "feature"
                 : "reading_chat";
 
-        aiService.chatStream(userId, callScene, rawInput, systemPrompt, userPrompt)
-                .subscribe(
-                        content -> {
-                            try {
-                                fullResponseText.append(content);
-                                String displayChunk = content;
-                                if (collectEnabled && fullResponseText.toString().contains(CollectJsonSupport.MARKER)) {
-                                    displayChunk = "";
-                                }
-                                if (!displayChunk.isEmpty()) {
-                                    emitter.send(SseEmitter.event()
-                                            .name("chunk")
-                                            .data(displayChunk));
-                                }
-                            } catch (IOException e) {
-                                emitter.completeWithError(e);
-                            }
-                        },
-                        error -> {
-                            log.error("AI chat error", error);
-                            // 即使出错，也尝试保存已收到的部分回复
-                            String partialResponse = fullResponseText.toString();
-                            if (!partialResponse.isEmpty()) {
-                                try {
-                                    aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", partialResponse, finalFeatureKey);
-                                } catch (Exception ignored) {}
-                            }
-                            try {
-                                emitter.send(SseEmitter.event()
-                                        .name("error")
-                                        .data("AI 请求失败: " + error.getMessage()));
-                            } catch (IOException ex) { /* ignore */ }
-                            emitter.complete();
-                        },
-                        () -> {
-                            try {
-                                // 完整原文入库（含 COLLECT_JSON），前端展示时再剥离；历史会话可据此恢复收录按钮
-                                String fullResponse = fullResponseText.toString();
-                                if (!fullResponse.isEmpty()) {
-                                    aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", fullResponse, finalFeatureKey);
-                                }
-                                if (collectEnabled) {
-                                    List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(fullResponse, objectMapper);
-                                    if (!entries.isEmpty()) {
-                                        emitter.send(SseEmitter.event()
-                                                .name("collect-entries")
-                                                .data(objectMapper.writeValueAsString(Map.of("entries", entries))));
+        // 与单词流式解析一致：异步订阅，避免阻塞 MVC 线程导致 SSE 缓冲
+        sseExecutor.execute(() -> {
+            try {
+                aiService.chatStream(userId, callScene, rawInput, finalSystemPrompt, finalUserPrompt)
+                        .subscribe(
+                                content -> {
+                                    synchronized (emitter) {
+                                        try {
+                                            String prevFull = fullResponseText.toString();
+                                            fullResponseText.append(content);
+                                            String displayChunk = content;
+                                            if (collectEnabled) {
+                                                String prevVisible = CollectJsonSupport.stripForDisplay(prevFull);
+                                                String visible = CollectJsonSupport.stripForDisplay(fullResponseText.toString());
+                                                displayChunk = visible.length() > prevVisible.length()
+                                                        ? visible.substring(prevVisible.length())
+                                                        : "";
+                                            }
+                                            if (!displayChunk.isEmpty()) {
+                                                emitter.send(SseEmitter.event()
+                                                        .name("chunk")
+                                                        .data(displayChunk, MediaType.TEXT_PLAIN));
+                                            }
+                                        } catch (IOException e) {
+                                            emitter.completeWithError(e);
+                                        }
+                                    }
+                                },
+                                error -> {
+                                    log.error("AI chat error", error);
+                                    String partialResponse = fullResponseText.toString();
+                                    if (!partialResponse.isEmpty()) {
+                                        try {
+                                            aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", partialResponse, finalFeatureKey);
+                                        } catch (Exception ignored) {}
+                                    }
+                                    synchronized (emitter) {
+                                        try {
+                                            emitter.send(SseEmitter.event()
+                                                    .name("error")
+                                                    .data("AI 请求失败: " + error.getMessage(), MediaType.TEXT_PLAIN));
+                                        } catch (IOException ex) { /* ignore */ }
+                                        emitter.complete();
+                                    }
+                                },
+                                () -> {
+                                    synchronized (emitter) {
+                                        try {
+                                            String fullResponse = fullResponseText.toString();
+                                            if (!fullResponse.isEmpty()) {
+                                                aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", fullResponse, finalFeatureKey);
+                                            }
+                                            if (collectEnabled) {
+                                                List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(fullResponse, objectMapper);
+                                                if (!entries.isEmpty()) {
+                                                    emitter.send(SseEmitter.event()
+                                                            .name("collect-entries")
+                                                            .data(objectMapper.writeValueAsString(Map.of("entries", entries)), MediaType.APPLICATION_JSON));
+                                                }
+                                            }
+                                            emitter.send(SseEmitter.event()
+                                                    .name("done")
+                                                    .data("{\"sessionId\":" + finalSessionId + "}", MediaType.APPLICATION_JSON));
+                                        } catch (IOException e) { /* ignore */ }
+                                        emitter.complete();
                                     }
                                 }
-                                emitter.send(SseEmitter.event()
-                                        .name("done")
-                                        .data("{\"sessionId\":" + finalSessionId + "}"));
-                            } catch (IOException e) { /* ignore */ }
-                            emitter.complete();
-                        }
-                );
+                        );
+            } catch (Exception e) {
+                log.error("AI chat subscribe failed", e);
+                synchronized (emitter) {
+                    try {
+                        emitter.send(SseEmitter.event()
+                                .name("error")
+                                .data("AI 请求失败: " + e.getMessage(), MediaType.TEXT_PLAIN));
+                    } catch (IOException ignored) {}
+                    emitter.completeWithError(e);
+                }
+            }
+        });
 
         return emitter;
     }
