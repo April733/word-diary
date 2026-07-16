@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -42,6 +44,33 @@ public class WdLearnPlan {
 
     /** 累计复习次数 */
     private Integer reviewTimes;
+
+    /** 当前复习间隔(天) */
+    private BigDecimal intervalDays;
+
+    /** 难度系数 */
+    private BigDecimal easeFactor;
+
+    /** 连续成功复习次数 */
+    private Integer repCount;
+
+    /** 遗忘次数 */
+    private Integer lapseCount;
+
+    /** 最近一次反馈: 0忘记 1认识 2模糊 */
+    private Integer lastFeedback;
+
+    /** 最近一次正式学习时间 */
+    private LocalDateTime lastStudyAt;
+
+    /** 复习优先级分 */
+    private Integer priorityScore;
+
+    /** 计划作为今日新词出现的日期 */
+    private LocalDate scheduledNewDate;
+
+    /** 在该日新词队列中的顺序 */
+    private Integer newAllocSeq;
 
     /** 创建人 */
     private Long createBy;

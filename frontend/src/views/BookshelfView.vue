@@ -189,7 +189,7 @@ async function handleDelete(bookId: number) {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .page-header {

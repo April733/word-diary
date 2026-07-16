@@ -21,7 +21,7 @@ public class RegisterReq {
     @Pattern(regexp = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", message = "邮箱格式不正确")
     private String email;
 
-    @NotBlank(message = "邀请码不能为空")
+    /** 邀请码（已废弃，注册不再需要；保留字段兼容旧客户端） */
     private String inviteCode;
 
     @NotBlank(message = "验证码不能为空")

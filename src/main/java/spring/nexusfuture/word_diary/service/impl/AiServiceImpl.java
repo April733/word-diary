@@ -9,14 +9,19 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import spring.nexusfuture.word_diary.common.TextMetrics;
+import spring.nexusfuture.word_diary.common.SysConfigKeys;
+import spring.nexusfuture.word_diary.config.AiChatClientConfig.AiChatClientRouter;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
 import spring.nexusfuture.word_diary.dto.AiParseResult;
+import spring.nexusfuture.word_diary.dto.ResolvedAiEndpoint;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
 import spring.nexusfuture.word_diary.mapper.WdAiCallLogMapper;
+import spring.nexusfuture.word_diary.service.AiModelService;
 import spring.nexusfuture.word_diary.service.AiService;
 
+import java.math.BigDecimal;
 import java.util.List;
-import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,17 +29,23 @@ import java.util.regex.Pattern;
 @Service
 public class AiServiceImpl implements AiService {
 
-    private final ChatClient chatClient;
+    public static final String SCENE_WORD_PARSE = SysConfigKeys.AI_SCENE_WORD_PARSE;
+    public static final String SCENE_READING_CHAT = SysConfigKeys.AI_SCENE_READING_CHAT;
+
+    private final AiChatClientRouter chatClientRouter;
     private final ObjectMapper objectMapper;
     private final WdAiCallLogMapper aiCallLogMapper;
     private final AiPromptBuilder promptBuilder;
+    private final AiModelService aiModelService;
 
-    public AiServiceImpl(ChatClient.Builder chatClientBuilder, ObjectMapper objectMapper,
-                         WdAiCallLogMapper aiCallLogMapper, AiPromptBuilder promptBuilder) {
-        this.chatClient = chatClientBuilder.build();
+    public AiServiceImpl(AiChatClientRouter chatClientRouter, ObjectMapper objectMapper,
+                         WdAiCallLogMapper aiCallLogMapper, AiPromptBuilder promptBuilder,
+                         AiModelService aiModelService) {
+        this.chatClientRouter = chatClientRouter;
         this.objectMapper = objectMapper;
         this.aiCallLogMapper = aiCallLogMapper;
         this.promptBuilder = promptBuilder;
+        this.aiModelService = aiModelService;
     }
 
     @Override
@@ -42,69 +53,216 @@ public class AiServiceImpl implements AiService {
         long startTime = System.currentTimeMillis();
         String systemPrompt = "";
         String userPrompt = "";
+        String inputText = words == null ? "" : String.join(", ", words);
         try {
-        String wordsJson = words.stream()
-                .map(w -> "\"" + w + "\"")
-                .reduce((a, b) -> a + ", " + b)
-                .orElse("[]");
-        String wordsList = "[" + wordsJson + "]";
+            String wordsJson = words.stream()
+                    .map(w -> "\"" + w + "\"")
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("[]");
+            String wordsList = "[" + wordsJson + "]";
 
-        systemPrompt = promptBuilder.buildWordParsePrompt(userId);
+            systemPrompt = promptBuilder.buildWordParsePrompt(userId);
+            userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
 
-        userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
+            SceneCall call = resolveCall(SCENE_WORD_PARSE);
+            ChatResponse chatResponse = call.client().prompt()
+                    .options(call.options())
+                    .system(systemPrompt)
+                    .user(userPrompt)
+                    .call()
+                    .chatResponse();
+            int durationMs = (int) (System.currentTimeMillis() - startTime);
 
-        ChatResponse chatResponse = chatClient.prompt()
-                .system(systemPrompt)
-                .user(userPrompt)
-                .call()
-                .chatResponse();
-        int durationMs = (int) (System.currentTimeMillis() - startTime);
+            Generation generation = chatResponse.getResult();
+            String content = generation.getOutput().getText();
 
-        Generation generation = chatResponse.getResult();
-        String content = generation.getOutput().getText();
+            saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt, content, chatResponse, durationMs);
 
-        // 记录调用日志
-        saveCallLog(userId, systemPrompt, userPrompt, content, chatResponse, durationMs);
-
-        // Extract JSON array from response (handle markdown code blocks)
-        String json = extractJsonArray(content);
-
-        try {
-            return objectMapper.readValue(json, new TypeReference<List<AiParseResult>>() {});
-        } catch (Exception e) {
-            log.error("AI返回JSON解析失败, 原始内容: {}", content, e);
-            throw new RuntimeException("AI 返回数据解析失败，请重试", e);
-        }
-
+            String json = extractJsonArray(content);
+            try {
+                return objectMapper.readValue(json, new TypeReference<List<AiParseResult>>() {});
+            } catch (Exception e) {
+                log.error("AI返回JSON解析失败, 原始内容: {}", content, e);
+                throw new RuntimeException("AI 返回数据解析失败，请重试", e);
+            }
         } catch (Exception e) {
             int durationMs = (int) (System.currentTimeMillis() - startTime);
             log.error("AI调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
-            // 记录失败日志
             try {
-                saveCallLog(userId, systemPrompt, userPrompt, e.getMessage(), null, durationMs);
+                saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt, e.getMessage(), null, durationMs);
             } catch (Exception ignored) {}
             throw e;
         }
     }
 
-    private void saveCallLog(Long userId, String systemPrompt, String userPrompt, String responseData,
+    @Override
+    public Flux<String> parseWordsStream(Long userId, List<String> words) {
+        long startTime = System.currentTimeMillis();
+        String systemPrompt = promptBuilder.buildWordParsePrompt(userId);
+        String wordsJson = words.stream()
+                .map(w -> "\"" + w + "\"")
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("[]");
+        String wordsList = "[" + wordsJson + "]";
+        String userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
+        String inputText = words == null ? "" : String.join(", ", words);
+
+        log.info("开始AI流式调用, userId={}, words={}", userId, words);
+
+        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
+        StringBuilder fullResponseText = new StringBuilder();
+
+        SceneCall call = resolveCall(SCENE_WORD_PARSE);
+        return call.client().prompt()
+                .options(call.options())
+                .system(systemPrompt)
+                .user(userPrompt)
+                .stream()
+                .chatResponse()
+                .doOnNext(lastResponse::set)
+                .<String>handle((chatResponse, sink) -> {
+                    try {
+                        Generation generation = chatResponse.getResult();
+                        if (generation != null && generation.getOutput() != null) {
+                            String text = generation.getOutput().getText();
+                            if (text != null && !text.isEmpty()) {
+                                fullResponseText.append(text);
+                                sink.next(text);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        log.warn("处理流式chunk异常: {}", ex.getMessage());
+                    }
+                })
+                .doOnError(e -> {
+                    int durationMs = (int) (System.currentTimeMillis() - startTime);
+                    log.error("AI流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
+                    try {
+                        saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
+                                e.getMessage(), null, durationMs);
+                    } catch (Exception ignored) {}
+                })
+                .doOnComplete(() -> {
+                    int durationMs = (int) (System.currentTimeMillis() - startTime);
+                    ChatResponse finalResponse = lastResponse.get();
+                    String fullText = fullResponseText.toString();
+                    log.info("AI流式调用完成, 耗时: {}ms, tokens将从usage提取, 响应长度={}",
+                            durationMs, fullText.length());
+                    saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
+                            fullText, finalResponse, durationMs);
+                });
+    }
+
+    @Override
+    public Flux<String> chatStream(Long userId, String systemPrompt, String userPrompt) {
+        return chatStream(userId, SCENE_READING_CHAT, null, systemPrompt, userPrompt);
+    }
+
+    @Override
+    public Flux<String> chatStream(Long userId, String callScene, String inputText,
+                                   String systemPrompt, String userPrompt) {
+        long startTime = System.currentTimeMillis();
+        String scene = (callScene == null || callScene.isBlank()) ? SCENE_READING_CHAT : callScene;
+        String rawInput = inputText != null ? inputText : "";
+        log.info("AI阅读助手流式对话开始, userId={}, scene={}, inputWords={}",
+                userId, scene, TextMetrics.wordCount(rawInput));
+
+        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
+        StringBuilder fullResponseText = new StringBuilder();
+
+        SceneCall call = resolveCall(scene);
+        return call.client().prompt()
+                .options(call.options())
+                .system(systemPrompt)
+                .user(userPrompt)
+                .stream()
+                .chatResponse()
+                .doOnNext(lastResponse::set)
+                .<String>handle((chatResponse, sink) -> {
+                    try {
+                        Generation generation = chatResponse.getResult();
+                        if (generation != null && generation.getOutput() != null) {
+                            String text = generation.getOutput().getText();
+                            if (text != null && !text.isEmpty()) {
+                                fullResponseText.append(text);
+                                sink.next(text);
+                            }
+                        }
+                    } catch (Exception ex) {
+                        log.warn("AI阅读助手处理流式chunk异常: {}", ex.getMessage());
+                    }
+                })
+                .doOnError(e -> {
+                    int durationMs = (int) (System.currentTimeMillis() - startTime);
+                    log.error("AI阅读助手流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
+                    try {
+                        saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
+                                e.getMessage(), null, durationMs);
+                    } catch (Exception ignored) {}
+                })
+                .doOnComplete(() -> {
+                    int durationMs = (int) (System.currentTimeMillis() - startTime);
+                    ChatResponse finalResponse = lastResponse.get();
+                    log.info("AI阅读助手流式调用完成, 耗时: {}ms, 响应总长度={}",
+                            durationMs, fullResponseText.length());
+                    saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
+                            fullResponseText.toString(), finalResponse, durationMs);
+                });
+    }
+
+    private record SceneCall(ChatClient client, OpenAiChatOptions options) {}
+
+    /** 场景 → DB 模型 + provider → 对应供应商 ChatClient */
+    private SceneCall resolveCall(String sceneKey) {
+        ResolvedAiEndpoint endpoint = aiModelService.requireEndpointForScene(sceneKey);
+        log.info("AI 场景={} 使用模型={} provider={}", sceneKey, endpoint.modelKey(), endpoint.provider());
+        return new SceneCall(
+                chatClientRouter.require(endpoint.provider()),
+                OpenAiChatOptions.builder()
+                        .model(endpoint.modelKey())
+                        .streamUsage(true)
+                        .build()
+        );
+    }
+
+    private void saveCallLog(Long userId, String callScene, String inputText,
+                             String systemPrompt, String userPrompt, String responseData,
                              ChatResponse chatResponse, int durationMs) {
         try {
+            String safeInput = inputText != null ? inputText : "";
+            String sys = systemPrompt != null ? systemPrompt : "";
+            String usr = userPrompt != null ? userPrompt : "";
+            int assembledChars = TextMetrics.charCount(sys) + TextMetrics.charCount(usr);
+
+            String modelName = chatResponse != null ? getModelName(chatResponse) : resolveFallbackModelName();
+            int promptTokens = chatResponse != null ? getPromptTokens(chatResponse) : 0;
+            int completionTokens = chatResponse != null ? getCompletionTokens(chatResponse) : 0;
+            int totalTokens = chatResponse != null ? getTotalTokens(chatResponse) : 0;
+            BigDecimal estimatedCost = aiModelService.estimateCost(modelName, promptTokens, completionTokens);
+
             WdAiCallLog callLog = WdAiCallLog.builder()
                     .userId(userId)
-                    .modelName(chatResponse != null ? getModelName(chatResponse) : "unknown")
-                    .systemPrompt(systemPrompt)
-                    .userPrompt(userPrompt)
+                    .modelName(modelName)
+                    .callScene(callScene != null ? callScene : "")
+                    .inputText(safeInput)
+                    .inputCharCount(TextMetrics.charCount(safeInput))
+                    .inputWordCount(TextMetrics.wordCount(safeInput))
+                    .assembledPromptChars(assembledChars)
+                    .systemPrompt(sys)
+                    .userPrompt(usr)
                     .responseData(responseData)
-                    .promptTokens(chatResponse != null ? getPromptTokens(chatResponse) : 0)
-                    .completionTokens(chatResponse != null ? getCompletionTokens(chatResponse) : 0)
-                    .totalTokens(chatResponse != null ? getTotalTokens(chatResponse) : 0)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(totalTokens)
+                    .estimatedCost(estimatedCost)
                     .durationMs(durationMs)
                     .build();
             aiCallLogMapper.insert(callLog);
-            log.info("AI调用记录已保存, id={}, model={}, tokens={}/{}, {}ms",
-                    callLog.getId(), callLog.getModelName(),
-                    callLog.getPromptTokens(), callLog.getCompletionTokens(), durationMs);
+            log.info("AI调用记录已保存, id={}, scene={}, model={}, inputWords={}, assembledChars={}, tokens in/out={}/{}, cost={}, {}ms",
+                    callLog.getId(), callLog.getCallScene(), callLog.getModelName(),
+                    callLog.getInputWordCount(), callLog.getAssembledPromptChars(),
+                    callLog.getPromptTokens(), callLog.getCompletionTokens(),
+                    callLog.getEstimatedCost(), durationMs);
         } catch (Exception e) {
             log.warn("保存AI调用记录失败: {}", e.getMessage());
         }
@@ -118,7 +276,15 @@ public class AiServiceImpl implements AiService {
             }
         } catch (Exception ignored) {
         }
-        return "deepseek-v4-flash";
+        return resolveFallbackModelName();
+    }
+
+    private String resolveFallbackModelName() {
+        try {
+            return aiModelService.requireActiveModelKey();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private Integer getPromptTokens(ChatResponse chatResponse) {
@@ -146,182 +312,11 @@ public class AiServiceImpl implements AiService {
     }
 
     private String extractJsonArray(String text) {
-        // Try to find JSON array in the text, handling markdown ```json ... ``` blocks
         Pattern pattern = Pattern.compile("\\[\\s*\\{.*?}\\s*]", Pattern.DOTALL);
         Matcher matcher = pattern.matcher(text);
         if (matcher.find()) {
             return matcher.group(0);
         }
-        // Fallback: remove markdown code fences
-        String cleaned = text.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
-        return cleaned;
+        return text.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
     }
-
-    @Override
-    public Flux<String> parseWordsStream(Long userId, List<String> words) {
-        long startTime = System.currentTimeMillis();
-        String systemPrompt = promptBuilder.buildWordParsePrompt(userId);
-        String wordsJson = words.stream()
-                .map(w -> "\"" + w + "\"")
-                .reduce((a, b) -> a + ", " + b)
-                .orElse("[]");
-        String wordsList = "[" + wordsJson + "]";
-        String userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
-
-        log.info("开始AI流式调用, userId={}, words={}", userId, words);
-
-        // 用 AtomicReference 收集最后一个 ChatResponse（包含 token usage 元数据）
-        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
-        // 收集完整响应文本用于日志
-        StringBuilder fullResponseText = new StringBuilder();
-
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .streamUsage(true)
-                .build();
-
-        return chatClient.prompt()
-                .options(options)
-                .system(systemPrompt)
-                .user(userPrompt)
-                .stream()
-                .chatResponse()
-                .doOnNext(chatResponse -> {
-                    lastResponse.set(chatResponse);
-                })
-                .<String>handle((chatResponse, sink) -> {
-                    try {
-                        Generation generation = chatResponse.getResult();
-                        if (generation != null && generation.getOutput() != null) {
-                            String text = generation.getOutput().getText();
-                            if (text != null && !text.isEmpty()) {
-                                fullResponseText.append(text);
-                                log.info("[AI-STREAM] chunk(len={}): {}", text.length(), text);
-                                sink.next(text);
-                            }
-                        }
-                    } catch (Exception ex) {
-                        log.warn("处理流式chunk异常: {}", ex.getMessage());
-                    }
-                })
-                .doOnError(e -> {
-                    int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    log.error("AI流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
-                    try {
-                        saveCallLog(userId, systemPrompt, userPrompt, e.getMessage(), null, durationMs);
-                    } catch (Exception ignored) {}
-                })
-                .doOnComplete(() -> {
-                    int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    ChatResponse finalResponse = lastResponse.get();
-                    String fullText = fullResponseText.toString();
-                    log.info("AI流式调用完成, 耗时: {}ms, finalResponse={}, 完整响应总长度={}",
-                            durationMs, finalResponse != null ? "present" : "null", fullText.length());
-                    log.info("[AI-STREAM-FULL] 完整响应内容:\n{}", fullText);
-                    // 从最终的 ChatResponse 中提取 token 信息保存
-                    saveStreamCallLog(userId, systemPrompt, userPrompt, finalResponse, durationMs);
-                });
-    }
-
-    private void saveStreamCallLog(Long userId, String systemPrompt, String userPrompt,
-                                   ChatResponse chatResponse, int durationMs) {
-        try {
-            String responseData = chatResponse != null && chatResponse.getResult() != null
-                    && chatResponse.getResult().getOutput() != null
-                    ? chatResponse.getResult().getOutput().getText() : "";
-            log.info("[DB-LOG] 保存到wd_ai_call_log, responseData长度={}, 内容: {}", responseData.length(), responseData);
-            WdAiCallLog callLog = WdAiCallLog.builder()
-                    .userId(userId)
-                    .modelName(chatResponse != null ? getModelName(chatResponse) : "deepseek-v4-flash")
-                    .systemPrompt(systemPrompt)
-                    .userPrompt(userPrompt)
-                    .responseData(responseData)
-                    .promptTokens(chatResponse != null ? getPromptTokens(chatResponse) : 0)
-                    .completionTokens(chatResponse != null ? getCompletionTokens(chatResponse) : 0)
-                    .totalTokens(chatResponse != null ? getTotalTokens(chatResponse) : 0)
-                    .durationMs(durationMs)
-                    .build();
-            aiCallLogMapper.insert(callLog);
-            log.info("AI流式调用记录已保存, id={}, model={}, tokens={}/{}, {}ms",
-                    callLog.getId(), callLog.getModelName(),
-                    callLog.getPromptTokens(), callLog.getCompletionTokens(), durationMs);
-        } catch (Exception e) {
-            log.warn("保存AI流式调用记录失败: {}", e.getMessage());
-        }
-    }
-
-    @Override
-    public Flux<String> chatStream(Long userId, String systemPrompt, String userPrompt) {
-        long startTime = System.currentTimeMillis();
-        log.info("AI阅读助手流式对话开始, userId={}", userId);
-
-        java.util.concurrent.atomic.AtomicReference<ChatResponse> lastResponse = new java.util.concurrent.atomic.AtomicReference<>();
-        StringBuilder fullResponseText = new StringBuilder();
-
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .streamUsage(true)
-                .build();
-
-        return chatClient.prompt()
-                .options(options)
-                .system(systemPrompt)
-                .user(userPrompt)
-                .stream()
-                .chatResponse()
-                .doOnNext(chatResponse -> {
-                    lastResponse.set(chatResponse);
-                })
-                .<String>handle((chatResponse, sink) -> {
-                    try {
-                        Generation generation = chatResponse.getResult();
-                        if (generation != null && generation.getOutput() != null) {
-                            String text = generation.getOutput().getText();
-                            if (text != null && !text.isEmpty()) {
-                                fullResponseText.append(text);
-                                sink.next(text);
-                            }
-                        }
-                    } catch (Exception ex) {
-                        log.warn("AI阅读助手处理流式chunk异常: {}", ex.getMessage());
-                    }
-                })
-                .doOnError(e -> {
-                    int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    log.error("AI阅读助手流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
-                    try {
-                        saveCallLog(userId, systemPrompt, userPrompt, e.getMessage(), null, durationMs);
-                    } catch (Exception ignored) {}
-                })
-                .doOnComplete(() -> {
-                    int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    ChatResponse finalResponse = lastResponse.get();
-                    log.info("AI阅读助手流式调用完成, 耗时: {}ms, 响应总长度={}",
-                            durationMs, fullResponseText.length());
-                    saveChatStreamCallLog(userId, systemPrompt, userPrompt, finalResponse, fullResponseText.toString(), durationMs);
-                });
-    }
-
-    private void saveChatStreamCallLog(Long userId, String systemPrompt, String userPrompt,
-                                       ChatResponse chatResponse, String fullResponseText, int durationMs) {
-        try {
-            log.info("[DB-LOG] 阅读助手保存到wd_ai_call_log, responseData长度={}", fullResponseText.length());
-            WdAiCallLog callLog = WdAiCallLog.builder()
-                    .userId(userId)
-                    .modelName(chatResponse != null ? getModelName(chatResponse) : "deepseek-v4-flash")
-                    .systemPrompt(systemPrompt)
-                    .userPrompt(userPrompt)
-                    .responseData(fullResponseText)
-                    .promptTokens(chatResponse != null ? getPromptTokens(chatResponse) : 0)
-                    .completionTokens(chatResponse != null ? getCompletionTokens(chatResponse) : 0)
-                    .totalTokens(chatResponse != null ? getTotalTokens(chatResponse) : 0)
-                    .durationMs(durationMs)
-                    .build();
-            aiCallLogMapper.insert(callLog);
-            log.info("AI阅读助手调用记录已保存, id={}, model={}, tokens={}/{}, {}ms",
-                    callLog.getId(), callLog.getModelName(),
-                    callLog.getPromptTokens(), callLog.getCompletionTokens(), durationMs);
-        } catch (Exception e) {
-            log.warn("保存AI阅读助手调用记录失败: {}", e.getMessage());
-        }
-    }
-
 }

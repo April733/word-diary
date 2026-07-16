@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "📖 Word Diary",
+    "appName": "Aikoread",
     "save": "บันทึก",
     "confirm": "ยืนยัน",
     "cancel": "ยกเลิก",
@@ -25,7 +25,7 @@
     "notebook": "บันทึก"
   },
   "login": {
-    "title": "เข้าสู่ระบบ Word Diary",
+    "title": "เข้าสู่ระบบ Aikoread",
     "subtitle": "ผู้ช่วยเรียนรู้ภาษาอังกฤษด้วย AI",
     "username": "ชื่อผู้ใช้",
     "password": "รหัสผ่าน",
@@ -78,7 +78,13 @@
     "forgotPasswordDesc": "รีเซ็ตรหัสผ่านผ่านการยืนยันทางโทรศัพท์",
     "resetPasswordSuccess": "รีเซ็ตรหัสผ่านสำเร็จ กรุณาเข้าสู่ระบบ",
     "newPassword": "รหัสผ่านใหม่",
-    "newPasswordPlaceholder": "กรอกรหัสผ่านใหม่"
+    "newPasswordPlaceholder": "กรอกรหัสผ่านใหม่",
+    "welcomeBack": "ยินดีต้อนรับกลับ",
+    "brandTagline": "สำรวจความสนุกของภาษา",
+    "productTitle": "Aikoread",
+    "noAccount": "ยังไม่มีบัญชี?",
+    "goRegister": "สมัคร",
+    "backToLogin": "กลับไปเข้าสู่ระบบ"
   },
   "dashboard": {
     "greeting": "สวัสดี, ",

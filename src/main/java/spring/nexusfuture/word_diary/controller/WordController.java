@@ -13,6 +13,7 @@ import spring.nexusfuture.word_diary.dto.WordVO;
 import spring.nexusfuture.word_diary.service.AiService;
 import spring.nexusfuture.word_diary.service.WordService;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -55,11 +56,8 @@ public class WordController {
     }
 
     @PostMapping("/ai-parse")
-    public R<List<AiParseResult>> aiParse(@RequestAttribute Long userId, @RequestAttribute Integer isMember,
+    public R<List<AiParseResult>> aiParse(@RequestAttribute Long userId,
                                           @PathVariable Long notebookId, @RequestBody AiParseReq req) {
-        if (isMember == null || isMember != 1) {
-            return R.fail("批量导入功能仅限会员使用");
-        }
         if (req.getWords() == null || req.getWords().size() > 50) {
             return R.fail("单次最多导入 50 个单词");
         }
@@ -68,13 +66,8 @@ public class WordController {
     }
 
     @PostMapping(value = "/ai-parse-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter aiParseStream(@RequestAttribute Long userId, @RequestAttribute Integer isMember,
+    public SseEmitter aiParseStream(@RequestAttribute Long userId,
                                     @PathVariable Long notebookId, @RequestBody AiParseReq req) {
-        if (isMember == null || isMember != 1) {
-            SseEmitter emitter = new SseEmitter(0L);
-            emitter.completeWithError(new RuntimeException("批量导入功能仅限会员使用"));
-            return emitter;
-        }
         if (req.getWords() == null || req.getWords().size() > 50) {
             SseEmitter emitter = new SseEmitter(0L);
             emitter.completeWithError(new RuntimeException("单次最多导入 50 个单词"));
@@ -137,15 +130,23 @@ public class WordController {
     }
 
     @PostMapping("/batch-add")
-    public R<Void> batchAdd(@RequestAttribute Long userId, @RequestAttribute Integer isMember,
+    public R<Void> batchAdd(@RequestAttribute Long userId,
                             @PathVariable Long notebookId, @RequestBody BatchAddReq req) {
-        if (isMember == null || isMember != 1) {
-            return R.fail("批量导入功能仅限会员使用");
-        }
         if (req.getWords() == null || req.getWords().size() > 50) {
             return R.fail("单次最多导入 50 个单词");
         }
         wordService.batchAddWords(userId, notebookId, req.getWords());
         return R.ok();
+    }
+
+    @PostMapping("/ai-fill-gaps")
+    public R<Map<String, Integer>> fillGaps(@RequestAttribute Long userId,
+                                            @PathVariable Long notebookId,
+                                            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("wordIds");
+        List<Long> wordIds = ids != null ? ids.stream().map(Number::longValue).toList() : List.of();
+        int updated = wordService.fillGaps(userId, notebookId, wordIds);
+        return R.ok(Map.of("updated", updated));
     }
 }

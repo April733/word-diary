@@ -4,10 +4,32 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* Brand palette — see .claude/context/brand.md */
+  --brand-lizard: #A8B59F;
+  --brand-belly: #F6F0E6;
+  --brand-ink: #315C34;
+  --brand-white: #FFFFFF;
+  --brand-surface: #F5F3EF;
+
+  --brand-ink-hover: #274a2a;
+  --brand-ink-active: #1f3c22;
+  --brand-ink-light: color-mix(in srgb, var(--brand-lizard) 55%, var(--brand-white));
+
+  /* TDesign primary aligned to brand ink */
+  --td-brand-color: var(--brand-ink);
+  --td-brand-color-hover: var(--brand-ink-hover);
+  --td-brand-color-active: var(--brand-ink-active);
+  --td-brand-color-focus: var(--brand-ink);
+  --td-brand-color-disabled: color-mix(in srgb, var(--brand-ink) 35%, var(--brand-white));
+  --td-brand-color-light: var(--brand-ink-light);
+  --td-brand-color-light-hover: color-mix(in srgb, var(--brand-lizard) 70%, var(--brand-white));
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
-  background: #f5f7fa;
-  color: #1a1a2e;
+  background: var(--brand-belly);
+  color: var(--brand-ink);
   line-height: 1.6;
 }
 

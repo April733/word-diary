@@ -7,6 +7,8 @@ import lombok.Data;
 @Builder
 public class WordBookVO {
     private Long id;
+    /** 所属阅读书籍；null=独立单词本 */
+    private Long bookId;
     private String bookName;
     private String bookDesc;
     private Integer sortNum;

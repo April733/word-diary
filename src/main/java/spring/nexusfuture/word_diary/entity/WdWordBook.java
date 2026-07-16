@@ -22,6 +22,9 @@ public class WdWordBook {
     /** 所属用户ID */
     private Long userId;
 
+    /** 所属阅读书籍ID；NULL=独立单词本，非空则仅属于该书 */
+    private Long bookId;
+
     /** 单词本名称 */
     private String bookName;
 

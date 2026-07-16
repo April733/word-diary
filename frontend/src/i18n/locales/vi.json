@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "📖 Word Diary",
+    "appName": "Aikoread",
     "save": "Lưu",
     "confirm": "Xác nhận",
     "cancel": "Hủy",
@@ -25,7 +25,7 @@
     "notebook": "Ghi chú"
   },
   "login": {
-    "title": "Đăng nhập Word Diary",
+    "title": "Đăng nhập Aikoread",
     "subtitle": "Trợ lý Học Tiếng Anh với AI",
     "username": "Tên đăng nhập",
     "password": "Mật khẩu",
@@ -78,7 +78,13 @@
     "forgotPasswordDesc": "Đặt lại mật khẩu qua xác minh điện thoại",
     "resetPasswordSuccess": "Đặt lại mật khẩu thành công, vui lòng đăng nhập",
     "newPassword": "Mật khẩu mới",
-    "newPasswordPlaceholder": "Nhập mật khẩu mới"
+    "newPasswordPlaceholder": "Nhập mật khẩu mới",
+    "welcomeBack": "Chào mừng trở lại",
+    "brandTagline": "Khám phá niềm vui ngôn ngữ",
+    "productTitle": "Aikoread",
+    "noAccount": "Chưa có tài khoản?",
+    "goRegister": "Đăng ký",
+    "backToLogin": "Quay lại đăng nhập"
   },
   "dashboard": {
     "greeting": "Xin chào, ",

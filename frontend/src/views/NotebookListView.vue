@@ -45,18 +45,28 @@
 
 <script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getNotebooks, createNotebook, updateNotebook, deleteNotebook } from '../api'
 
 const router = useRouter()
+const route = useRoute()
 const notebooks = ref<any[]>([])
 const showAddDialog = ref(false)
 const saving = ref(false)
 const editingBook = ref<any>(null)
 const form = reactive({ bookName: '', bookDesc: '' })
 
-onMounted(() => loadNotebooks())
+onMounted(async () => {
+  await loadNotebooks()
+  if (route.query.create === '1') {
+    editingBook.value = null
+    form.bookName = ''
+    form.bookDesc = ''
+    showAddDialog.value = true
+    router.replace({ path: '/notebooks', query: {} })
+  }
+})
 
 async function loadNotebooks() {
   try {
@@ -114,7 +124,7 @@ async function handleDelete(id: number) {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .page-header {

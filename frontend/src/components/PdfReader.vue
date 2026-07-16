@@ -1,49 +1,108 @@
 <template>
-  <div ref="containerRef" class="pdf-viewer">
-    <div class="pdf-zoom-bar">
-      <t-button variant="text" size="small" @click="zoomOut" title="缩小">
-        <t-icon name="remove" size="14px" />
-      </t-button>
-      <span class="pdf-zoom-value">{{ Math.round(scale * 100) }}%</span>
-      <t-button variant="text" size="small" @click="zoomIn" title="放大">
-        <t-icon name="add" size="14px" />
-      </t-button>
-      <span class="pdf-page-count">{{ totalPages }} 页</span>
-      <span class="pdf-ocr-hint">拖拽框选文字</span>
-      <span v-if="ocrLoading" class="pdf-ocr-status">识别中…</span>
-    </div>
-
+  <div class="pdf-viewer">
     <div
-      class="pdf-page-list"
-      ref="pageListRef"
-      @mousedown="onSelectStart"
-      @mousemove="onSelectMove"
-      @mouseup="onSelectEnd"
-      @mouseleave="onSelectCancel"
+      ref="containerRef"
+      class="pdf-scroll"
+      :class="{ 'is-annotating': annotateMode !== 'none' }"
+      @mousedown="onPointerDown"
+      @mousemove="onPointerMove"
+      @mouseup="onPointerUp"
+      @mouseleave="onPointerCancel"
     >
-      <div
-        v-for="pageNum in totalPages"
-        :key="pageNum"
-        :id="'pdf-page-container-' + pageNum"
-        class="pdf-page-container"
-        :data-page="pageNum"
-        :style="{ minHeight: placeholderHeights[pageNum] ? placeholderHeights[pageNum] + 'px' : undefined }"
-      >
-        <canvas
-          :ref="(el) => setCanvasRef(pageNum, el)"
-          class="pdf-canvas"
-          :class="{ 'pdf-canvas--ready': renderedPages.has(pageNum) }"
-        />
+      <div class="pdf-page-list" ref="pageListRef">
         <div
-          v-if="selectRect && selectPage === pageNum"
-          class="pdf-select-rect"
-          :style="selectRectStyle"
-        />
-        <div v-if="ocrLoading && selectPage === pageNum" class="pdf-ocr-overlay">
-          <t-loading size="small" text="识别中…" />
+          v-for="pageNum in totalPages"
+          :key="pageNum"
+          :id="'pdf-page-container-' + pageNum"
+          class="pdf-page-container"
+          :data-page="pageNum"
+          :style="{ minHeight: placeholderHeights[pageNum] ? placeholderHeights[pageNum] + 'px' : undefined }"
+        >
+          <canvas
+            :ref="(el) => setCanvasRef(pageNum, el)"
+            class="pdf-canvas"
+            :class="{ 'pdf-canvas--ready': renderedPages.has(pageNum) }"
+          />
+          <!-- 批注覆盖层：不修改原始 PDF -->
+          <canvas
+            :ref="(el) => setMarkupCanvasRef(pageNum, el)"
+            class="pdf-markup-layer"
+            :class="{ 'pdf-markup-layer--active': annotateMode !== 'none' }"
+          />
+          <div
+            v-if="selectRect && selectPage === pageNum && annotateMode === 'none'"
+            class="pdf-select-rect"
+            :style="selectRectStyle"
+          />
+          <textarea
+            v-if="inlineNote && inlineNote.page === pageNum"
+            ref="inlineNoteRef"
+            v-model="inlineNote.text"
+            class="pdf-inline-note"
+            :style="inlineNoteStyle"
+            maxlength="500"
+            placeholder="输入笔记…"
+            rows="1"
+            @mousedown.stop
+            @click.stop
+            @keydown="onInlineNoteKeydown"
+            @blur="onInlineNoteBlur"
+          />
+          <div v-if="ocrLoading && selectPage === pageNum" class="pdf-ocr-overlay">
+            <t-loading size="small" text="识别中…" />
+          </div>
         </div>
       </div>
     </div>
+
+    <!-- 顶部：缩放（透明悬浮，字号偏小） -->
+    <div class="pdf-zoom-bar" @mousedown.stop>
+      <t-button variant="text" size="small" title="−" @click="zoomOut">
+        <t-icon name="remove" size="14px" />
+      </t-button>
+      <span class="pdf-zoom-value">{{ Math.round(scale * 100) }}%</span>
+      <t-button variant="text" size="small" title="+" @click="zoomIn">
+        <t-icon name="add" size="14px" />
+      </t-button>
+      <span class="pdf-page-count">{{ totalPages }}</span>
+      <span v-if="ocrLoading" class="pdf-ocr-status">…</span>
+    </div>
+
+    <!-- 右侧：批注工具（透明悬浮，纯图标；全未选中=框选） -->
+    <aside class="pdf-toolbar" aria-label="Tools" @mousedown.stop>
+      <t-button
+        variant="text"
+        size="small"
+        :class="{ 'tool-active': annotateMode === 'pen' }"
+        title="Pen"
+        @click="setAnnotateMode('pen')"
+      >
+        <t-icon name="edit" size="18px" />
+      </t-button>
+      <t-button
+        variant="text"
+        size="small"
+        :class="{ 'tool-active': annotateMode === 'text' }"
+        title="Note"
+        @click="setAnnotateMode('text')"
+      >
+        <t-icon name="keyboard" size="18px" />
+      </t-button>
+      <t-button
+        variant="text"
+        size="small"
+        :class="{ 'tool-active': annotateMode === 'eraser' }"
+        title="Eraser"
+        @click="setAnnotateMode('eraser')"
+      >
+        <svg class="eraser-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12.9 4.1 19.9 11a2 2 0 0 1 0 2.8l-5.6 5.6H8.2L3.3 13.7a2 2 0 0 1 0-2.8L11 3.2a2 2 0 0 1 1.9-.1Zm-1.3 2.1L5.4 12.3l3.5 3.5h4.4l5.1-5.1-6.8-6.5ZM4 19.25h16v1.5H4v-1.5Z"
+          />
+        </svg>
+      </t-button>
+    </aside>
   </div>
 </template>
 
@@ -51,9 +110,19 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import axios from 'axios'
-import { getBookFileUrl, updateProgress } from '../api'
+import { getBookFileUrl, updateProgress, getPdfMarkups, addPdfMarkup, deletePdfMarkup } from '../api'
 import { pdfjsLib, encodePdfCfi, decodePdfCfi, estimatePageHeight, type PdfProgressCfi } from '../utils/pdfReader'
 import { cropAndSharpenRegion, recognizeRegion, terminateOcrWorker } from '../utils/pdfImageOcr'
+import {
+  type AnnotateMode,
+  type PdfMarkupDto,
+  type PenGeometry,
+  DEFAULT_MARKUP_COLOR,
+  DEFAULT_STROKE,
+  toNorm,
+  drawMarkup,
+  hitTestMarkup,
+} from '../utils/pdfMarkup'
 
 const props = defineProps<{
   bookId: number
@@ -86,6 +155,7 @@ const ocrLoading = ref(false)
 
 let pdfDoc: any = null
 const canvasMap = new Map<number, HTMLCanvasElement>()
+const markupCanvasMap = new Map<number, HTMLCanvasElement>()
 const renderedPages = reactive(new Set<number>())
 const renderingPages = new Set<number>()
 const placeholderHeights = reactive<Record<number, number>>({})
@@ -96,12 +166,33 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 let currentPage = 1
 let destroyed = false
 
-// 框选状态
+// 框选 OCR 状态
 const selectPage = ref<number | null>(null)
 const selectRect = ref<{ x: number; y: number; w: number; h: number } | null>(null)
 let selectStart: { page: number; x: number; y: number } | null = null
 let selecting = false
 let lastSelectedText = ''
+
+// 批注
+const annotateMode = ref<AnnotateMode>('none')
+const markups = ref<PdfMarkupDto[]>([])
+const draftPage = ref<number | null>(null)
+let penPoints: Array<[number, number]> = []
+let annotDrawing = false
+let annotStart: { page: number; x: number; y: number; w: number; h: number } | null = null
+
+/** 页内透明笔记输入框（点击落点即现，无弹窗） */
+const inlineNote = ref<{
+  page: number
+  nx: number
+  ny: number
+  x: number
+  y: number
+  text: string
+} | null>(null)
+const inlineNoteRef = ref<HTMLTextAreaElement | null>(null)
+let inlineNoteCommitting = false
+let suppressInlineNoteBlur = false
 
 const selectRectStyle = computed(() => {
   const r = selectRect.value
@@ -114,14 +205,112 @@ const selectRectStyle = computed(() => {
   }
 })
 
+const inlineNoteStyle = computed(() => {
+  const n = inlineNote.value
+  if (!n) return {}
+  return {
+    left: n.x + 'px',
+    top: n.y + 'px',
+  }
+})
+
+function setAnnotateMode(mode: AnnotateMode) {
+  // 再点一次已激活工具 → 回到框选；笔/笔记/擦除均未选中时即为框选
+  const next = mode === 'none'
+    ? 'none'
+    : annotateMode.value === mode
+      ? 'none'
+      : mode
+  if (next !== 'text') {
+    void commitInlineNote()
+  }
+  annotateMode.value = next
+  onSelectCancel()
+  clearDraft()
+}
+
+function clearDraft() {
+  annotDrawing = false
+  annotStart = null
+  penPoints = []
+  draftPage.value = null
+}
+
 function setCanvasRef(pageNum: number, el: unknown) {
   if (el instanceof HTMLCanvasElement) {
     canvasMap.set(pageNum, el)
   }
 }
 
+function setMarkupCanvasRef(pageNum: number, el: unknown) {
+  if (el instanceof HTMLCanvasElement) {
+    markupCanvasMap.set(pageNum, el)
+  }
+}
+
 function getContainerWidth(): number {
   return (containerRef.value?.clientWidth || 700)
+}
+
+function markupsForPage(pageNum: number): PdfMarkupDto[] {
+  return markups.value.filter((m) => m.pageNum === pageNum)
+}
+
+async function loadMarkups() {
+  try {
+    const res = await getPdfMarkups(props.bookId)
+    markups.value = (res.data?.data || []) as PdfMarkupDto[]
+    for (const page of renderedPages) {
+      redrawMarkupLayer(page)
+    }
+  } catch (e) {
+    console.warn('[PdfReader] 加载批注失败:', e)
+  }
+}
+
+function syncMarkupCanvasSize(pageNum: number) {
+  const pdfCanvas = canvasMap.get(pageNum)
+  const layer = markupCanvasMap.get(pageNum)
+  if (!pdfCanvas || !layer) return null
+  const w = pdfCanvas.clientWidth
+  const h = pdfCanvas.clientHeight
+  if (w <= 0 || h <= 0) return null
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  layer.width = Math.floor(w * dpr)
+  layer.height = Math.floor(h * dpr)
+  layer.style.width = w + 'px'
+  layer.style.height = h + 'px'
+  const ctx = layer.getContext('2d')
+  if (!ctx) return null
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  return { ctx, w, h }
+}
+
+function redrawMarkupLayer(pageNum: number) {
+  const sized = syncMarkupCanvasSize(pageNum)
+  if (!sized) return
+  const { ctx, w, h } = sized
+  ctx.clearRect(0, 0, w, h)
+  for (const m of markupsForPage(pageNum)) {
+    drawMarkup(ctx, m, w, h)
+  }
+  // 绘制中的笔迹预览
+  if (annotDrawing && annotateMode.value === 'pen' && draftPage.value === pageNum && penPoints.length > 1) {
+    ctx.save()
+    ctx.strokeStyle = DEFAULT_MARKUP_COLOR
+    ctx.lineWidth = Math.max(1.5, DEFAULT_STROKE * w)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    penPoints.forEach(([nx, ny], i) => {
+      const x = nx * w
+      const y = ny * h
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 async function loadDocument() {
@@ -155,6 +344,7 @@ async function loadDocument() {
     setupObserver()
     setupScrollListener()
     await restorePosition()
+    await loadMarkups()
     emit('loading', false)
   } catch (err: any) {
     console.error('[PdfReader] 加载失败:', err)
@@ -279,6 +469,7 @@ async function renderPage(pageNum: number) {
     await task.promise
     if (destroyed) return
     renderedPages.add(pageNum)
+    redrawMarkupLayer(pageNum)
   } catch (e) {
     console.warn('[PdfReader] 渲染第', pageNum, '页失败:', e)
   }
@@ -417,7 +608,7 @@ async function rerenderVisible() {
   }
 }
 
-// -------- 框选 OCR --------
+// -------- 指针：OCR 框选 / 批注 --------
 
 function pageFromEvent(e: MouseEvent): { page: number; canvas: HTMLCanvasElement; localX: number; localY: number } | null {
   const target = (e.target as HTMLElement)?.closest?.('.pdf-page-container') as HTMLElement | null
@@ -432,6 +623,257 @@ function pageFromEvent(e: MouseEvent): { page: number; canvas: HTMLCanvasElement
     localX: e.clientX - rect.left,
     localY: e.clientY - rect.top,
   }
+}
+
+function onPointerDown(e: MouseEvent) {
+  if (annotateMode.value !== 'none') {
+    onAnnotStart(e)
+  } else {
+    onSelectStart(e)
+  }
+}
+
+function onPointerMove(e: MouseEvent) {
+  if (annotateMode.value !== 'none') {
+    onAnnotMove(e)
+  } else {
+    onSelectMove(e)
+  }
+}
+
+async function onPointerUp(e: MouseEvent) {
+  if (annotateMode.value !== 'none') {
+    await onAnnotEnd(e)
+  } else {
+    await onSelectEnd()
+  }
+}
+
+function onPointerCancel() {
+  if (annotateMode.value !== 'none') {
+    clearDraft()
+    if (draftPage.value) redrawMarkupLayer(draftPage.value)
+  } else {
+    onSelectCancel()
+  }
+}
+
+function onAnnotStart(e: MouseEvent) {
+  if (e.button !== 0 || ocrLoading.value) return
+  e.preventDefault()
+  const info = pageFromEvent(e)
+  if (!info) return
+  const { page, canvas, localX, localY } = info
+  const [nx, ny] = toNorm(localX, localY, canvas.clientWidth, canvas.clientHeight)
+
+  if (annotateMode.value === 'eraser') {
+    const hit = hitTestMarkup(markupsForPage(page), nx, ny, canvas.clientWidth)
+    if (hit != null) {
+      eraseMarkup(hit, page)
+    }
+    return
+  }
+
+  if (annotateMode.value === 'text') {
+    void openInlineNote(page, nx, ny, localX, localY)
+    return
+  }
+
+  annotDrawing = true
+  annotStart = { page, x: localX, y: localY, w: canvas.clientWidth, h: canvas.clientHeight }
+  draftPage.value = page
+  if (annotateMode.value === 'pen') {
+    penPoints = [[nx, ny]]
+  }
+}
+
+function onAnnotMove(e: MouseEvent) {
+  if (!annotDrawing || !annotStart) return
+  const info = pageFromEvent(e)
+  if (!info || info.page !== annotStart.page) return
+  const x2 = Math.max(0, Math.min(info.canvas.clientWidth, info.localX))
+  const y2 = Math.max(0, Math.min(info.canvas.clientHeight, info.localY))
+
+  if (annotateMode.value === 'pen') {
+    const [nx, ny] = toNorm(x2, y2, info.canvas.clientWidth, info.canvas.clientHeight)
+    const last = penPoints[penPoints.length - 1]
+    if (!last || Math.abs(last[0] - nx) + Math.abs(last[1] - ny) > 0.002) {
+      penPoints.push([nx, ny])
+      redrawMarkupLayer(info.page)
+    }
+  }
+}
+
+async function onAnnotEnd(_e: MouseEvent) {
+  if (!annotDrawing || !annotStart) {
+    clearDraft()
+    return
+  }
+  const page = annotStart.page
+  const mode = annotateMode.value
+
+  try {
+    if (mode === 'pen') {
+      if (penPoints.length < 2) {
+        clearDraft()
+        redrawMarkupLayer(page)
+        return
+      }
+      const geometry: PenGeometry = { points: penPoints.slice(), strokeWidth: DEFAULT_STROKE }
+      await persistMarkup(page, 'pen', JSON.stringify(geometry))
+    }
+  } catch (err: any) {
+    MessagePlugin.error(err?.response?.data?.message || '保存批注失败')
+  } finally {
+    clearDraft()
+    redrawMarkupLayer(page)
+  }
+}
+
+async function persistMarkup(
+  pageNum: number,
+  markupType: string,
+  geometryJson: string,
+  noteText?: string
+) {
+  const res = await addPdfMarkup(props.bookId, {
+    pageNum,
+    markupType,
+    geometryJson,
+    color: DEFAULT_MARKUP_COLOR,
+    noteText,
+  })
+  const saved = res.data?.data as PdfMarkupDto
+  if (saved?.id) {
+    markups.value = [...markups.value, saved]
+    pushUndo({ kind: 'create', markup: saved })
+    redrawMarkupLayer(pageNum)
+  }
+}
+
+async function openInlineNote(page: number, nx: number, ny: number, x: number, y: number) {
+  if (inlineNote.value) {
+    suppressInlineNoteBlur = true
+    await commitInlineNote()
+    suppressInlineNoteBlur = false
+  }
+  inlineNote.value = { page, nx, ny, x, y, text: '' }
+  await nextTick()
+  inlineNoteRef.value?.focus()
+}
+
+function discardInlineNote() {
+  suppressInlineNoteBlur = true
+  inlineNote.value = null
+  suppressInlineNoteBlur = false
+}
+
+async function commitInlineNote() {
+  if (inlineNoteCommitting) return
+  const note = inlineNote.value
+  if (!note) return
+  const text = note.text.trim()
+  if (!text) {
+    inlineNote.value = null
+    return
+  }
+  inlineNoteCommitting = true
+  suppressInlineNoteBlur = true
+  try {
+    await persistMarkup(note.page, 'text', JSON.stringify({ x: note.nx, y: note.ny }), text)
+    inlineNote.value = null
+  } catch (err: any) {
+    MessagePlugin.error(err?.response?.data?.message || '保存笔记失败')
+  } finally {
+    inlineNoteCommitting = false
+    // 等 DOM 更新后再允许 blur，避免销毁 textarea 时误提交
+    await nextTick()
+    suppressInlineNoteBlur = false
+  }
+}
+
+function onInlineNoteBlur() {
+  if (suppressInlineNoteBlur) return
+  void commitInlineNote()
+}
+
+function onInlineNoteKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    discardInlineNote()
+    return
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void commitInlineNote()
+  }
+}
+
+async function eraseMarkup(id: number, page: number) {
+  const removed = markups.value.find((m) => m.id === id)
+  try {
+    await deletePdfMarkup(props.bookId, id)
+    markups.value = markups.value.filter((m) => m.id !== id)
+    if (removed) pushUndo({ kind: 'delete', markup: removed })
+    redrawMarkupLayer(page)
+  } catch {
+    MessagePlugin.error('擦除失败')
+  }
+}
+
+type UndoEntry =
+  | { kind: 'create'; markup: PdfMarkupDto }
+  | { kind: 'delete'; markup: PdfMarkupDto }
+
+const undoStack: UndoEntry[] = []
+const MAX_UNDO = 50
+
+function pushUndo(entry: UndoEntry) {
+  undoStack.push(entry)
+  if (undoStack.length > MAX_UNDO) undoStack.shift()
+}
+
+async function undoLastMarkup() {
+  const entry = undoStack.pop()
+  if (!entry) {
+    MessagePlugin.info('没有可撤销的批注')
+    return
+  }
+  try {
+    if (entry.kind === 'create') {
+      await deletePdfMarkup(props.bookId, entry.markup.id)
+      markups.value = markups.value.filter((m) => m.id !== entry.markup.id)
+      redrawMarkupLayer(entry.markup.pageNum)
+    } else {
+      const m = entry.markup
+      const res = await addPdfMarkup(props.bookId, {
+        pageNum: m.pageNum,
+        markupType: m.markupType,
+        geometryJson: m.geometryJson,
+        color: m.color || DEFAULT_MARKUP_COLOR,
+        noteText: m.noteText || undefined,
+      })
+      const saved = res.data?.data as PdfMarkupDto
+      if (saved?.id) {
+        markups.value = [...markups.value, saved]
+        redrawMarkupLayer(saved.pageNum)
+      }
+    }
+  } catch {
+    undoStack.push(entry)
+    MessagePlugin.error('撤销失败')
+  }
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  const isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')
+  if (!isUndo) return
+  const tag = (e.target as HTMLElement)?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) {
+    return
+  }
+  e.preventDefault()
+  void undoLastMarkup()
 }
 
 function onSelectStart(e: MouseEvent) {
@@ -536,10 +978,12 @@ defineExpose({ goToPage })
 
 onMounted(() => {
   loadDocument()
+  window.addEventListener('keydown', onKeyDown)
 })
 
 onBeforeUnmount(() => {
   destroyed = true
+  window.removeEventListener('keydown', onKeyDown)
   if (saveTimer) clearTimeout(saveTimer)
   observer?.disconnect()
   observer = null
@@ -558,59 +1002,128 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .pdf-viewer {
+  position: relative;
   flex: 1;
   min-height: 0;
+  background: #525659;
+  user-select: none;
+  overflow: hidden;
+}
+
+.pdf-scroll {
+  width: 100%;
+  height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #525659;
-  user-select: none;
 }
 
+.pdf-scroll.is-annotating {
+  cursor: crosshair;
+}
+
+/* 顶部缩放：原位置，透明悬浮、字号偏小 */
 .pdf-zoom-bar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: rgba(0, 0, 0, 0.7);
-  border-radius: 0 0 8px 8px;
-  margin-bottom: 12px;
-}
-
-.pdf-zoom-value {
-  color: #fff;
-  font-size: 13px;
-  min-width: 48px;
-  text-align: center;
+  gap: 2px;
+  padding: 4px 10px;
+  background: rgba(20, 22, 24, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
 }
 
 .pdf-zoom-bar :deep(.t-button) {
-  color: #ccc;
+  color: rgba(255, 255, 255, 0.78);
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 !important;
 }
+
 .pdf-zoom-bar :deep(.t-button:hover) {
   color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pdf-zoom-value {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  line-height: 1;
+  min-width: 34px;
+  text-align: center;
 }
 
 .pdf-page-count {
-  color: #aaa;
-  font-size: 12px;
-  margin-left: 12px;
-}
-
-.pdf-ocr-hint {
-  color: #8ab4f8;
-  font-size: 12px;
-  margin-left: 16px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  margin-left: 6px;
+  line-height: 1;
 }
 
 .pdf-ocr-status {
   color: #ffd666;
-  font-size: 12px;
-  margin-left: 8px;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+/* 右侧批注：透明悬浮 */
+.pdf-toolbar {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 44px;
+  padding: 8px 4px;
+  background: rgba(20, 22, 24, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  pointer-events: auto;
+}
+
+.pdf-toolbar :deep(.t-button) {
+  color: rgba(255, 255, 255, 0.78);
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pdf-toolbar :deep(.t-button:hover) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.eraser-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.pdf-toolbar :deep(.tool-active) {
+  color: #ff8a80 !important;
+  background: rgba(229, 57, 53, 0.28);
+  border-radius: 6px;
 }
 
 .pdf-page-list {
@@ -618,8 +1131,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding-bottom: 24px;
+  padding: 16px 0 24px;
   width: 100%;
+}
+
+.pdf-page-list.is-annotating {
+  cursor: crosshair;
 }
 
 .pdf-canvas {
@@ -642,6 +1159,21 @@ onBeforeUnmount(() => {
   background: #3a3d40;
 }
 
+.pdf-markup-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.pdf-markup-layer--active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
 .pdf-select-rect {
   position: absolute;
   border: 2px solid #4da3ff;
@@ -649,6 +1181,36 @@ onBeforeUnmount(() => {
   pointer-events: none;
   z-index: 5;
   box-sizing: border-box;
+}
+
+.pdf-inline-note {
+  position: absolute;
+  z-index: 7;
+  min-width: 120px;
+  max-width: 42%;
+  min-height: 1.4em;
+  padding: 2px 4px;
+  margin: 0;
+  border: 1px solid rgba(229, 57, 53, 0.45);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #e53935;
+  font-size: 14px;
+  line-height: 1.35;
+  font-family: inherit;
+  resize: both;
+  outline: none;
+  box-shadow: none;
+  backdrop-filter: blur(1px);
+}
+
+.pdf-inline-note::placeholder {
+  color: rgba(229, 57, 53, 0.45);
+}
+
+.pdf-inline-note:focus {
+  border-color: rgba(229, 57, 53, 0.75);
+  background: rgba(255, 255, 255, 0.32);
 }
 
 .pdf-ocr-overlay {

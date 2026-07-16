@@ -19,4 +19,13 @@ public interface AiService {
      * AI 阅读助手流式对话（自动记录调用日志）
      */
     Flux<String> chatStream(Long userId, String systemPrompt, String userPrompt);
+
+    /**
+     * AI 阅读助手流式对话，带场景与原始输入计量
+     *
+     * @param callScene  场景标识，如 reading_chat / feature
+     * @param inputText  用户原始输入（选中文本或提问），用于字数/词数统计
+     */
+    Flux<String> chatStream(Long userId, String callScene, String inputText,
+                            String systemPrompt, String userPrompt);
 }

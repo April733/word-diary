@@ -9,6 +9,23 @@ spring:
   sql:
     init:
       mode: always
+  # Spring AI 自动配置占位（实际调用走 app.ai.providers + 数据库场景映射）
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:sk-placeholder}
+      base-url: ${AI_BASE_URL:https://api.deepseek.com}
+      chat:
+        options: {}
+
+# 供应商接入点：只配 api-key / base-url，不要写模型名
+# 模型由 sys_ai_model（场景 key + 模型名 + 单价）决定，不写在 yml
+app:
+  ai:
+    providers:
+      deepseek:
+        api-key: ${DEEPSEEK_API_KEY:sk-placeholder}
+        base-url: https://api.deepseek.com
+      aliyun:
+        api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
+        # 不要带 /v1：Spring AI 会自动追加 /v1/chat/completions
+        base-url: https://dashscope.aliyuncs.com/compatible-mode

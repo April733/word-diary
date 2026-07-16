@@ -34,6 +34,15 @@ public class WdLearnRecord {
     /** 0未记住 1记住 */
     private Integer result;
 
+    /** 三档反馈: 0忘记 1认识 2模糊 */
+    private Integer feedback;
+
+    /** 1正式每日 2自由回顾 */
+    private Integer studyMode;
+
+    /** 1更新计划 0仅记录 */
+    private Integer affectsSchedule;
+
     /** 学习时间 */
     private LocalDateTime studyTime;
 

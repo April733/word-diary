@@ -8,34 +8,23 @@ import spring.nexusfuture.word_diary.common.JwtUtil;
 import spring.nexusfuture.word_diary.dto.LoginReq;
 import spring.nexusfuture.word_diary.dto.RegisterReq;
 import spring.nexusfuture.word_diary.dto.UserVO;
-import spring.nexusfuture.word_diary.entity.SysMemberTier;
-import spring.nexusfuture.word_diary.entity.WdInviteCode;
 import spring.nexusfuture.word_diary.entity.WdUser;
-import spring.nexusfuture.word_diary.entity.WdUserBenefit;
-import spring.nexusfuture.word_diary.mapper.WdInviteCodeMapper;
-import spring.nexusfuture.word_diary.mapper.WdUserBenefitMapper;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
 import spring.nexusfuture.word_diary.service.MemberTierService;
 import spring.nexusfuture.word_diary.service.UserService;
-import java.time.LocalDateTime;
 
 @Service
 public class UserServiceImpl implements UserService {
 
     private final WdUserMapper userMapper;
-    private final WdInviteCodeMapper inviteCodeMapper;
-    private final WdUserBenefitMapper userBenefitMapper;
     private final MemberTierService memberTierService;
     private final JwtUtil jwtUtil;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    public UserServiceImpl(WdUserMapper userMapper, WdInviteCodeMapper inviteCodeMapper,
-                           WdUserBenefitMapper userBenefitMapper,
+    public UserServiceImpl(WdUserMapper userMapper,
                            MemberTierService memberTierService,
                            JwtUtil jwtUtil) {
         this.userMapper = userMapper;
-        this.inviteCodeMapper = inviteCodeMapper;
-        this.userBenefitMapper = userBenefitMapper;
         this.memberTierService = memberTierService;
         this.jwtUtil = jwtUtil;
     }
@@ -67,18 +56,8 @@ public class UserServiceImpl implements UserService {
             throw new BizException("注册方式不正确");
         }
 
-        // 校验邀请码
-        WdInviteCode inviteCode = inviteCodeMapper.selectByCode(req.getInviteCode());
-        if (inviteCode == null) {
-            throw new BizException("邀请码不存在");
-        }
-        if (inviteCode.getUsedBy() != null) {
-            throw new BizException("邀请码已被使用");
-        }
-        // 根据邀请码确定会员等级，并获取对应的权益配置
-        Integer tier = inviteCode.getMemberTier() != null ? inviteCode.getMemberTier()
-                : memberTierService.getDefaultTier().getTier();
-        SysMemberTier tierConfig = memberTierService.getByTier(tier);
+        // 暂不启用会员体系：注册不需要邀请码，默认免费档
+        Integer tier = memberTierService.getDefaultTier().getTier();
 
         WdUser user = WdUser.builder()
                 .username(req.getUsername())
@@ -90,26 +69,6 @@ public class UserServiceImpl implements UserService {
                 .memberTier(tier)
                 .build();
         userMapper.insert(user);
-
-        // 将等级配置中的权益写入用户权益表
-        WdUserBenefit benefit = WdUserBenefit.builder()
-                .userId(user.getId())
-                .tierSnapshot(tier)
-                .maxBookshelves(tierConfig.getMaxBookshelves())
-                .maxWordbooks(tierConfig.getMaxWordbooks())
-                .maxWordsPerBook(tierConfig.getMaxWordsPerBook())
-                .dailyImportLimit(tierConfig.getDailyImportLimit())
-                .dailyAiReadingLimit(tierConfig.getDailyAiReadingLimit())
-                .isAiEnabled(tierConfig.getIsAiEnabled())
-                .channel("invite_code")
-                .channelRefId(inviteCode.getId())
-                .acquiredAt(LocalDateTime.now())
-                .expiredAt(null) // 邀请码权益永久有效
-                .build();
-        userBenefitMapper.insert(benefit);
-
-        // 核销邀请码
-        inviteCodeMapper.useInviteCode(req.getInviteCode(), user.getId());
     }
 
     @Override

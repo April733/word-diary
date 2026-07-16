@@ -1,0 +1,12 @@
+---
+description: Aikoread brand — Komodo mascot, colors, global background
+alwaysApply: true
+---
+
+# Brand — Aikoread（科莫多巨蜥）
+
+- Logo：圆形 `logo-circle.png`（看书巨蜥）— 品牌主识别
+- 登录页：表单优先。奶油底 + 轻色晕 + 居中白卡片（logo / 标题 / slogan / 表单）。禁止大插画压在卡片后，禁止并排「主图+表单」
+- 插画素材（`komodo-cute` 等）可作营销页/落地页主视觉，不进登录表单背后
+- 全局内页：`App.vue` 轻色晕即可（登录/阅读器除外）
+- 色板：`#A8B59F` / `#F6F0E6` / `#315C34` / `#FFFFFF`

@@ -14,7 +14,17 @@ api.interceptors.request.use(config => {
 })
 
 api.interceptors.response.use(
-  res => res,
+  res => {
+    const body = res.data
+    // 业务失败偶发以 HTTP 200 + code!=200 返回，统一当成错误
+    if (body && typeof body.code === 'number' && body.code !== 200) {
+      return Promise.reject({
+        response: res,
+        message: body.message || '请求失败'
+      })
+    }
+    return res
+  },
   err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token')
@@ -66,8 +76,21 @@ export const aiParseWordsStream = (notebookId: number, data: any): Promise<Respo
 }
 
 export const batchAddWords = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words/batch-add`, data)
+export const fillWordGaps = (notebookId: number, data?: { wordIds?: number[] }) =>
+  api.post(`/notebooks/${notebookId}/words/ai-fill-gaps`, data || {}, { timeout: 120000 })
 
 // Study
+export const getStudyToday = () => api.get('/study/today')
+export const openStudySession = () => api.post('/study/session/open')
+export const submitStudyAnswer = (data: { planId: number; queueItemId: number; feedback: number; phase: string }) =>
+  api.post('/study/answer', data)
+export const getStudySettings = () => api.get('/study/settings')
+export const updateStudySettings = (data: { dailyNewLimit?: number; reviewUnlockHour?: number; autoSpreadNew?: boolean }) =>
+  api.put('/study/settings', data)
+export const getBrowseWords = (params?: { notebookId?: number; page?: number; pageSize?: number }) =>
+  api.get('/study/browse/words', { params })
+export const submitBrowseAnswer = (data: { planId: number; feedback: number }) =>
+  api.post('/study/browse/answer', data)
 export const getNewWords = () => api.get('/study/new-words')
 export const getTodayReview = () => api.get('/study/today-review')
 export const getTodayCompleted = () => api.get('/study/today-completed')
@@ -114,6 +137,25 @@ export const updateAnnotation = (bookId: number, id: number, data: any) =>
   api.put(`/books/${bookId}/annotations/${id}`, data)
 export const deleteAnnotation = (bookId: number, id: number) => api.delete(`/books/${bookId}/annotations/${id}`)
 
+// PDF Canvas 批注（与 EPUB CFI 笔记分离）
+export const getPdfMarkups = (bookId: number) => api.get(`/books/${bookId}/pdf-markups`)
+export const getPdfMarkupsByPage = (bookId: number, pageNum: number) =>
+  api.get(`/books/${bookId}/pdf-markups/page/${pageNum}`)
+export const addPdfMarkup = (bookId: number, data: {
+  pageNum: number
+  markupType: string
+  geometryJson: string
+  color?: string
+  noteText?: string
+}) => api.post(`/books/${bookId}/pdf-markups`, data)
+export const updatePdfMarkup = (bookId: number, id: number, data: {
+  geometryJson?: string
+  color?: string
+  noteText?: string
+}) => api.put(`/books/${bookId}/pdf-markups/${id}`, data)
+export const deletePdfMarkup = (bookId: number, id: number) =>
+  api.delete(`/books/${bookId}/pdf-markups/${id}`)
+
 // Reader Settings
 export const getReaderSettings = () => api.get('/books/reader-settings')
 export const saveReaderSettings = (data: any) => api.put('/books/reader-settings', data)
@@ -132,3 +174,8 @@ export const reportIssue = (data: { username?: string; description: string; erro
   api.post('/books/report-issue', data)
 export const reportIssuePublic = (data: { username: string; description: string; errorDetail?: string; subject?: string }) =>
   api.post('/user/report-issue-public', data)
+
+// Book ↔ Notebook links & collect
+export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)
+export const collectBookWords = (bookId: number, data: any) =>
+  api.post(`/books/${bookId}/words/collect`, data)

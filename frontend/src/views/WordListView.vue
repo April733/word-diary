@@ -8,6 +8,7 @@
         <h1>{{ notebookName }}</h1>
       </div>
       <div class="header-actions">
+        <t-button :loading="fillGapsLoading" @click="handleFillGaps">AI 补全空缺</t-button>
         <t-button @click="openBatchImport">批量导入</t-button>
         <t-button theme="primary" @click="openAddDialog">添加单词</t-button>
       </div>
@@ -165,7 +166,7 @@
 import { ref, onMounted, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getWords, addWord, updateWord, deleteWord, aiParseWords, aiParseWordsStream, batchAddWords } from '../api'
+import { getWords, addWord, updateWord, deleteWord, aiParseWords, aiParseWordsStream, batchAddWords, fillWordGaps } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -175,6 +176,7 @@ const words = ref<any[]>([])
 const showDialog = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
+const fillGapsLoading = ref(false)
 
 // Batch import state
 const showBatchDialog = ref(false)
@@ -265,7 +267,8 @@ async function handleSubmit() {
     editingId.value = null
     await loadWords()
   } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.message || '操作失败')
+    const msg = e.response?.data?.message || e.message || '保存失败，请联系管理员'
+    MessagePlugin.error(msg)
     return false
   } finally {
     saving.value = false
@@ -279,6 +282,24 @@ async function handleDelete(wordId: number) {
     await loadWords()
   } catch (e) {
     MessagePlugin.error('删除失败')
+  }
+}
+
+async function handleFillGaps() {
+  fillGapsLoading.value = true
+  try {
+    const res = await fillWordGaps(notebookId, {})
+    const updated = res.data.data?.updated ?? 0
+    if (updated > 0) {
+      MessagePlugin.success(`已补全 ${updated} 个单词的空缺字段`)
+      await loadWords()
+    } else {
+      MessagePlugin.info('没有需要补全的单词')
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e.response?.data?.message || '补全失败')
+  } finally {
+    fillGapsLoading.value = false
   }
 }
 
@@ -552,7 +573,7 @@ function displayRootAffix(text: string) {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .page-header {

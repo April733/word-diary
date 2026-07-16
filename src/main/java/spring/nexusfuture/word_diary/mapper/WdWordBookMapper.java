@@ -7,13 +7,17 @@ import java.util.List;
 @Mapper
 public interface WdWordBookMapper {
 
-    @Insert("INSERT INTO wd_word_book(user_id, book_name, book_desc, sort_num, status, create_time, update_time) " +
-            "VALUES(#{userId}, #{bookName}, #{bookDesc}, #{sortNum}, #{status}, NOW(), NOW())")
+    @Insert("INSERT INTO wd_word_book(user_id, book_id, book_name, book_desc, sort_num, status, create_time, update_time) " +
+            "VALUES(#{userId}, #{bookId}, #{bookName}, #{bookDesc}, #{sortNum}, #{status}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdWordBook book);
 
     @Select("SELECT * FROM wd_word_book WHERE user_id = #{userId} AND is_deleted = 0 ORDER BY sort_num ASC")
     List<WdWordBook> selectByUserId(Long userId);
+
+    @Select("SELECT * FROM wd_word_book WHERE user_id = #{userId} AND book_id = #{bookId} AND is_deleted = 0 " +
+            "ORDER BY sort_num ASC, id ASC")
+    List<WdWordBook> selectByBookId(@Param("userId") Long userId, @Param("bookId") Long bookId);
 
     @Select("SELECT * FROM wd_word_book WHERE id = #{id} AND is_deleted = 0")
     WdWordBook selectById(Long id);

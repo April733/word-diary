@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "📖 Word Diary",
+    "appName": "Aikoread",
     "save": "Simpan",
     "confirm": "Konfirmasi",
     "cancel": "Batal",
@@ -25,7 +25,7 @@
     "notebook": "Catatan"
   },
   "login": {
-    "title": "Masuk ke Word Diary",
+    "title": "Masuk ke Aikoread",
     "subtitle": "Asisten Belajar Bahasa Inggris dengan AI",
     "username": "Nama Pengguna",
     "password": "Kata Sandi",
@@ -78,7 +78,13 @@
     "forgotPasswordDesc": "Atur ulang kata sandi melalui verifikasi telepon",
     "resetPasswordSuccess": "Kata sandi berhasil diatur ulang, silakan masuk",
     "newPassword": "Kata Sandi Baru",
-    "newPasswordPlaceholder": "Masukkan kata sandi baru"
+    "newPasswordPlaceholder": "Masukkan kata sandi baru",
+    "welcomeBack": "Selamat datang kembali",
+    "brandTagline": "Jelajahi kesenangan bahasa",
+    "productTitle": "Aikoread",
+    "noAccount": "Belum punya akun?",
+    "goRegister": "Daftar",
+    "backToLogin": "Kembali ke login"
   },
   "dashboard": {
     "greeting": "Halo, ",

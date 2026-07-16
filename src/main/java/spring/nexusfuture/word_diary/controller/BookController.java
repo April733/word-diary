@@ -5,9 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import spring.nexusfuture.word_diary.common.CollectJsonSupport;
 import spring.nexusfuture.word_diary.common.R;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
 import spring.nexusfuture.word_diary.dto.AnnotationReq;
+import spring.nexusfuture.word_diary.dto.PdfMarkupReq;
+import spring.nexusfuture.word_diary.entity.WdPdfMarkup;
+import spring.nexusfuture.word_diary.service.PdfMarkupService;
+import spring.nexusfuture.word_diary.dto.BookCollectReq;
+import spring.nexusfuture.word_diary.dto.BookCollectResultVO;
+import spring.nexusfuture.word_diary.dto.BookNotebookLinkVO;
+import spring.nexusfuture.word_diary.dto.CollectEntryDTO;
 import spring.nexusfuture.word_diary.entity.WdAiMessage;
 import spring.nexusfuture.word_diary.entity.WdAiSession;
 import spring.nexusfuture.word_diary.entity.WdAnnotation;
@@ -16,6 +24,8 @@ import spring.nexusfuture.word_diary.entity.WdReaderSettings;
 import spring.nexusfuture.word_diary.service.AiService;
 import spring.nexusfuture.word_diary.service.AiSessionService;
 import spring.nexusfuture.word_diary.service.AnnotationService;
+import spring.nexusfuture.word_diary.service.BookCollectService;
+import spring.nexusfuture.word_diary.service.BookNotebookLinkService;
 import spring.nexusfuture.word_diary.service.BookService;
 import spring.nexusfuture.word_diary.service.ReaderSettingsService;
 
@@ -25,6 +35,8 @@ import spring.nexusfuture.word_diary.service.CosService;
 import spring.nexusfuture.word_diary.service.FeedbackService;
 import spring.nexusfuture.word_diary.service.MailService;
 import spring.nexusfuture.word_diary.dto.AiFeaturePreferenceVO;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -47,6 +59,10 @@ public class BookController {
     private final AiPromptBuilder promptBuilder;
     private final MailService mailService;
     private final FeedbackService feedbackService;
+    private final BookNotebookLinkService notebookLinkService;
+    private final BookCollectService bookCollectService;
+    private final PdfMarkupService pdfMarkupService;
+    private final ObjectMapper objectMapper;
 
     /** 上传书籍 */
     @PostMapping("/upload")
@@ -182,6 +198,55 @@ public class BookController {
         return R.ok(annotationService.listByChapter(bookId, userId, chapterIndex));
     }
 
+    // ========== PDF 批注（Canvas 覆盖层，与 EPUB CFI 笔记分离）==========
+
+    @GetMapping("/{bookId}/pdf-markups")
+    public R<List<WdPdfMarkup>> listPdfMarkups(@RequestAttribute Long userId, @PathVariable Long bookId) {
+        return R.ok(pdfMarkupService.listByBook(userId, bookId));
+    }
+
+    @GetMapping("/{bookId}/pdf-markups/page/{pageNum}")
+    public R<List<WdPdfMarkup>> listPdfMarkupsByPage(@RequestAttribute Long userId,
+                                                     @PathVariable Long bookId,
+                                                     @PathVariable Integer pageNum) {
+        return R.ok(pdfMarkupService.listByPage(userId, bookId, pageNum));
+    }
+
+    @PostMapping("/{bookId}/pdf-markups")
+    public R<WdPdfMarkup> addPdfMarkup(@RequestAttribute Long userId,
+                                       @PathVariable Long bookId,
+                                       @RequestBody PdfMarkupReq req) {
+        WdPdfMarkup markup = WdPdfMarkup.builder()
+                .pageNum(req.getPageNum())
+                .markupType(req.getMarkupType())
+                .geometryJson(req.getGeometryJson())
+                .color(req.getColor())
+                .noteText(req.getNoteText())
+                .build();
+        return R.ok(pdfMarkupService.add(userId, bookId, markup));
+    }
+
+    @PutMapping("/{bookId}/pdf-markups/{id}")
+    public R<WdPdfMarkup> updatePdfMarkup(@RequestAttribute Long userId,
+                                          @PathVariable Long bookId,
+                                          @PathVariable Long id,
+                                          @RequestBody PdfMarkupReq req) {
+        WdPdfMarkup markup = WdPdfMarkup.builder()
+                .geometryJson(req.getGeometryJson())
+                .color(req.getColor())
+                .noteText(req.getNoteText())
+                .build();
+        return R.ok(pdfMarkupService.update(userId, bookId, id, markup));
+    }
+
+    @DeleteMapping("/{bookId}/pdf-markups/{id}")
+    public R<Void> deletePdfMarkup(@RequestAttribute Long userId,
+                                   @PathVariable Long bookId,
+                                   @PathVariable Long id) {
+        pdfMarkupService.delete(userId, bookId, id);
+        return R.ok();
+    }
+
     // ========== 阅读设置 ==========
 
     /** 获取用户阅读设置 */
@@ -265,17 +330,36 @@ public class BookController {
             userPrompt = promptBuilder.buildReadingAssistantUserPrompt(locale, question);
         }
 
+        final boolean collectEnabled = CollectJsonSupport.shouldCollect(featureKeys, featureKey);
+        if (collectEnabled) {
+            systemPrompt = systemPrompt + CollectJsonSupport.collectInstruction();
+        }
+
         final Long finalSessionId = sessionId;
         final String finalFeatureKey = savedFeatureKey;
         final StringBuilder fullResponseText = new StringBuilder();
-        aiService.chatStream(userId, systemPrompt, userPrompt)
+
+        // 原始输入：优先选中上下文，否则用提问（用于成本字数统计）
+        String rawInput = (context != null && !context.isBlank()) ? context
+                : (question != null ? question : "");
+        String callScene = (featureKeys != null && !featureKeys.isEmpty()) || (featureKey != null && !featureKey.isEmpty())
+                ? "feature"
+                : "reading_chat";
+
+        aiService.chatStream(userId, callScene, rawInput, systemPrompt, userPrompt)
                 .subscribe(
                         content -> {
                             try {
                                 fullResponseText.append(content);
-                                emitter.send(SseEmitter.event()
-                                        .name("chunk")
-                                        .data(content));
+                                String displayChunk = content;
+                                if (collectEnabled && fullResponseText.toString().contains(CollectJsonSupport.MARKER)) {
+                                    displayChunk = "";
+                                }
+                                if (!displayChunk.isEmpty()) {
+                                    emitter.send(SseEmitter.event()
+                                            .name("chunk")
+                                            .data(displayChunk));
+                                }
                             } catch (IOException e) {
                                 emitter.completeWithError(e);
                             }
@@ -298,10 +382,18 @@ public class BookController {
                         },
                         () -> {
                             try {
-                                // 保存 AI 完整回复到数据库
+                                // 完整原文入库（含 COLLECT_JSON），前端展示时再剥离；历史会话可据此恢复收录按钮
                                 String fullResponse = fullResponseText.toString();
                                 if (!fullResponse.isEmpty()) {
                                     aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", fullResponse, finalFeatureKey);
+                                }
+                                if (collectEnabled) {
+                                    List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(fullResponse, objectMapper);
+                                    if (!entries.isEmpty()) {
+                                        emitter.send(SseEmitter.event()
+                                                .name("collect-entries")
+                                                .data(objectMapper.writeValueAsString(Map.of("entries", entries))));
+                                    }
                                 }
                                 emitter.send(SseEmitter.event()
                                         .name("done")
@@ -314,6 +406,17 @@ public class BookController {
         return emitter;
     }
 
+    @GetMapping("/{bookId}/notebook-links")
+    public R<List<BookNotebookLinkVO>> listNotebookLinks(@RequestAttribute Long userId, @PathVariable Long bookId) {
+        return R.ok(notebookLinkService.listLinks(userId, bookId));
+    }
+
+    @PostMapping("/{bookId}/words/collect")
+    public R<BookCollectResultVO> collectWords(@RequestAttribute Long userId, @PathVariable Long bookId,
+                                               @RequestBody BookCollectReq req) {
+        return R.ok(bookCollectService.collect(userId, bookId, req));
+    }
+
     /** 拼接历史消息为 AI 上下文 */
     private String buildHistoryContext(List<WdAiMessage> historyMessages) {
         if (historyMessages == null || historyMessages.isEmpty()) {
@@ -323,7 +426,9 @@ public class BookController {
         sb.append("\n\n--- 对话历史 ---\n");
         for (WdAiMessage msg : historyMessages) {
             String roleLabel = "user".equals(msg.getRole()) ? "用户" : "AI";
-            sb.append(roleLabel).append(": ").append(msg.getContent()).append("\n");
+            // 历史拼进 prompt 时去掉收录 JSON，避免污染上下文
+            sb.append(roleLabel).append(": ")
+                    .append(CollectJsonSupport.stripForDisplay(msg.getContent())).append("\n");
         }
         sb.append("--- 对话历史结束 ---\n");
         sb.append("请基于以上对话历史，结合用户最新的问题给出回答。");

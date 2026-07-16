@@ -1,97 +1,138 @@
 <template>
-  <div class="dashboard">
-    <header class="dash-header">
-      <div class="header-left">
-        <h1>{{ $t('common.appName') }}</h1>
-        <span class="greeting">{{ $t('dashboard.greeting') }}{{ userStore.user?.nickname }}</span>
+  <div class="home">
+    <header class="top">
+      <div class="brand-row">
+        <img class="brand-logo" src="/brand/logo-circle-64.png" width="36" height="36" alt="" decoding="async" />
+        <div>
+          <div class="brand">{{ $t('common.appName') }}</div>
+          <div class="hello">{{ $t('dashboard.greeting') }}{{ userStore.user?.nickname }}</div>
+        </div>
       </div>
-      <div class="header-right">
+      <div class="top-right">
         <LocaleSwitcher />
-        <t-button variant="outline" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
+        <t-button variant="text" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
       </div>
     </header>
 
-    <div class="dash-content">
-      <h2>{{ $t('nav.dashboard') }}</h2>
-      <div class="stats-grid">
-        <div class="stat-card blue">
-          <div class="stat-num">{{ stats.totalWords }}</div>
-          <div class="stat-label">{{ $t('dashboard.totalWords') }}</div>
-        </div>
-        <div class="stat-card yellow">
-          <div class="stat-num">{{ stats.newWords }}</div>
-          <div class="stat-label">{{ $t('dashboard.toLearn') }}</div>
-        </div>
-        <div class="stat-card green">
-          <div class="stat-num">{{ stats.reviewingWords }}</div>
-          <div class="stat-label">{{ $t('dashboard.reviewing') }}</div>
-        </div>
-        <div class="stat-card purple">
-          <div class="stat-num">{{ stats.masteredWords }}</div>
-          <div class="stat-label">{{ $t('dashboard.mastered') }}</div>
-        </div>
-      </div>
+    <main v-if="loading" class="body center">
+      <t-loading />
+    </main>
 
-      <div class="action-section">
-        <t-card :bordered="false" class="action-card" @click="router.push('/study')">
-          <div class="action-icon">📝</div>
-          <div class="action-info">
-            <h3>{{ $t('nav.study') }}</h3>
-            <p>{{ $t('dashboard.todayReview', { count: stats.todayReviewCount }) }}</p>
-          </div>
-          <t-icon name="chevron-right" size="24px" />
-        </t-card>
+    <main v-else class="body">
+      <!-- 有书：只推一本书、一个按钮 -->
+      <section v-if="focusBook" class="block">
+        <p class="muted">{{ $t('dashboard.homeReading') }}</p>
+        <h1 class="book-name">{{ focusBook.title }}</h1>
+        <p class="muted">{{ bookStatusText }}</p>
+        <t-button theme="primary" size="large" block class="btn" @click="openBook">
+          {{ bookButtonText }}
+        </t-button>
+      </section>
 
-        <t-card :bordered="false" class="action-card" @click="router.push('/bookshelf')">
-          <div class="action-icon">📖</div>
-          <div class="action-info">
-            <h3>{{ $t('nav.reading') }}</h3>
-            <p>{{ $t('dashboard.readingDesc') }}</p>
-          </div>
-          <t-icon name="chevron-right" size="24px" />
-        </t-card>
+      <!-- 没书 -->
+      <section v-else class="block">
+        <p class="muted">{{ $t('dashboard.homeReading') }}</p>
+        <h1 class="book-name">{{ $t('dashboard.homeNoBookTitle') }}</h1>
+        <p class="muted">{{ $t('dashboard.homeNoBookHint') }}</p>
+        <t-button theme="primary" size="large" block class="btn" @click="router.push('/bookshelf')">
+          {{ $t('dashboard.importBook') }}
+        </t-button>
+      </section>
 
-        <t-card :bordered="false" class="action-card" @click="router.push('/notebooks')">
-          <div class="action-icon">📚</div>
-          <div class="action-info">
-            <h3>{{ $t('nav.wordbook') }}</h3>
-            <p>{{ $t('dashboard.wordbookDesc') }}</p>
-          </div>
-          <t-icon name="chevron-right" size="24px" />
-        </t-card>
+      <!-- 有词要背：一行提示，不重复出现在下方 -->
+      <button v-if="studyHint" type="button" class="study-hint" @click="router.push('/study')">
+        <span>{{ studyHint }}</span>
+        <span class="go">{{ $t('dashboard.startStudy') }} →</span>
+      </button>
 
-        <t-card :bordered="false" class="action-card" @click="router.push('/records')">
-          <div class="action-icon">📊</div>
-          <div class="action-info">
-            <h3>{{ $t('nav.records') }}</h3>
-            <p>{{ $t('dashboard.recordsDesc') }}</p>
-          </div>
-          <t-icon name="chevron-right" size="24px" />
-        </t-card>
-      </div>
-    </div>
+      <!-- 去处：不再放「开始学习」 -->
+      <nav class="nav">
+        <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
+        <button type="button" @click="router.push('/notebooks')">{{ $t('nav.wordbook') }}</button>
+        <button type="button" @click="router.push('/records')">{{ $t('nav.records') }}</button>
+      </nav>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '../stores/user'
-import { getStats } from '../api'
+import { getStats, getBooks } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const userStore = useUserStore()
 
-const stats = ref({ totalWords: 0, newWords: 0, reviewingWords: 0, masteredWords: 0, todayReviewCount: 0 })
+const loading = ref(true)
+const books = ref<any[]>([])
+const stats = ref({
+  newWords: 0,
+  todayReviewPending: 0,
+  todayNewPending: 0
+})
+
+function progressOf(b: any) {
+  return Math.round(Number(b.progressPercent ?? 0))
+}
+
+function updatedAt(b: any) {
+  return new Date(b.updateTime || b.createTime || 0).getTime()
+}
+
+/** 优先：有进度的最近在读；否则最近一本 */
+const focusBook = computed(() => {
+  if (!books.value.length) return null
+  const reading = books.value
+    .filter(b => progressOf(b) > 0)
+    .sort((a, b) => updatedAt(b) - updatedAt(a))
+  if (reading.length) return reading[0]
+  return [...books.value].sort((a, b) => updatedAt(b) - updatedAt(a))[0]
+})
+
+const bookStarted = computed(() => focusBook.value != null && progressOf(focusBook.value) > 0)
+
+const bookStatusText = computed(() => {
+  if (!focusBook.value) return ''
+  if (!bookStarted.value) return t('dashboard.readingNotStarted')
+  return t('bookshelf.progress', { percent: progressOf(focusBook.value) })
+})
+
+const bookButtonText = computed(() =>
+  bookStarted.value ? t('dashboard.continueReading') : t('dashboard.startReading')
+)
+
+const studyHint = computed(() => {
+  if (stats.value.todayReviewPending > 0) {
+    return t('dashboard.todayHeadlineReview', { count: stats.value.todayReviewPending })
+  }
+  if (stats.value.todayNewPending > 0) {
+    return t('dashboard.todayHeadlineNew', { count: stats.value.todayNewPending })
+  }
+  if (stats.value.newWords > 0) {
+    return t('dashboard.todayHeadlineUnlearned', { count: stats.value.newWords })
+  }
+  return ''
+})
+
+function openBook() {
+  if (focusBook.value) router.push(`/reader/${focusBook.value.id}`)
+}
 
 onMounted(async () => {
   userStore.loadFromStorage()
   try {
-    const res = await getStats()
-    stats.value = res.data.data
-  } catch (e) {
-    // stats stay at 0
+    const [statsRes, booksRes] = await Promise.all([
+      getStats().catch(() => null),
+      getBooks().catch(() => null)
+    ])
+    if (statsRes?.data?.data) stats.value = { ...stats.value, ...statsRes.data.data }
+    books.value = booksRes?.data?.data || []
+  } finally {
+    loading.value = false
   }
 })
 
@@ -102,115 +143,138 @@ function handleLogout() {
 </script>
 
 <style scoped>
-.dashboard {
+.home {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
+  color: var(--brand-ink);
 }
 
-.dash-header {
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 20px 24px 8px;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.hello {
+  margin-top: 4px;
+  font-size: 14px;
+  color: #666;
+}
+
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.body {
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 16px 24px 56px;
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding-top: 80px;
+}
+
+.block {
+  padding-bottom: 8px;
+}
+
+.muted {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #888;
+}
+
+.book-name {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.35;
+  font-weight: 700;
+  /* 长书名最多两行 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.btn {
+  margin-top: 12px;
+}
+
+.study-hint {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 32px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  width: 100%;
+  margin-top: 24px;
+  padding: 14px 0;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
+  background: transparent;
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
 }
 
-.header-left h1 {
-  font-size: 22px;
-  color: #1a1a2e;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.greeting {
-  color: #6b7280;
+.study-hint .go {
+  flex-shrink: 0;
+  margin-left: 12px;
   font-size: 14px;
-  margin-left: 16px;
+  font-weight: 500;
+  color: var(--brand-ink);
 }
 
-.dash-content {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-
-.dash-content h2 {
-  font-size: 20px;
-  margin-bottom: 20px;
-  color: #1a1a2e;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 36px;
-}
-
-.stat-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 24px 20px;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-}
-
-.stat-num {
-  font-size: 32px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.stat-card.blue .stat-num { color: #4f46e5; }
-.stat-card.yellow .stat-num { color: #d97706; }
-.stat-card.green .stat-num { color: #059669; }
-.stat-card.purple .stat-num { color: #7c3aed; }
-
-.action-section {
+.nav {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
+  margin-top: 20px;
 }
 
-.action-card {
+.nav button {
+  padding: 14px 0;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
+  background: transparent;
+  font-size: 15px;
+  text-align: left;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  color: #333;
 }
 
-.action-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+.nav button:hover {
+  color: var(--brand-ink);
 }
 
-.action-card :deep(.t-card__body) {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 20px 24px;
-}
-
-.action-icon {
-  font-size: 32px;
-}
-
-.action-info h3 {
-  font-size: 16px;
-  color: #1a1a2e;
-  margin-bottom: 4px;
-}
-
-.action-info p {
-  font-size: 13px;
-  color: #6b7280;
+@media (max-width: 480px) {
+  .body {
+    padding: 12px 20px 48px;
+  }
 }
 </style>

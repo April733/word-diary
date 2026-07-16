@@ -40,6 +40,18 @@ public class WdWord {
     /** 词根词缀解析 */
     private String rootAffix;
 
+    /** word | phrase */
+    private String entryType;
+
+    /** 来源书籍 */
+    private Long sourceBookId;
+
+    /** 采集时原文片段 */
+    private String sourceSnippet;
+
+    /** 定位信息 */
+    private String sourceLocation;
+
     /** 是否公开 1公开 0私有 */
     private Integer isPublic;
 

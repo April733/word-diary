@@ -1,124 +1,121 @@
 <template>
-  <div class="login-container">
-    <div class="login-card">
-      <div class="locale-bar">
-        <LocaleSwitcher />
-      </div>
-      <h1 class="app-title">{{ $t('common.appName') }}</h1>
-      <p class="app-desc">{{ $t('login.subtitle') }}</p>
+  <div class="login-page">
+    <div class="page-bg" aria-hidden="true">
+      <div class="bg-wash" />
+    </div>
 
-      <t-tabs v-model="tab" class="login-tabs">
-        <t-tab-panel value="login" :label="$t('login.loginBtn')">
-          <t-form :data="loginForm" @submit="handleLogin">
-            <t-form-item :label="$t('login.username')" name="username" required-mark>
-              <t-input v-model="loginForm.username" :placeholder="$t('login.usernamePlaceholder')" />
-            </t-form-item>
-            <t-form-item :label="$t('login.password')" name="password" required-mark>
-              <t-input v-model="loginForm.password" type="password" :placeholder="$t('login.passwordPlaceholder')" />
-            </t-form-item>
-            <t-form-item class="submit-item">
-              <t-button theme="primary" type="submit" block :loading="loading">{{ $t('login.loginBtn') }}</t-button>
-            </t-form-item>
-          </t-form>
-        </t-tab-panel>
+    <div class="login-shell">
+      <div class="login-card">
+        <div class="card-top">
+          <div class="card-brand">
+            <img class="card-logo" src="/brand/logo-circle-64.png" width="48" height="48" alt="" decoding="async" />
+            <div class="card-brand-text">
+              <h1 class="product-title">{{ $t('login.productTitle') }}</h1>
+              <p class="product-tagline">{{ $t('login.brandTagline') }}</p>
+            </div>
+          </div>
+          <LocaleSwitcher class="locale-switch" />
+        </div>
 
-        <t-tab-panel value="register" :label="$t('login.registerBtn')">
-          <t-form
-            ref="registerFormRef"
-            :data="registerForm"
-            :rules="registerRules"
-            @submit="handleRegister"
-          >
-            <t-form-item :label="$t('login.username')" name="username" required-mark :help="$t('login.usernameHint')">
-              <t-input v-model="registerForm.username" :placeholder="$t('login.usernamePlaceholder')" />
-            </t-form-item>
-            <t-form-item :label="$t('login.password')" name="password" required-mark :help="$t('login.passwordHint')">
-              <t-input
-                v-model="registerForm.password"
-                type="password"
-                :placeholder="$t('login.passwordPlaceholder')"
-              />
-            </t-form-item>
-            <t-form-item :label="$t('login.confirmPassword')" name="confirmPassword" required-mark>
-              <t-input
-                v-model="registerForm.confirmPassword"
-                type="password"
-                :placeholder="$t('login.confirmPasswordPlaceholder')"
-              />
-            </t-form-item>
+      <template v-if="tab === 'login'">
+        <t-form class="login-form" :data="loginForm" @submit="handleLogin">
+          <t-form-item :label="$t('login.username')" name="username">
+            <t-input v-model="loginForm.username" :placeholder="$t('login.usernamePlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.password')" name="password">
+            <t-input v-model="loginForm.password" type="password" :placeholder="$t('login.passwordPlaceholder')" size="large" />
+          </t-form-item>
+          <div class="form-extra">
+            <button type="button" class="link-btn" @click="tab = 'forgot'">{{ $t('login.forgotPassword') }}</button>
+          </div>
+          <t-button class="primary-btn" theme="primary" type="submit" block size="large" :loading="loading">
+            {{ $t('login.loginBtn') }}
+          </t-button>
+        </t-form>
+        <p class="card-foot">
+          {{ $t('login.noAccount') }}
+          <button type="button" class="link-btn" @click="tab = 'register'">{{ $t('login.goRegister') }}</button>
+        </p>
+      </template>
 
-            <!-- 注册方式切换：手机号 / 邮箱 -->
-            <t-form-item :label="$t('login.registerType')" required-mark>
-              <t-radio-group v-model="registerType" variant="default-filled" @change="onRegisterTypeChange">
-                <t-radio-button value="phone">{{ $t('login.phone') }}</t-radio-button>
-                <t-radio-button value="email">{{ $t('login.email') }}</t-radio-button>
-              </t-radio-group>
-            </t-form-item>
+      <template v-else-if="tab === 'register'">
+        <t-form
+          ref="registerFormRef"
+          class="login-form"
+          :data="registerForm"
+          :rules="registerRules"
+          @submit="handleRegister"
+        >
+          <t-form-item :label="$t('login.username')" name="username" required-mark :help="$t('login.usernameHint')">
+            <t-input v-model="registerForm.username" :placeholder="$t('login.usernamePlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.password')" name="password" required-mark :help="$t('login.passwordHint')">
+            <t-input v-model="registerForm.password" type="password" :placeholder="$t('login.passwordPlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.confirmPassword')" name="confirmPassword" required-mark>
+            <t-input v-model="registerForm.confirmPassword" type="password" :placeholder="$t('login.confirmPasswordPlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.registerType')" required-mark>
+            <t-radio-group v-model="registerType" variant="default-filled" @change="onRegisterTypeChange">
+              <t-radio-button value="phone" :disabled="!phoneRegisterAllowed">{{ $t('login.phone') }}</t-radio-button>
+              <t-radio-button value="email">{{ $t('login.email') }}</t-radio-button>
+            </t-radio-group>
+          </t-form-item>
+          <t-form-item v-if="registerType === 'phone'" :label="$t('login.phone')" name="phone" required-mark>
+            <t-input v-model="registerForm.phone" :placeholder="$t('login.phonePlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item v-if="registerType === 'email'" :label="$t('login.email')" name="email" required-mark>
+            <t-input v-model="registerForm.email" :placeholder="$t('login.emailPlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.verifyCode')" name="code" required-mark>
+            <div class="sms-row">
+              <t-input v-model="registerForm.code" :placeholder="$t('login.verifyCodePlaceholder')" class="sms-input" maxlength="6" size="large" />
+              <t-button variant="outline" class="sms-btn" :disabled="codeCooldown > 0 || !canSendCode" :loading="codeSending" @click="handleSendCode">
+                {{ codeCooldown > 0 ? $t('login.sendSmsRetry', { seconds: codeCooldown }) : $t('login.sendCode') }}
+              </t-button>
+            </div>
+          </t-form-item>
+          <t-button class="primary-btn" theme="primary" block size="large" :loading="loading" @click="handleRegisterClick">
+            {{ $t('login.registerBtn') }}
+          </t-button>
+        </t-form>
+        <p class="card-foot">
+          <button type="button" class="link-btn" @click="tab = 'login'">{{ $t('login.backToLogin') }}</button>
+        </p>
+      </template>
 
-            <!-- 手机号输入 -->
-            <t-form-item v-if="registerType === 'phone'" :label="$t('login.phone')" name="phone" required-mark>
-              <t-input v-model="registerForm.phone" :placeholder="$t('login.phonePlaceholder')" />
-            </t-form-item>
-            <!-- 邮箱输入 -->
-            <t-form-item v-if="registerType === 'email'" :label="$t('login.email')" name="email" required-mark>
-              <t-input v-model="registerForm.email" :placeholder="$t('login.emailPlaceholder')" />
-            </t-form-item>
+      <template v-else>
+        <p class="panel-hint">{{ $t('login.forgotPasswordDesc') }}</p>
+        <t-form class="login-form" :data="forgotForm" @submit="handleForgotPassword">
+          <t-form-item :label="$t('login.phone')" name="phone">
+            <t-input v-model="forgotForm.phone" :placeholder="$t('login.phonePlaceholder')" size="large" />
+          </t-form-item>
+          <t-form-item :label="$t('login.smsCode')" name="smsCode">
+            <div class="sms-row">
+              <t-input v-model="forgotForm.smsCode" :placeholder="$t('login.smsCodePlaceholder')" class="sms-input" maxlength="6" size="large" />
+              <t-button
+                variant="outline"
+                class="sms-btn"
+                :disabled="forgotCooldown > 0 || !phonePattern.test(forgotForm.phone)"
+                :loading="forgotSmsSending"
+                @click="handleSendForgotSms"
+              >
+                {{ forgotCooldown > 0 ? $t('login.sendSmsRetry', { seconds: forgotCooldown }) : $t('login.sendSms') }}
+              </t-button>
+            </div>
+          </t-form-item>
+          <t-form-item :label="$t('login.newPassword')" name="newPassword" :help="$t('login.passwordHint')">
+            <t-input v-model="forgotForm.newPassword" type="password" :placeholder="$t('login.newPasswordPlaceholder')" size="large" />
+          </t-form-item>
+          <t-button class="primary-btn" theme="primary" type="submit" block size="large" :loading="loading">
+            {{ $t('login.forgotPasswordBtn') }}
+          </t-button>
+        </t-form>
+        <p class="card-foot">
+          <button type="button" class="link-btn" @click="tab = 'login'">{{ $t('login.backToLogin') }}</button>
+        </p>
+      </template>
 
-            <!-- 验证码 -->
-            <t-form-item :label="$t('login.verifyCode')" name="code" required-mark>
-              <div class="sms-row">
-                <t-input v-model="registerForm.code" :placeholder="$t('login.verifyCodePlaceholder')" class="sms-input" maxlength="6" />
-                <t-button
-                  variant="outline"
-                  class="sms-btn"
-                  :disabled="codeCooldown > 0 || !canSendCode"
-                  :loading="codeSending"
-                  @click="handleSendCode"
-                >
-                  {{ codeCooldown > 0 ? $t('login.sendSmsRetry', { seconds: codeCooldown }) : $t('login.sendCode') }}
-                </t-button>
-              </div>
-            </t-form-item>
-
-            <t-form-item :label="$t('login.inviteCode')" name="inviteCode" required-mark :help="$t('login.inviteCodeHint')">
-              <t-input v-model="registerForm.inviteCode" :placeholder="$t('login.inviteCodePlaceholder')" />
-            </t-form-item>
-            <t-form-item class="submit-item">
-              <t-button theme="primary" block :loading="loading" @click="handleRegisterClick">{{ $t('login.registerBtn') }}</t-button>
-            </t-form-item>
-          </t-form>
-        </t-tab-panel>
-
-        <t-tab-panel value="forgot" :label="$t('login.forgotPassword')">
-          <p class="app-desc">{{ $t('login.forgotPasswordDesc') }}</p>
-          <t-form :data="forgotForm" @submit="handleForgotPassword">
-            <t-form-item :label="$t('login.phone')" name="phone" required-mark>
-              <t-input v-model="forgotForm.phone" :placeholder="$t('login.phonePlaceholder')" />
-            </t-form-item>
-            <t-form-item :label="$t('login.smsCode')" name="smsCode" required-mark>
-              <div class="sms-row">
-                <t-input v-model="forgotForm.smsCode" :placeholder="$t('login.smsCodePlaceholder')" class="sms-input" maxlength="6" />
-                <t-button
-                  variant="outline"
-                  class="sms-btn"
-                  :disabled="forgotCooldown > 0 || !phonePattern.test(forgotForm.phone)"
-                  :loading="forgotSmsSending"
-                  @click="handleSendForgotSms"
-                >
-                  {{ forgotCooldown > 0 ? $t('login.sendSmsRetry', { seconds: forgotCooldown }) : $t('login.sendSms') }}
-                </t-button>
-              </div>
-            </t-form-item>
-            <t-form-item :label="$t('login.newPassword')" name="newPassword" required-mark :help="$t('login.passwordHint')">
-              <t-input v-model="forgotForm.newPassword" type="password" :placeholder="$t('login.newPasswordPlaceholder')" />
-            </t-form-item>
-            <t-form-item class="submit-item">
-              <t-button theme="primary" type="submit" block :loading="loading">{{ $t('login.forgotPasswordBtn') }}</t-button>
-            </t-form-item>
-          </t-form>
-        </t-tab-panel>
-      </t-tabs>
-      <!-- 报错时让用户可以直接联系管理员 -->
       <t-dialog v-model:visible="showReportDialog" header="问题反馈" width="520px" :confirm-btn="{ content: '提交反馈', disabled: !reportForm.description }" @confirm="submitReport">
         <div class="feedback-form">
           <t-form :data="reportForm" label-width="120px">
@@ -134,24 +131,27 @@
           </t-form>
         </div>
       </t-dialog>
+      </div>
     </div>
   </div>
 </template>
 
+
 <script setup lang="ts">
-import { ref, reactive, computed, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import type { FormInstanceFunctions } from 'tdesign-vue-next'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { reportIssue, reportIssuePublic } from '../api'
 import { useUserStore } from '../stores/user'
-import { checkPhone, checkEmail, checkInviteCode, sendSms, sendMailCode, sendResetSms, resetPassword } from '../api'
+import { checkPhone, checkEmail, sendSms, sendMailCode, sendResetSms, resetPassword } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
+import { isPhoneRegisterAllowed } from '../utils/region'
 
 const router = useRouter()
 const userStore = useUserStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const registerFormRef = ref<FormInstanceFunctions>()
 const tab = ref('login')
 const loading = ref(false)
@@ -163,15 +163,29 @@ let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let forgotCooldownTimer: ReturnType<typeof setInterval> | null = null
 
 const loginForm = reactive({ username: '', password: '' })
-const registerType = ref('phone') // 'phone' | 'email'
+/** 仅中文（中国）可用手机号注册；其它语言地区置灰并默认邮箱 */
+const phoneRegisterAllowed = computed(() => isPhoneRegisterAllowed(locale.value))
+const registerType = ref<'phone' | 'email'>(phoneRegisterAllowed.value ? 'phone' : 'email')
 const registerForm = reactive({
   username: '',
   password: '',
   confirmPassword: '',
   phone: '',
   email: '',
-  code: '',
-  inviteCode: ''
+  code: ''
+})
+
+watch(phoneRegisterAllowed, (allowed) => {
+  if (!allowed && registerType.value === 'phone') {
+    registerType.value = 'email'
+    registerForm.phone = ''
+    registerForm.code = ''
+    if (cooldownTimer) {
+      clearInterval(cooldownTimer)
+      cooldownTimer = null
+    }
+    codeCooldown.value = 0
+  }
 })
 // report dialog state
 const showReportDialog = ref(false)
@@ -205,6 +219,10 @@ const canSendCode = computed(() => {
 
 /** 切换注册方式时清空对应字段 */
 function onRegisterTypeChange() {
+  if (!phoneRegisterAllowed.value && registerType.value === 'phone') {
+    registerType.value = 'email'
+    return
+  }
   registerForm.phone = ''
   registerForm.email = ''
   registerForm.code = ''
@@ -252,27 +270,7 @@ async function emailExistsValidator(val: string) {
   }
 }
 
-/** 邀请码异步校验：调后端 check-invite-code 确认存在且未被核销 */
-async function inviteCodeValidator(val: string) {
-  if (!val) return { result: true } // required 规则会处理空值
-  if (val.length < 4 || val.length > 32) {
-    return { result: false, message: t('login.errorInviteCodeFormat') }
-  }
-  try {
-    const res = await checkInviteCode(val)
-    if (res.data?.data !== true) {
-      return { result: false, message: t('login.errorInviteCodeInvalid') }
-    }
-    return { result: true }
-  } catch (e) {
-    const status = (e as any)?.response?.status
-    if (status === 401) {
-      return { result: false, message: t('login.errorInviteCodeInvalid') }
-    }
-    // Network error → don't block registration, let backend handle it
-    return { result: true }
-  }
-}
+/** 邀请码已废弃 */
 
 const registerRules = computed(() => {
   const submitTriggers = ['blur', 'submit'] as const
@@ -292,12 +290,6 @@ const registerRules = computed(() => {
     code: [
       { required: true, message: t('login.errorVerifyCodeRequired'), trigger: submitTriggers },
       { pattern: /^\d{6}$/, message: t('login.errorVerifyCodeFormat'), trigger: submitTriggers }
-    ],
-    inviteCode: [
-      { required: true, message: t('login.errorInviteCodeRequired'), trigger: 'blur' },
-      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'blur' },
-      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'change' },
-      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'submit' }
     ]
   }
   if (registerType.value === 'phone') {
@@ -322,6 +314,10 @@ const registerRules = computed(() => {
 
 /** 发送验证码（短信或邮箱） */
 async function handleSendCode() {
+  if (!phoneRegisterAllowed.value && registerType.value === 'phone') {
+    registerType.value = 'email'
+    return
+  }
   if (registerType.value === 'phone') {
     if (!phonePattern.test(registerForm.phone)) {
       MessagePlugin.warning(t('login.errorPhoneFormat'))
@@ -436,6 +432,9 @@ async function handleLogin() {
 }
 
 async function handleRegister() {
+  if (!phoneRegisterAllowed.value) {
+    registerType.value = 'email'
+  }
   // 二次前端兜底校验
   const missingFields = []
   if (!registerForm.username) missingFields.push(t('login.username'))
@@ -444,7 +443,6 @@ async function handleRegister() {
   if (registerType.value === 'phone' && !registerForm.phone) missingFields.push(t('login.phone'))
   if (registerType.value === 'email' && !registerForm.email) missingFields.push(t('login.email'))
   if (!registerForm.code) missingFields.push(t('login.verifyCode'))
-  if (!registerForm.inviteCode) missingFields.push(t('login.inviteCode'))
 
   if (missingFields.length > 0) {
     MessagePlugin.warning(t('login.errorAllRequired'))
@@ -483,7 +481,6 @@ async function handleRegister() {
       phone: registerType.value === 'phone' ? registerForm.phone : null,
       email: registerType.value === 'email' ? registerForm.email : null,
       code: registerForm.code,
-      inviteCode: registerForm.inviteCode,
       registerType: registerType.value
     })
     MessagePlugin.success(t('login.registerSuccess'))
@@ -562,71 +559,155 @@ async function handleForgotPassword() {
 </script>
 
 <style scoped>
-.login-container {
+.login-page {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #6a82fb 0%, #8458B3 50%, #5b3fa8 100%);
-  background-attachment: fixed;
+  padding: 32px 20px;
+  overflow: hidden;
+  background: #F6F0E6;
+}
+
+.page-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bg-wash {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(168, 181, 159, 0.42), transparent 58%),
+    radial-gradient(ellipse 50% 40% at 100% 100%, rgba(168, 181, 159, 0.18), transparent 55%);
+}
+
+.login-shell {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
 }
 
 .login-card {
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 40px 36px 48px 36px;
-  width: 460px;
-  box-shadow:
-    0 24px 48px -12px rgba(50, 30, 100, 0.25),
-    0 12px 24px -6px rgba(80, 50, 150, 0.15),
-    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
-  backdrop-filter: blur(8px);
-  box-sizing: border-box;
+  width: 100%;
+  padding: 36px 36px 28px;
+  border-radius: 20px;
+  background: #FFFFFF;
+  box-shadow: 0 8px 28px -12px rgba(49, 92, 52, 0.16);
 }
 
-.locale-bar {
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.card-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.card-logo {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.card-brand-text {
+  min-width: 0;
+}
+
+.product-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #315C34;
+}
+
+.product-tagline {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: color-mix(in srgb, #315C34 55%, #F6F0E6);
+}
+
+.locale-switch {
+  flex-shrink: 0;
+}
+
+.login-form :deep(.t-form__item) {
+  margin-bottom: 18px;
+}
+
+.login-form :deep(.t-form__label) {
+  color: #315C34;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.login-form :deep(.t-input),
+.login-form :deep(.t-input__wrap) {
+  border-radius: 10px;
+}
+
+.form-extra {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 8px;
+  margin: -6px 0 20px;
 }
 
-.app-title {
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #315C34;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.link-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.primary-btn {
+  --td-brand-color: #315C34;
+  --td-brand-color-hover: #274a2a;
+  --td-brand-color-active: #1f3c22;
+  height: 46px !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+}
+
+.card-foot {
+  margin: 20px 0 0;
   text-align: center;
-  font-size: 28px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #1a1a2e;
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  color: color-mix(in srgb, #315C34 50%, #F6F0E6);
 }
 
-.app-desc {
-  text-align: center;
-  color: #6b7280;
-  font-size: 14px;
-  margin-bottom: 16px;
-}
-
-.login-tabs {
-  width: 100%;
-}
-
-.login-tabs :deep(.t-tab-panel) {
-  padding-top: 12px;
-  padding-bottom: 0;
-}
-
-.login-tabs :deep(.t-form__item) {
-  margin-bottom: 24px;
-}
-
-.submit-item {
-  margin-top: 24px !important;
-  margin-bottom: 4px !important;
+.panel-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: #8a8a8a;
+  line-height: 1.5;
 }
 
 .sms-row {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
 }
 
@@ -638,47 +719,24 @@ async function handleForgotPassword() {
 .sms-btn {
   flex-shrink: 0;
   white-space: nowrap;
-  padding: 0 16px;
-}
-
-.login-tabs :deep(.t-form__label) {
-  margin-bottom: 6px;
-  font-weight: 500;
-  color: #374151;
-  min-width: 96px;
-}
-
-.login-tabs :deep(.t-form__help) {
-  margin-top: 6px;
-  line-height: 1.4;
-}
-
-/* TDesign required-mark 自带红色 *，并保留一定字距 */
-.login-tabs :deep(.t-form__label--required::before) {
-  color: #e34d59;
-  margin-right: 4px;
-  font-weight: 600;
-}
-
-.login-tabs :deep(.t-input) {
-  border-radius: 8px;
-}
-
-.login-tabs :deep(.t-button--theme-primary) {
-  border-radius: 8px;
-  font-weight: 500;
 }
 
 .feedback-form {
-  padding: 8px 4px 0 4px;
-}
-
-.feedback-form :deep(.t-form__item) {
-  margin-bottom: 20px;
+  padding: 8px 4px 0;
 }
 
 .feedback-form :deep(.t-form__label) {
   font-weight: 500;
-  color: #374151;
+  color: #315C34;
+}
+
+@media (max-width: 640px) {
+  .login-card {
+    padding: 28px 22px 24px;
+  }
+
+  .product-title {
+    font-size: 18px;
+  }
 }
 </style>

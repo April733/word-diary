@@ -11,4 +11,6 @@ public interface WordService {
     List<WordVO> listByNotebook(Long userId, Long notebookId);
     void updateWord(Long userId, Long wordId, WordAddReq req);
     void delete(Long userId, Long wordId);
+    /** 仅补全空缺字段，不覆盖已有内容 */
+    int fillGaps(Long userId, Long notebookId, List<Long> wordIds);
 }

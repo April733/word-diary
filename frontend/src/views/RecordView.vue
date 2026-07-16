@@ -5,7 +5,7 @@
         <t-button variant="text" @click="router.push('/')">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
-        <h1>学习记录</h1>
+        <h1>{{ $t('record.title') }}</h1>
       </div>
     </header>
 
@@ -18,45 +18,59 @@
         hover
         stripe
       />
-      <t-empty v-else description="暂无学习记录" />
+      <t-empty v-else :description="$t('record.noRecords')" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted, h, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getRecords } from '../api'
 
 const router = useRouter()
+const { t } = useI18n()
 const records = ref<any[]>([])
 
-const columns = [
-  { colKey: 'wordProto', title: '单词', width: 140 },
+function studyTypeLabel(type: number) {
+  if (type === 1) return t('record.typeFirst')
+  if (type === 2) return t('record.typeReview')
+  if (type === 3) return t('record.typeBrowse')
+  return '-'
+}
+
+function feedbackLabel(row: any) {
+  const fb = row.feedback ?? row.result
+  if (fb === 1) return h('span', { style: { color: '#059669' } }, t('study.know'))
+  if (fb === 2) return h('span', { style: { color: '#d97706' } }, t('study.fuzzy'))
+  return h('span', { style: { color: '#dc2626' } }, t('study.forget'))
+}
+
+const columns = computed(() => [
+  { colKey: 'wordProto', title: t('study.word'), width: 140 },
   {
-    colKey: 'studyType', title: '类型', width: 100,
-    cell: (_h: any, { row }: any) => row.studyType === 1 ? '初次学习' : '复习'
+    colKey: 'studyType', title: t('record.type'), width: 100,
+    cell: (_h: any, { row }: any) => studyTypeLabel(row.studyType)
   },
   {
-    colKey: 'result', title: '结果', width: 100,
-    cell: (_h: any, { row }: any) => row.result === 1
-      ? h('span', { style: { color: '#059669' } }, '✓ 记住')
-      : h('span', { style: { color: '#dc2626' } }, '✗ 未记住')
+    colKey: 'feedback', title: t('record.feedback'), width: 100,
+    cell: (_h: any, { row }: any) => feedbackLabel(row)
   },
-  { colKey: 'notebookName', title: '单词本', width: 140 },
+  { colKey: 'notebookName', title: t('nav.wordbook'), width: 140 },
   {
-    colKey: 'studyTime', title: '时间', width: 180,
-    cell: (_h: any, { row }: any) => new Date(row.studyTime).toLocaleString('zh-CN')
+    colKey: 'studyTime', title: t('record.date'), width: 180,
+    cell: (_h: any, { row }: any) => new Date(row.studyTime).toLocaleString()
   }
-]
+])
 
 onMounted(async () => {
   try {
     const res = await getRecords()
     records.value = res.data.data
-  } catch (e) {
-    MessagePlugin.error('加载失败')
+  } catch {
+    MessagePlugin.error(t('record.loadFailed'))
   }
 })
 </script>
@@ -64,7 +78,7 @@ onMounted(async () => {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .page-header {

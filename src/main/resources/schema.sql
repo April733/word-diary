@@ -22,10 +22,11 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   UNIQUE KEY `uk_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
--- 单词本表
+-- 单词本表（book_id 为空=独立单词本；非空=仅属于该阅读书籍，不可再属其他书）
 CREATE TABLE IF NOT EXISTS `wd_word_book` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '单词本ID',
   `user_id` bigint NOT NULL COMMENT '所属用户ID',
+  `book_id` bigint DEFAULT NULL COMMENT '所属阅读书籍ID，NULL=独立单词本',
   `book_name` varchar(64) NOT NULL COMMENT '单词本名称',
   `book_desc` varchar(255) DEFAULT '' COMMENT '单词本简介',
   `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS `wd_word_book` (
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
-  KEY `idx_user_id` (`user_id`)
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_book_id` (`book_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单词本表';
 
 -- 单词库（个人私有单词表）
@@ -49,6 +51,10 @@ CREATE TABLE IF NOT EXISTS `wd_word` (
   `part_speech_mean` varchar(255) DEFAULT '' COMMENT '词性+中文含义',
   `sentence_example` text COMMENT '例句',
   `root_affix` varchar(512) DEFAULT '' COMMENT '词根词缀解析',
+  `entry_type` varchar(16) NOT NULL DEFAULT 'word' COMMENT 'word|phrase',
+  `source_book_id` bigint DEFAULT NULL COMMENT '来源书籍ID',
+  `source_snippet` text COMMENT '采集时原文片段',
+  `source_location` varchar(255) DEFAULT '' COMMENT '定位信息',
   `is_public` tinyint NOT NULL DEFAULT 1 COMMENT '是否公开 1公开 0私有',
   `user_id` bigint DEFAULT NULL COMMENT '创建用户ID，NULL表示系统预置',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
@@ -89,6 +95,26 @@ CREATE TABLE IF NOT EXISTS `sys_learn_status` (
   PRIMARY KEY (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单词学习状态配置';
 
+-- =============================================
+-- 系统基础配置（全局可调，含说明）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_base_config` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `config_key` varchar(64) NOT NULL COMMENT '配置键，如 study.review_unlock_hour',
+  `config_value` varchar(512) NOT NULL COMMENT '配置值',
+  `value_type` varchar(16) NOT NULL DEFAULT 'string' COMMENT '值类型: string/int/bool/json',
+  `category` varchar(32) NOT NULL DEFAULT 'general' COMMENT '分类: study/general/ai',
+  `description` varchar(512) NOT NULL DEFAULT '' COMMENT '配置说明（用途、取值范围）',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '同分类内排序',
+  `is_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_config_key` (`config_key`),
+  KEY `idx_category` (`category`, `sort_num`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统基础配置表';
+
 -- 个人单词背诵学习计划
 CREATE TABLE IF NOT EXISTS `wd_learn_plan` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -100,14 +126,71 @@ CREATE TABLE IF NOT EXISTS `wd_learn_plan` (
   `first_study_time` datetime DEFAULT NULL COMMENT '首次学习时间',
   `next_review_time` datetime DEFAULT NULL COMMENT '下次复习时间',
   `review_times` int NOT NULL DEFAULT 0 COMMENT '累计复习次数',
+  `interval_days` decimal(8,2) NOT NULL DEFAULT 0 COMMENT '当前复习间隔(天)',
+  `ease_factor` decimal(4,2) NOT NULL DEFAULT 2.50 COMMENT '难度系数',
+  `rep_count` int NOT NULL DEFAULT 0 COMMENT '连续成功复习次数',
+  `lapse_count` int NOT NULL DEFAULT 0 COMMENT '遗忘次数',
+  `last_feedback` tinyint DEFAULT NULL COMMENT '最近一次反馈: 0忘记 1认识 2模糊',
+  `last_study_at` datetime DEFAULT NULL COMMENT '最近一次正式学习时间',
+  `priority_score` int NOT NULL DEFAULT 0 COMMENT '复习优先级分',
+  `scheduled_new_date` date DEFAULT NULL COMMENT '计划作为今日新词出现的日期',
+  `new_alloc_seq` int DEFAULT NULL COMMENT '在该日新词队列中的顺序',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
-  KEY `idx_user_review` (`user_id`, `next_review_time`)
+  KEY `idx_user_review` (`user_id`, `next_review_time`),
+  KEY `idx_plan_new_schedule` (`user_id`, `scheduled_new_date`, `new_alloc_seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人单词背诵学习计划';
+
+-- 用户学习偏好
+CREATE TABLE IF NOT EXISTS `wd_user_study_pref` (
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `daily_new_limit` int NOT NULL DEFAULT 20 COMMENT '每日新词上限',
+  `review_unlock_hour` tinyint NOT NULL DEFAULT 7 COMMENT '当日复习最早出现时刻(时)',
+  `auto_spread_new` tinyint NOT NULL DEFAULT 1 COMMENT '1自动均摊新词到未来各日',
+  `timezone` varchar(64) NOT NULL DEFAULT 'Asia/Shanghai',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户学习偏好';
+
+-- 每日学习会话汇总
+CREATE TABLE IF NOT EXISTS `wd_study_daily` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `study_date` date NOT NULL COMMENT '学习自然日',
+  `review_total` int NOT NULL DEFAULT 0 COMMENT '当日复习任务总数',
+  `review_done` int NOT NULL DEFAULT 0 COMMENT '当日复习已完成数',
+  `new_total` int NOT NULL DEFAULT 0 COMMENT '当日新词任务总数',
+  `new_done` int NOT NULL DEFAULT 0 COMMENT '当日新词已完成数',
+  `review_phase_done` tinyint NOT NULL DEFAULT 0 COMMENT '1=复习阶段已全部完成',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0进行中 1已完成',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_date` (`user_id`, `study_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每日学习会话汇总';
+
+-- 当日学习队列
+CREATE TABLE IF NOT EXISTS `wd_study_queue` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `study_date` date NOT NULL,
+  `plan_id` bigint NOT NULL,
+  `queue_type` varchar(16) NOT NULL COMMENT 'review|new|intraday',
+  `phase` varchar(16) NOT NULL DEFAULT 'review' COMMENT 'review|new',
+  `sort_order` int NOT NULL DEFAULT 0,
+  `state` tinyint NOT NULL DEFAULT 0 COMMENT '0待做 1已完成',
+  `insert_reason` varchar(32) DEFAULT '' COMMENT 'initial|fuzzy_repeat|forget_repeat',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_date_type` (`user_id`, `study_date`, `queue_type`, `state`, `sort_order`),
+  KEY `idx_plan` (`plan_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当日学习队列';
 
 -- 背诵行为记录
 CREATE TABLE IF NOT EXISTS `wd_learn_record` (
@@ -117,6 +200,9 @@ CREATE TABLE IF NOT EXISTS `wd_learn_record` (
   `word_id` bigint NOT NULL COMMENT '单词ID',
   `study_type` tinyint NOT NULL COMMENT '1初次学习 2复习',
   `result` tinyint NOT NULL COMMENT '0未记住 1记住',
+  `feedback` tinyint NOT NULL DEFAULT 1 COMMENT '0忘记 1认识 2模糊',
+  `study_mode` tinyint NOT NULL DEFAULT 1 COMMENT '1正式每日 2自由回顾',
+  `affects_schedule` tinyint NOT NULL DEFAULT 1 COMMENT '1更新计划 0仅记录',
   `study_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '学习时间',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -130,12 +216,18 @@ CREATE TABLE IF NOT EXISTS `wd_learn_record` (
 CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `user_id` bigint NOT NULL COMMENT '调用用户ID',
-  `model_name` varchar(64) NOT NULL COMMENT '模型名称，如 deepseek-chat',
-  `prompt_tokens` int NOT NULL DEFAULT 0 COMMENT '提示词token数量',
-  `completion_tokens` int NOT NULL DEFAULT 0 COMMENT '返回token数量',
+  `model_name` varchar(64) NOT NULL COMMENT '模型名称，如 deepseek-v4-flash / qwen-turbo',
+  `call_scene` varchar(32) NOT NULL DEFAULT '' COMMENT '调用场景: word_parse / reading_chat / feature',
+  `input_text` text COMMENT '用户原始输入（选中文本/单词列表/提问）',
+  `input_char_count` int NOT NULL DEFAULT 0 COMMENT '用户原始输入字符数',
+  `input_word_count` int NOT NULL DEFAULT 0 COMMENT '用户原始输入词数（中英混合）',
+  `assembled_prompt_chars` int NOT NULL DEFAULT 0 COMMENT '拼装后 system+user 提示词总字符数',
+  `prompt_tokens` int NOT NULL DEFAULT 0 COMMENT '提示词token数量（模型返回 usage）',
+  `completion_tokens` int NOT NULL DEFAULT 0 COMMENT '返回token数量（模型返回 usage）',
   `total_tokens` int NOT NULL DEFAULT 0 COMMENT '总token数量',
-  `system_prompt` text COMMENT '系统提示词',
-  `user_prompt` text COMMENT '用户提示词',
+  `estimated_cost` decimal(14,8) NOT NULL DEFAULT 0 COMMENT '按当时模型单价估算的成本（与 currency 一致）',
+  `system_prompt` text COMMENT '系统提示词（拼装后）',
+  `user_prompt` text COMMENT '用户提示词（拼装后）',
   `response_data` mediumtext COMMENT '大模型返回的原始数据',
   `duration_ms` int DEFAULT NULL COMMENT '调用耗时（毫秒）',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
@@ -145,8 +237,53 @@ CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
   KEY `idx_user_id` (`user_id`),
-  KEY `idx_create_time` (`create_time`)
+  KEY `idx_create_time` (`create_time`),
+  KEY `idx_call_scene` (`call_scene`),
+  KEY `idx_model_name` (`model_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大模型调用历史记录';
+
+-- =============================================
+-- AI 场景/模型/单价表（场景 key + 描述 + 模型名 + Token 进出价）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_model` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `scene_key` varchar(32) NOT NULL COMMENT '场景标识：feature/word_parse/reading_chat/default',
+  `scene_name` varchar(64) NOT NULL COMMENT '场景描述',
+  `model_key` varchar(64) NOT NULL COMMENT '模型名称，对齐调用日志 model_name',
+  `display_name` varchar(128) NOT NULL DEFAULT '' COMMENT '模型展示名',
+  `provider` varchar(64) NOT NULL DEFAULT '' COMMENT '供应商 deepseek/aliyun，决定 base-url',
+  `currency` varchar(8) NOT NULL DEFAULT 'CNY' COMMENT '公开价币种，统一 CNY',
+  `input_price_per_million` decimal(14,6) NOT NULL DEFAULT 0 COMMENT '输入单价：每百万 prompt tokens',
+  `output_price_per_million` decimal(14,6) NOT NULL DEFAULT 0 COMMENT '输出单价：每百万 completion tokens',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+  `is_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `remark` varchar(512) DEFAULT '' COMMENT '价格来源备注',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scene_key` (`scene_key`),
+  KEY `idx_model_key` (`model_key`),
+  KEY `idx_enabled` (`is_enabled`, `is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景模型与Token单价';
+
+-- 公开价来源（均为人民币）：
+-- deepseek-v4-flash: https://api-docs.deepseek.com/zh-cn/quick_start/pricing （缓存未命中）
+-- qwen-turbo 中国内地: https://help.aliyun.com/zh/model-studio/model-pricing （非思考）
+INSERT IGNORE INTO `sys_ai_model`
+(`scene_key`, `scene_name`, `model_key`, `display_name`, `provider`, `currency`,
+ `input_price_per_million`, `output_price_per_million`, `sort_num`, `is_enabled`, `remark`)
+VALUES
+('feature', '阅读解析（选中文字 AI 功能）', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
+ 1.0, 2.0, 1, 1, '官方价：输入1元/百万(缓存未命中)、输出2元/百万'),
+('word_parse', '单词批量导入', 'qwen-turbo', 'Qwen Turbo', 'aliyun', 'CNY',
+ 0.3, 0.6, 2, 1, '阿里云百炼中国内地：输入0.3元/百万、输出0.6元/百万(非思考)'),
+('reading_chat', '阅读自由问答', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
+ 1.0, 2.0, 3, 1, '同 deepseek-v4-flash 公开价'),
+('default', '未匹配场景回退', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
+ 1.0, 2.0, 99, 1, '未知 scene 时回退');
 
 -- =============================================
 -- 书籍表（阅读器）
@@ -197,6 +334,28 @@ CREATE TABLE IF NOT EXISTS `wd_annotation` (
   KEY `idx_book_user` (`book_id`, `user_id`),
   KEY `idx_chapter` (`book_id`, `chapter_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='划线笔记表';
+
+-- =============================================
+-- PDF 批注表（Canvas 覆盖层，坐标归一化 0~1，不修改原始 PDF）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_pdf_markup` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `book_id` bigint NOT NULL COMMENT '所属书籍ID',
+  `user_id` bigint NOT NULL COMMENT '用户ID（仅本人可见）',
+  `page_num` int NOT NULL COMMENT 'PDF页码(从1起)',
+  `markup_type` varchar(16) NOT NULL COMMENT 'pen|rect|text',
+  `geometry_json` text NOT NULL COMMENT '归一化坐标JSON(0~1)',
+  `color` varchar(16) NOT NULL DEFAULT '#E53935' COMMENT '颜色',
+  `note_text` text COMMENT '文字笔记内容',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_book_user` (`book_id`, `user_id`),
+  KEY `idx_book_page` (`book_id`, `user_id`, `page_num`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='PDF批注表';
 
 -- =============================================
 -- 用户阅读设置表（阅读器偏好）
@@ -293,13 +452,13 @@ CREATE TABLE IF NOT EXISTS `wd_user_benefit` (
 -- 种子数据：艾宾浩斯复习节点配置
 -- =============================================
 INSERT IGNORE INTO `sys_ebbinghaus_node` (`id`, `node_name`, `day_interval`, `sort`) VALUES
-(0, '初学', 0, 0),
-(1, '第1天复习', 1, 1),
-(2, '第2天复习', 2, 2),
-(3, '第4天复习', 4, 3),
-(4, '第7天复习', 7, 4),
-(5, '第15天复习', 15, 5),
-(6, '第30天复习', 30, 6);
+(1, '初学', 0, 0),
+(2, '第1天复习', 1, 1),
+(3, '第2天复习', 2, 2),
+(4, '第4天复习', 4, 3),
+(5, '第7天复习', 7, 4),
+(6, '第15天复习', 15, 5),
+(7, '第30天复习', 30, 6);
 
 -- =============================================
 -- 种子数据：学习状态字典
@@ -310,6 +469,15 @@ INSERT IGNORE INTO `sys_learn_status` (`status`, `status_name`, `remark`) VALUES
 (2, '复习中', '已进入艾宾浩斯复习周期'),
 (3, '已熟记', '已通过全部复习节点，进入熟记状态'),
 (4, '遗忘重学', '复习时未记住，需重新开始学习');
+
+-- =============================================
+-- 种子数据：系统基础配置
+-- =============================================
+INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`, `category`, `description`, `sort_num`) VALUES
+('study.review_unlock_hour', '7', 'int', 'study',
+ '今日到期的复习任务从几点开始出现在「今日复习」列表（0-23）。常见取值 7 或 8；修改后立即生效。', 1),
+('study.daily_new_limit_default', '20', 'int', 'study',
+ '用户未单独设置时的默认「每日新词」上限（预留，学习改造时使用）。', 2);
 
 -- =============================================
 -- AI 阅读功能配置表（可动态扩展的功能选项）

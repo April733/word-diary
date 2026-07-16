@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 大模型调用历史记录
+ * 大模型调用历史记录（含成本计量字段）
  */
 @Data
 @Builder
@@ -16,48 +16,36 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class WdAiCallLog {
 
-    /** 主键 */
     private Long id;
-
-    /** 调用用户ID */
     private Long userId;
-
-    /** 模型名称，如 deepseek-chat */
     private String modelName;
 
-    /** 提示词token数量 */
+    /** 调用场景: word_parse / reading_chat 等 */
+    private String callScene;
+
+    /** 用户原始输入 */
+    private String inputText;
+    private Integer inputCharCount;
+    private Integer inputWordCount;
+
+    /** 拼装后 system+user 提示词总字符数 */
+    private Integer assembledPromptChars;
+
     private Integer promptTokens;
-
-    /** 返回token数量 */
     private Integer completionTokens;
-
-    /** 总token数量 */
     private Integer totalTokens;
 
-    /** 系统提示词 */
+    /** 按当时模型单价估算的成本 */
+    private java.math.BigDecimal estimatedCost;
+
     private String systemPrompt;
-
-    /** 用户提示词 */
     private String userPrompt;
-
-    /** 大模型返回的原始数据 */
     private String responseData;
-
-    /** 调用耗时（毫秒） */
     private Integer durationMs;
 
-    /** 创建人 */
     private Long createBy;
-
-    /** 创建时间 */
     private LocalDateTime createTime;
-
-    /** 修改人 */
     private Long updateBy;
-
-    /** 更新时间 */
     private LocalDateTime updateTime;
-
-    /** 是否删除 1已删除 0未删除 */
     private Integer isDeleted;
 }

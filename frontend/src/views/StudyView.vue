@@ -1,63 +1,65 @@
 <template>
   <div class="page">
     <header class="page-header">
-      <div>
+      <div class="header-left">
         <t-button variant="text" @click="router.push('/')">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
-        <h1>学习</h1>
+        <h1>{{ $t('study.sessionTitle') }}</h1>
+      </div>
+      <div class="header-actions">
+        <t-button variant="text" size="small" @click="router.push('/study/browse')">{{ $t('study.browse') }}</t-button>
+        <t-button variant="text" size="small" @click="router.push('/study/settings')">
+          <template #icon><t-icon name="setting" /></template>
+        </t-button>
       </div>
     </header>
 
     <div class="page-body">
-      <t-tabs v-model="tab">
-        <t-tab-panel value="new" :label="`新单词 (${newWords.length})`">
-          <div v-if="newWords.length > 0" class="study-area">
-            <WordCard v-if="currentNew" :word="currentNew" :show-answer="showAnswer" @toggle="showAnswer = !showAnswer" />
+      <div class="today-stats">
+        <div class="stat-item">
+          <span class="stat-label">{{ $t('study.reviewPending') }}</span>
+          <span class="stat-value">{{ today.reviewPending }}</span>
+        </div>
+        <div class="stat-item" :class="{ locked: !today.reviewPhaseDone }">
+          <span class="stat-label">{{ $t('study.newPending') }}</span>
+          <span class="stat-value">{{ today.newPending }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">{{ $t('study.phase') }}</span>
+          <span class="stat-value phase">{{ phaseLabel }}</span>
+        </div>
+      </div>
 
-            <div class="study-actions" v-if="showAnswer">
-              <t-button theme="danger" size="large" @click="handleFirstLearn(0)">没记住</t-button>
-              <t-button theme="primary" size="large" @click="handleFirstLearn(1)">记住了</t-button>
-            </div>
+      <p v-if="!today.reviewPhaseDone && today.reviewPending > 0" class="lock-hint">
+        {{ $t('study.reviewFirstHint') }}
+      </p>
 
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: newProgress + '%' }"></div>
-            </div>
-            <p class="progress-text">{{ newIndex + 1 }} / {{ newWords.length }}</p>
+      <div v-if="currentWord" class="study-area">
+        <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = !showAnswer" />
+
+        <div v-if="showAnswer" class="study-actions">
+          <t-button theme="danger" size="large" @click="handleAnswer(0)">{{ $t('study.forget') }}</t-button>
+          <t-button theme="warning" size="large" @click="handleAnswer(2)">{{ $t('study.fuzzy') }}</t-button>
+          <t-button theme="primary" size="large" @click="handleAnswer(1)">{{ $t('study.know') }}</t-button>
+        </div>
+
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <p class="progress-text">{{ progressText }}</p>
+      </div>
+
+      <t-empty v-else-if="!loading" :description="$t('study.allDone')" />
+
+      <t-collapse v-if="completedWords.length > 0" class="completed-section" default-expand-all>
+        <t-collapse-panel :header="$t('study.todayCompleted', { count: completedWords.length })">
+          <div v-for="word in completedWords" :key="word.planId" class="completed-item">
+            <span class="completed-word">{{ word.wordProto }}</span>
+            <span class="completed-mean">{{ word.partSpeechMean }}</span>
           </div>
-          <t-empty v-else description="没有待学习的新单词" />
-        </t-tab-panel>
-
-        <t-tab-panel value="review" :label="`复习 (${reviewWords.length})`">
-          <div v-if="reviewWords.length > 0" class="study-area">
-            <WordCard v-if="currentReview" :word="currentReview" :show-answer="showReviewAnswer" @toggle="showReviewAnswer = !showReviewAnswer" />
-
-            <div class="study-actions" v-if="showReviewAnswer">
-              <t-button theme="danger" size="large" @click="handleReview(0)">忘记了</t-button>
-              <t-button theme="primary" size="large" @click="handleReview(1)">记住了</t-button>
-            </div>
-
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: reviewProgress + '%' }"></div>
-            </div>
-            <p class="progress-text">{{ reviewIndex + 1 }} / {{ reviewWords.length }}</p>
-          </div>
-          <t-empty v-else description="今天没有需要复习的单词，太棒了！" />
-        </t-tab-panel>
-
-        <t-tab-panel value="completed" :label="`已完成 (${completedWords.length})`">
-          <div v-if="completedWords.length > 0" class="completed-list">
-            <div v-for="word in completedWords" :key="word.planId" class="completed-item">
-              <div class="completed-word">{{ word.wordProto }}</div>
-              <div class="completed-mean">{{ word.partSpeechMean }}</div>
-              <t-tag :theme="word.learnStatus === 3 ? 'success' : 'default'" size="small">
-                {{ word.learnStatus === 3 ? '已熟记' : word.learnStatus === 4 ? '已遗忘' : '已学习' }}
-              </t-tag>
-            </div>
-          </div>
-          <t-empty v-else description="今天还没有完成学习" />
-        </t-tab-panel>
-      </t-tabs>
+        </t-collapse-panel>
+      </t-collapse>
     </div>
   </div>
 </template>
@@ -65,122 +67,114 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getNewWords, getTodayReview, getTodayCompleted, firstLearn, review } from '../api'
+import { openStudySession, submitStudyAnswer, getTodayCompleted } from '../api'
 import WordCard from '../components/WordCard.vue'
 
 const router = useRouter()
-const tab = ref('new')
-const newWords = ref<any[]>([])
-const reviewWords = ref<any[]>([])
-const completedWords = ref<any[]>([])
-const newIndex = ref(0)
-const reviewIndex = ref(0)
+const { t } = useI18n()
+const loading = ref(true)
 const showAnswer = ref(false)
-const showReviewAnswer = ref(false)
-
-const currentNew = computed(() => newWords.value[newIndex.value] || null)
-const currentReview = computed(() => reviewWords.value[reviewIndex.value] || null)
-const newProgress = computed(() => newWords.value.length ? (newIndex.value / newWords.value.length) * 100 : 0)
-const reviewProgress = computed(() => reviewWords.value.length ? (reviewIndex.value / reviewWords.value.length) * 100 : 0)
-
-onMounted(async () => {
-  await loadData()
+const session = ref<any>(null)
+const completedWords = ref<any[]>([])
+const today = ref({
+  reviewPending: 0,
+  reviewDone: 0,
+  newPending: 0,
+  newDone: 0,
+  reviewPhaseDone: false,
+  currentPhase: 'review'
 })
 
-async function loadData() {
+const currentWord = computed(() => session.value?.current || null)
+const queueItemId = computed(() => session.value?.queueItemId || null)
+const phase = computed(() => session.value?.phase || today.value.currentPhase)
+
+const phaseLabel = computed(() =>
+  phase.value === 'new' ? t('study.phaseNew') : t('study.phaseReview')
+)
+
+const progressText = computed(() => {
+  if (phase.value === 'new') {
+    const total = today.value.newDone + today.value.newPending
+    return t('study.newProgress', { done: today.value.newDone, total })
+  }
+  const total = today.value.reviewDone + today.value.reviewPending
+  return t('study.reviewProgress', { done: today.value.reviewDone, total })
+})
+
+const progressPercent = computed(() => {
+  if (phase.value === 'new') {
+    const total = today.value.newDone + today.value.newPending
+    return total ? (today.value.newDone / total) * 100 : 100
+  }
+  const total = today.value.reviewDone + today.value.reviewPending
+  return total ? (today.value.reviewDone / total) * 100 : 100
+})
+
+onMounted(async () => {
+  await Promise.all([loadSession(), loadCompleted()])
+})
+
+async function loadCompleted() {
   try {
-    const [nw, rw, cp] = await Promise.all([getNewWords(), getTodayReview(), getTodayCompleted()])
-    newWords.value = nw.data.data
-    reviewWords.value = rw.data.data
-    completedWords.value = cp.data.data
-    // Prioritize review if there are any
-    if (reviewWords.value.length > 0) tab.value = 'review'
-  } catch (e) {
-    MessagePlugin.error('加载学习数据失败')
+    const res = await getTodayCompleted()
+    completedWords.value = res.data.data || []
+  } catch { /* ignore */ }
+}
+
+async function loadSession() {
+  loading.value = true
+  try {
+    const res = await openStudySession()
+    applySession(res.data.data)
+  } catch {
+    MessagePlugin.error(t('study.loadFailed'))
+  } finally {
+    loading.value = false
   }
 }
 
-async function handleFirstLearn(result: number) {
-  const word = currentNew.value
-  if (!word) return
-  const currentIdx = newIndex.value
-  try {
-    await firstLearn(word.planId, result)
-  } catch (e) {
-    MessagePlugin.error('操作失败')
-    return
+function applySession(data: any) {
+  session.value = data
+  if (data.today) {
+    today.value = data.today
   }
   showAnswer.value = false
-  if (result === 1) {
-    // Remembered: remove from local list immediately
-    newWords.value.splice(currentIdx, 1)
-  }
-  // Also refresh from backend
+}
+
+async function handleAnswer(feedback: number) {
+  if (!currentWord.value || !queueItemId.value) return
   try {
-    const [nw, cp] = await Promise.all([getNewWords(), getTodayCompleted()])
-    newWords.value = nw.data.data
-    completedWords.value = cp.data.data
-  } catch (e) { /* fallback */ }
-  if (newWords.value.length === 0) {
-    newIndex.value = 0
-    MessagePlugin.success('新单词学习完毕！')
-  } else {
-    newIndex.value = Math.min(currentIdx, newWords.value.length - 1)
-  }
-}
-
-async function handleReview(result: number) {
-  const word = currentReview.value
-  if (!word) return
-  const currentIdx = reviewIndex.value
-  try {
-    await review(word.planId, result)
-  } catch (e) {
-    MessagePlugin.error('操作失败')
-    return
-  }
-  showReviewAnswer.value = false
-  // Remove current word from local list immediately
-  reviewWords.value.splice(currentIdx, 1)
-  // Also refresh from backend to keep data consistent
-  try {
-    const [rw, cp] = await Promise.all([getTodayReview(), getTodayCompleted()])
-    reviewWords.value = rw.data.data
-    completedWords.value = cp.data.data
-  } catch (e) { /* fallback */ }
-  if (reviewWords.value.length === 0) {
-    reviewIndex.value = 0
-    MessagePlugin.success('复习完成！')
-  } else {
-    // If we removed locally, adjust index (stay at same position or go to next)
-    reviewIndex.value = Math.min(currentIdx, reviewWords.value.length - 1)
-  }
-}
-
-function moveToCompleted(word: any) {
-  // No longer manually push — completed list is refreshed from backend
-}
-
-function nextNewWord() {
-  showAnswer.value = false
-  if (newIndex.value < newWords.value.length - 1) {
-    newIndex.value++
-  } else {
-    newWords.value = []
-    newIndex.value = 0
-    MessagePlugin.success('新单词学习完毕！')
-  }
-}
-
-function nextReviewWord() {
-  showReviewAnswer.value = false
-  if (reviewIndex.value < reviewWords.value.length - 1) {
-    reviewIndex.value++
-  } else {
-    reviewWords.value = []
-    reviewIndex.value = 0
-    MessagePlugin.success('复习完成！')
+    const res = await submitStudyAnswer({
+      planId: currentWord.value.planId,
+      queueItemId: queueItemId.value,
+      feedback,
+      phase: phase.value
+    })
+    const data = res.data.data
+    if (data.today) {
+      today.value = data.today
+    }
+    if (data.phaseSwitched) {
+      MessagePlugin.success(t('study.reviewDoneStartNew'))
+    }
+    if (data.next) {
+      session.value = {
+        ...session.value,
+        current: data.next,
+        queueItemId: data.queueItemId,
+        phase: data.phase
+      }
+    } else {
+      session.value = { ...session.value, current: null, queueItemId: null }
+      MessagePlugin.success(t('study.sessionDone'))
+    }
+    showAnswer.value = false
+    await loadCompleted()
+  } catch (e: any) {
+    MessagePlugin.error(e.response?.data?.msg || t('study.actionFailed'))
   }
 }
 </script>
@@ -188,7 +182,7 @@ function nextReviewWord() {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .page-header {
@@ -200,10 +194,15 @@ function nextReviewWord() {
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 
-.page-header > div {
+.header-left {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 4px;
 }
 
 .page-header h1 {
@@ -216,19 +215,62 @@ function nextReviewWord() {
   padding: 0 24px;
 }
 
+.today-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-item {
+  flex: 1;
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: center;
+}
+
+.stat-item.locked {
+  opacity: 0.55;
+}
+
+.stat-label {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.stat-value.phase {
+  font-size: 16px;
+}
+
+.lock-hint {
+  text-align: center;
+  color: #d97706;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
 .study-area {
   padding: 32px 0;
 }
 
 .study-actions {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   justify-content: center;
   margin-top: 32px;
+  flex-wrap: wrap;
 }
 
 .study-actions .t-button {
-  min-width: 140px;
+  min-width: 100px;
 }
 
 .progress-bar {
@@ -253,32 +295,29 @@ function nextReviewWord() {
   margin-top: 8px;
 }
 
-.completed-list {
-  padding: 16px 0;
+.completed-section {
+  margin-top: 24px;
 }
 
 .completed-item {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  background: #fff;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
 }
 
 .completed-word {
   font-weight: 600;
-  font-size: 16px;
 }
 
 .completed-mean {
   color: #6b7280;
   font-size: 14px;
+  margin-left: 12px;
   flex: 1;
-  margin: 0 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: right;
 }
 </style>

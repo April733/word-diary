@@ -7,6 +7,26 @@
       </t-button>
       <span class="book-title-header">{{ book?.title }}</span>
       <div class="header-right">
+        <div class="header-notebooks">
+          <t-badge
+            v-if="activeNotebook"
+            :count="basketCounts[activeNotebook.notebookId] || 0"
+            :show-zero="false"
+          >
+            <t-button
+              variant="outline"
+              size="small"
+              :title="activeNotebook.notebookName"
+              @click="openNotebookBasket(activeNotebook.notebookId)"
+            >
+              {{ truncate(activeNotebook.notebookName, 14) }}
+            </t-button>
+          </t-badge>
+          <t-button variant="outline" size="small" @click="showNotebookLinkDialog = true">
+            <template #icon><t-icon name="book" /></template>
+            {{ linkedNotebooks.length ? $t('reader.notebookLinkManage') : $t('reader.notebookLinkTitle') }}
+          </t-button>
+        </div>
         <t-button variant="outline" size="small" @click="showSettings = true">
           <template #icon><t-icon name="setting" /></template>
           {{ $t('reader.readingSettings') }}
@@ -220,15 +240,22 @@
             </div>
             <div v-for="(msg, i) in aiMessages" :key="i" class="ai-msg" :class="msg.role">
               <div class="ai-msg-content" v-html="renderMarkdown(msg.content)"></div>
-              <t-button
-                v-if="msg.role === 'assistant'"
-                variant="text"
-                size="small"
-                class="ai-msg-copy"
-                @click="copyText(msg.content)"
+              <div
+                v-if="msg.role === 'assistant' && msg.collectEntries && msg.collectEntries.length > 0"
+                class="ai-msg-actions"
               >
-                <t-icon name="file-copy" size="12px" />
-              </t-button>
+                <t-button
+                  variant="text"
+                  theme="primary"
+                  size="small"
+                  class="ai-msg-collect"
+                  @click="openCollectForMessage(msg)"
+                >
+                  <template #icon><t-icon name="bookmark-add" size="12px" /></template>
+                  {{ $t('reader.collectFromReply') }}
+                  <span class="ai-msg-collect-count">{{ msg.collectEntries.length }}</span>
+                </t-button>
+              </div>
             </div>
             <div v-if="aiLoading" class="ai-msg assistant">
               <t-loading size="small" />
@@ -389,11 +416,31 @@
         />
       </div>
     </t-dialog>
+
+    <ReaderCollectDrawer
+      v-model:visible="showCollectDrawer"
+      :book-id="bookId"
+      :current-entries="currentCollectEntries"
+      :linked-notebooks="linkedNotebooks"
+      :source-snippet="collectSourceSnippet"
+      :source-location="collectSourceLocation"
+      :preferred-view-mode="collectDrawerPreferredMode"
+      :target-notebook-id="collectTargetNotebookId"
+      @basket-changed="refreshBasketCounts"
+      @open-link-dialog="showNotebookLinkDialog = true"
+    />
+    <ReaderNotebookLinkDialog
+      v-model:visible="showNotebookLinkDialog"
+      v-model:active-notebook-id="activeNotebookId"
+      :book-id="bookId"
+      :book-title="book?.title"
+      @changed="onNotebookLinksChanged"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -405,8 +452,21 @@ import {
   getChapterAnnotations, addAnnotation, updateAnnotation, deleteAnnotation,
   getReaderSettings, saveReaderSettings,
   getAiFeatures, getAiFeaturePreferences, saveAiFeaturePreferences,
-  getAiSessions, getAiMessages, getAiMessagesPaged, createAiSession, deleteAiSession
+  getAiSessions, getAiMessages, getAiMessagesPaged, createAiSession, deleteAiSession,
+  getBookNotebookLinks
 } from '../api'
+import ReaderCollectDrawer from '../components/ReaderCollectDrawer.vue'
+import ReaderNotebookLinkDialog from '../components/ReaderNotebookLinkDialog.vue'
+import {
+  hydrateStoredAiMessage,
+  loadBasketCounts,
+  makeBasketKey,
+  migrateLegacyBasketIfNeeded,
+  resolveActiveNotebookId,
+  saveActiveNotebookId,
+  stripCollectMarker,
+  type CollectEntry
+} from '../utils/collectBasket'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
 
@@ -537,6 +597,161 @@ const reportDescription = ref('')
 const reportSending = ref(false)
 const lastErrorDetail = ref('')
 
+// 阅读收录：一词本一篮
+const showCollectDrawer = ref(false)
+const showNotebookLinkDialog = ref(false)
+const linkedNotebooks = ref<{ notebookId: number; notebookName: string }[]>([])
+const currentCollectEntries = ref<CollectEntry[]>([])
+const collectSourceSnippet = ref('')
+const collectSourceLocation = ref('')
+const collectDrawerPreferredMode = ref<'current' | 'basket'>('current')
+const collectTargetNotebookId = ref<number | undefined>()
+const basketCounts = ref<Record<number, number>>({})
+const activeNotebookId = ref<number | undefined>()
+
+const activeNotebook = computed(() =>
+  linkedNotebooks.value.find(n => n.notebookId === activeNotebookId.value)
+)
+
+type AiMessage = {
+  role: string
+  content: string
+  collectEntries?: CollectEntry[]
+  collectSourceSnippet?: string
+  collectSourceLocation?: string
+}
+
+function refreshBasketCounts() {
+  const ids = linkedNotebooks.value.map(n => n.notebookId)
+  migrateLegacyBasketIfNeeded(bookId, ids)
+  basketCounts.value = loadBasketCounts(bookId, ids)
+}
+
+watch(activeNotebookId, (id) => {
+  if (id != null) saveActiveNotebookId(bookId, id)
+})
+
+/** 顶栏：点当前单词本 → 打开该本收录篮 */
+function openNotebookBasket(notebookId: number) {
+  currentCollectEntries.value = []
+  collectSourceSnippet.value = ''
+  collectSourceLocation.value = ''
+  collectTargetNotebookId.value = notebookId
+  collectDrawerPreferredMode.value = 'basket'
+  showCollectDrawer.value = true
+}
+
+/** 某条 AI 回复旁的收录 */
+function openCollectForMessage(msg: AiMessage) {
+  if (!msg.collectEntries?.length) return
+  if (linkedNotebooks.value.length === 0) {
+    MessagePlugin.warning(t('reader.collectNeedLink'))
+    showNotebookLinkDialog.value = true
+    return
+  }
+  currentCollectEntries.value = msg.collectEntries
+  collectSourceSnippet.value = msg.collectSourceSnippet || ''
+  collectSourceLocation.value = msg.collectSourceLocation || ''
+  collectTargetNotebookId.value = activeNotebookId.value || linkedNotebooks.value[0]?.notebookId
+  collectDrawerPreferredMode.value = 'current'
+  showCollectDrawer.value = true
+}
+
+async function loadNotebookLinks() {
+  try {
+    const res = await getBookNotebookLinks(bookId)
+    linkedNotebooks.value = res.data.data || []
+    const ids = linkedNotebooks.value.map(n => n.notebookId)
+    activeNotebookId.value = resolveActiveNotebookId(bookId, ids, activeNotebookId.value)
+    refreshBasketCounts()
+  } catch {
+    linkedNotebooks.value = []
+    basketCounts.value = {}
+    activeNotebookId.value = undefined
+  }
+}
+
+async function onNotebookLinksChanged() {
+  await loadNotebookLinks()
+}
+
+function normalizeCollectEntries(rawEntries: any[], snippet: string): CollectEntry[] {
+  return rawEntries
+    .filter(e => e?.wordProto && e?.partSpeechMean)
+    .map(e => ({
+      basketKey: makeBasketKey(e),
+      entryType: e.entryType === 'phrase' ? 'phrase' as const : 'word' as const,
+      wordProto: String(e.wordProto).trim(),
+      partSpeechMean: String(e.partSpeechMean).trim(),
+      usPhonetic: e.usPhonetic,
+      ukPhonetic: e.ukPhonetic,
+      sentenceExample: e.sentenceExample || snippet,
+      rootAffix: e.rootAffix,
+      sourceSnippet: snippet
+    }))
+}
+
+function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[]) {
+  const snippet = selectedContext.value || ''
+  const location = selectedCfi.start || ''
+  const entries = normalizeCollectEntries(rawEntries, snippet)
+  const msg = aiMessages.value[answerIndex]
+  if (!msg || entries.length === 0) return
+  aiMessages.value[answerIndex] = {
+    ...msg,
+    collectEntries: entries,
+    collectSourceSnippet: snippet,
+    collectSourceLocation: location
+  }
+}
+
+type SseHandlers = {
+  onChunk?: (text: string) => void
+  onError?: (msg: string) => void
+  onDone?: (data: any) => void
+  onCollectEntries?: (entries: any[]) => void
+}
+
+function parseSseEventBlock(eventBlock: string): { eventType: string; dataLines: string[] } {
+  let eventType = ''
+  const dataLines: string[] = []
+  for (const line of eventBlock.split('\n')) {
+    if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
+  }
+  return { eventType, dataLines }
+}
+
+function dispatchSseEvent(eventType: string, dataLines: string[], handlers: SseHandlers) {
+  if (eventType === 'chunk' && dataLines.length > 0) {
+    handlers.onChunk?.(dataLines.join('\n'))
+  }
+  if (eventType === 'error' && dataLines.length > 0) {
+    handlers.onError?.(dataLines.join('\n'))
+  }
+  if (eventType === 'done' && dataLines.length > 0) {
+    try {
+      handlers.onDone?.(JSON.parse(dataLines[0]))
+    } catch {
+      handlers.onDone?.({})
+    }
+  }
+  if (eventType === 'collect-entries' && dataLines.length > 0) {
+    try {
+      const payload = JSON.parse(dataLines.join('\n'))
+      handlers.onCollectEntries?.(payload.entries || [])
+    } catch (e) {
+      console.warn('[Reader] collect-entries parse failed', e)
+    }
+  }
+}
+
+function processSseEventBlock(eventBlock: string, handlers: SseHandlers) {
+  if (!eventBlock.trim()) return
+  const { eventType, dataLines } = parseSseEventBlock(eventBlock)
+  dispatchSseEvent(eventType, dataLines, handlers)
+}
+
 // 拖拽排序相关
 const dragIndex = ref<number | null>(null)
 
@@ -649,10 +864,7 @@ async function loadSessionMessages(sessionId: number) {
     const data = res.data.data
     // messages 是倒序返回的（最新在前），需要反转为正序显示
     const list: any[] = data.messages || []
-    aiMessages.value = list.reverse().map((m: any) => ({
-      role: m.role,
-      content: m.content
-    }))
+    aiMessages.value = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
     messagesTotal.value = data.total || 0
     messagesHasMore.value = data.hasMore || false
     await nextTick()
@@ -672,10 +884,7 @@ async function loadMoreMessages() {
     const res = await getAiMessagesPaged(currentSessionId.value, currentCount, MESSAGE_PAGE_SIZE)
     const data = res.data.data
     const list: any[] = data.messages || []
-    const olderMessages = list.reverse().map((m: any) => ({
-      role: m.role,
-      content: m.content
-    }))
+    const olderMessages = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
     aiMessages.value = [...olderMessages, ...aiMessages.value]
     messagesTotal.value = data.total || 0
     messagesHasMore.value = data.hasMore || false
@@ -892,7 +1101,7 @@ function scheduleSaveSettings() {
 }
 
 // AI 对话
-const aiMessages = ref<{ role: string; content: string }[]>([])
+const aiMessages = ref<AiMessage[]>([])
 const aiInput = ref('')
 const aiLoading = ref(false)
 const aiMessagesRef = ref<HTMLElement | null>(null)
@@ -971,6 +1180,7 @@ function clearAllHighlights() {
 
 onMounted(async () => {
   console.log('[Reader] onMounted 开始, bookId:', bookId)
+  await loadNotebookLinks()
   await loadAiFeatures()
   await loadAiSessions()
   await loadReaderSettings()
@@ -1778,11 +1988,32 @@ async function sendAiMessage() {
     aiMessages.value.push({ role: 'assistant', content: '' })
     const answerIndex = aiMessages.value.length - 1
     let buffer = ''
+    const sseHandlers: SseHandlers = {
+      onChunk: async (text) => {
+        fullAnswer += text
+        aiMessages.value[answerIndex].content = stripCollectMarker(fullAnswer)
+        await nextTick()
+        scrollAiBottom()
+      },
+      onError: async (errMsg) => {
+        console.error('[AI] SSE error:', errMsg)
+        aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
+        showReportDialogWithError(errMsg)
+        await nextTick()
+        scrollAiBottom()
+      },
+      onDone: (doneData) => {
+        if (doneData.sessionId && isFirstMessage) {
+          currentSessionId.value = doneData.sessionId
+          loadAiSessions()
+        }
+      },
+      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
+    }
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
-        // 流结束时 flush TextDecoder 中的剩余多字节字符
         buffer += decoder.decode()
         break
       }
@@ -1790,61 +2021,11 @@ async function sendAiMessage() {
       const events = buffer.split('\n\n')
       buffer = events.pop() || ''
       for (const eventBlock of events) {
-        if (!eventBlock.trim()) continue
-        let eventType = ''
-        let dataLines: string[] = []
-        for (const line of eventBlock.split('\n')) {
-          if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
-          else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
-        }
-        if (eventType === 'chunk' && dataLines.length > 0) {
-          fullAnswer += dataLines.join('\n')
-          aiMessages.value[answerIndex].content = fullAnswer
-          await nextTick()
-          scrollAiBottom()
-        }
-        if (eventType === 'error' && dataLines.length > 0) {
-          const errMsg = dataLines.join('\n')
-          console.error('[AI] SSE error:', errMsg)
-          aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
-          showReportDialogWithError(errMsg)
-          await nextTick()
-          scrollAiBottom()
-        }
-        if (eventType === 'done' && dataLines.length > 0) {
-          try {
-            const doneData = JSON.parse(dataLines[0])
-            if (doneData.sessionId && isFirstMessage) {
-              currentSessionId.value = doneData.sessionId
-              loadAiSessions()
-            }
-          } catch {}
-        }
+        processSseEventBlock(eventBlock, sseHandlers)
       }
     }
-    // 处理 buffer 中残留的最后一个不完整事件块
     if (buffer.trim()) {
-      const lastEvent = buffer.trim()
-      let eventType = ''
-      let dataLines: string[] = []
-      for (const line of lastEvent.split('\n')) {
-        if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
-      }
-      if (eventType === 'chunk' && dataLines.length > 0) {
-        fullAnswer += dataLines.join('\n')
-        aiMessages.value[answerIndex].content = fullAnswer
-        await nextTick()
-        scrollAiBottom()
-      }
-      if (eventType === 'error' && dataLines.length > 0) {
-        const errMsg = dataLines.join('\n')
-        console.error('[AI] SSE error (last):', errMsg)
-        aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
-        showReportDialogWithError(errMsg)
-        await nextTick()
-        scrollAiBottom()
-      }
+      processSseEventBlock(buffer.trim(), sseHandlers)
     }
   } catch (e: any) {
     aiMessages.value.push({ role: 'assistant', content: t('login.error') + ': ' + e.message })
@@ -1907,11 +2088,32 @@ async function sendAiFeatures() {
     aiMessages.value.push({ role: 'assistant', content: '' })
     const answerIndex = aiMessages.value.length - 1
     let buffer = ''
+    const sseHandlers: SseHandlers = {
+      onChunk: async (text) => {
+        fullAnswer += text
+        aiMessages.value[answerIndex].content = stripCollectMarker(fullAnswer)
+        await nextTick()
+        scrollAiBottom()
+      },
+      onError: async (errMsg) => {
+        console.error('[AI] SSE error:', errMsg)
+        aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
+        showReportDialogWithError(errMsg)
+        await nextTick()
+        scrollAiBottom()
+      },
+      onDone: (doneData) => {
+        if (doneData.sessionId && isFirstMessage) {
+          currentSessionId.value = doneData.sessionId
+          loadAiSessions()
+        }
+      },
+      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
+    }
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
-        // 流结束时 flush TextDecoder 中的剩余多字节字符
         buffer += decoder.decode()
         break
       }
@@ -1919,61 +2121,11 @@ async function sendAiFeatures() {
       const events = buffer.split('\n\n')
       buffer = events.pop() || ''
       for (const eventBlock of events) {
-        if (!eventBlock.trim()) continue
-        let eventType = ''
-        let dataLines: string[] = []
-        for (const line of eventBlock.split('\n')) {
-          if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
-          else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
-        }
-        if (eventType === 'chunk' && dataLines.length > 0) {
-          fullAnswer += dataLines.join('\n')
-          aiMessages.value[answerIndex].content = fullAnswer
-          await nextTick()
-          scrollAiBottom()
-        }
-        if (eventType === 'error' && dataLines.length > 0) {
-          const errMsg = dataLines.join('\n')
-          console.error('[AI] SSE error:', errMsg)
-          aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
-          showReportDialogWithError(errMsg)
-          await nextTick()
-          scrollAiBottom()
-        }
-        if (eventType === 'done' && dataLines.length > 0) {
-          try {
-            const doneData = JSON.parse(dataLines[0])
-            if (doneData.sessionId && isFirstMessage) {
-              currentSessionId.value = doneData.sessionId
-              loadAiSessions()
-            }
-          } catch {}
-        }
+        processSseEventBlock(eventBlock, sseHandlers)
       }
     }
-    // 处理 buffer 中残留的最后一个不完整事件块
     if (buffer.trim()) {
-      const lastEvent = buffer.trim()
-      let eventType = ''
-      let dataLines: string[] = []
-      for (const line of lastEvent.split('\n')) {
-        if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
-      }
-      if (eventType === 'chunk' && dataLines.length > 0) {
-        fullAnswer += dataLines.join('\n')
-        aiMessages.value[answerIndex].content = fullAnswer
-        await nextTick()
-        scrollAiBottom()
-      }
-      if (eventType === 'error' && dataLines.length > 0) {
-        const errMsg = dataLines.join('\n')
-        console.error('[AI] SSE error (last):', errMsg)
-        aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
-        showReportDialogWithError(errMsg)
-        await nextTick()
-        scrollAiBottom()
-      }
+      processSseEventBlock(buffer.trim(), sseHandlers)
     }
   } catch (e: any) {
     aiMessages.value.push({ role: 'assistant', content: t('login.error') + ': ' + e.message })
@@ -2015,15 +2167,6 @@ function renderMarkdown(text: string): string {
   return html
 }
 
-/** 复制文本到剪贴板 */
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    MessagePlugin.success(t('common.copied'))
-  } catch {
-    MessagePlugin.warning(t('common.copyFailed'))
-  }
-}
 </script>
 
 <style scoped>
@@ -2052,7 +2195,17 @@ async function copyText(text: string) {
 
 .header-right {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-notebooks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .reader-body {
@@ -2370,17 +2523,22 @@ async function copyText(text: string) {
   font-weight: 600;
 }
 
-.ai-msg-copy {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  opacity: 0;
-  transition: opacity 0.2s;
-  color: #999;
+.ai-msg-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 6px;
 }
 
-.ai-msg:hover .ai-msg-copy {
-  opacity: 1;
+.ai-msg-collect {
+  color: #5e57b5;
+}
+
+.ai-msg-collect-count {
+  margin-left: 2px;
+  opacity: 0.7;
+  font-size: 11px;
 }
 
 /* 未选文字时的引导状态 */
