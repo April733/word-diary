@@ -51,25 +51,20 @@
           </div>
           <!-- EPUB 阅读器 -->
           <div v-show="book?.fileType !== 'pdf'" ref="viewerRef" class="epub-viewer"></div>
-          <!-- PDF 阅读器 -->
-          <div v-show="book?.fileType === 'pdf'" ref="pdfContainerRef" class="pdf-viewer">
-            <div class="pdf-zoom-bar">
-              <t-button variant="text" size="small" @click="pdfZoomOut" title="缩小">
-                <t-icon name="remove" size="14px" />
-              </t-button>
-              <span class="pdf-zoom-value">{{ Math.round(pdfScale * 100) }}%</span>
-              <t-button variant="text" size="small" @click="pdfZoomIn" title="放大">
-                <t-icon name="add" size="14px" />
-              </t-button>
-              <span class="pdf-page-count">{{ pdfTotalPages }} 页</span>
-            </div>
-            <div class="pdf-page-list" ref="pdfPageListRef">
-              <div v-for="pageNum in pdfTotalPages" :key="pageNum" :id="'pdf-page-container-' + pageNum" class="pdf-page-container">
-                <canvas :id="'pdf-page-' + pageNum" class="pdf-canvas" />
-                <div :id="'pdf-text-layer-' + pageNum" class="pdf-text-layer" />
-              </div>
-            </div>
-          </div>
+          <!-- PDF 阅读器：Canvas 懒加载 + 框选离线 OCR（与 EPUB 逻辑隔离） -->
+          <PdfReader
+            v-if="book?.fileType === 'pdf'"
+            ref="pdfReaderRef"
+            :book-id="bookId"
+            :initial-page="book?.currentChapter"
+            :initial-cfi="book?.currentCfi"
+            @ready="onPdfReady"
+            @toc="onPdfToc"
+            @chapter-highlight="onPdfChapterHighlight"
+            @select-text="onPdfSelectText"
+            @loading="(v) => loading = v"
+            @error="onPdfError"
+          />
         </div>
 
         <!-- 翻页工具栏 (仅 EPUB) -->
@@ -398,7 +393,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -412,6 +407,8 @@ import {
   getAiFeatures, getAiFeaturePreferences, saveAiFeaturePreferences,
   getAiSessions, getAiMessages, getAiMessagesPaged, createAiSession, deleteAiSession
 } from '../api'
+
+const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
 
 const route = useRoute()
 const router = useRouter()
@@ -504,13 +501,9 @@ let rendition: Rendition | null = null
 const viewerRef = ref<HTMLElement | null>(null)
 const readerContainer = ref<HTMLElement | null>(null)
 
-// PDF 相关
-const pdfContainerRef = ref<HTMLElement | null>(null)
-const pdfPageListRef = ref<HTMLElement | null>(null)
+// PDF 相关（逻辑在 PdfReader 组件内，此处仅做桥接）
+const pdfReaderRef = ref<{ goToPage: (pageNum: number) => void } | null>(null)
 const pdfTotalPages = ref(0)
-let pdfDoc: any = null
-const pdfScale = ref(1.2)
-const PDF_SCALE_STEP = 0.2
 
 // 选中文字
 let selectedCfi = { start: '', end: '' }
@@ -985,8 +978,8 @@ onMounted(async () => {
   console.log('[Reader] loadBook 完成, book:', !!book.value, 'fileType:', book.value?.fileType)
   if (book.value) {
     if (book.value.fileType === 'pdf') {
-      console.log('[Reader] 检测到 PDF，调用 initPdf...')
-      initPdf()
+      console.log('[Reader] 检测到 PDF，由 PdfReader 组件初始化')
+      // PdfReader 通过 v-if 挂载后自行加载
     } else {
       console.log('[Reader] 调用 initEpub...')
       initEpub()
@@ -1008,29 +1001,6 @@ onBeforeUnmount(() => {
       document.removeEventListener('click', clickHandler)
     }
     rendition.destroy()
-  }
-  // 清理 PDF 文本层选中监听
-  if (pdfPageListRef.value) {
-    const handler = (pdfPageListRef.value as any).__selectionHandler
-    if (handler) {
-      document.removeEventListener('selectionchange', handler)
-    }
-    const timerRef = (pdfPageListRef.value as any).__selectionTimer
-    if (timerRef && timerRef.current) {
-      clearTimeout(timerRef.current)
-    }
-  }
-  // 清理 PDF 滚动监听
-  if (pdfContainerRef.value) {
-    const scrollHandler = (pdfContainerRef.value as any).__scrollHandler
-    if (scrollHandler) {
-      pdfContainerRef.value.removeEventListener('scroll', scrollHandler)
-    }
-  }
-  // 清理 PDF
-  if (pdfDoc) {
-    pdfDoc.destroy()
-    pdfDoc = null
   }
 })
 
@@ -1128,324 +1098,38 @@ async function initEpub() {
   }
 }
 
-// ============== PDF 阅读器 ==============
+// ============== PDF 阅读器桥接（实现见 PdfReader.vue，禁止改 EPUB） ==============
 
-async function initPdf() {
-  if (!pdfContainerRef.value) {
-    console.error('[Reader] pdfContainerRef 不存在')
-    return
+function onPdfReady(pages: number) {
+  pdfTotalPages.value = pages
+  console.log('[Reader] PdfReader ready, pages:', pages)
+}
+
+function onPdfToc(items: Array<{ label: string; href: string; level: number }>) {
+  toc.value = items as any
+  console.log('[Reader] PDF 目录加载完成, 共', items.length, '条')
+}
+
+/** PDF 滚动页码 → 目录高亮（与旧逻辑一致：取最后一个页码 ≤ 当前页的目录项） */
+function onPdfChapterHighlight(pageNum: number) {
+  let targetIndex = -1
+  for (let i = 0; i < toc.value.length; i++) {
+    const p = parseInt(toc.value[i].href, 10)
+    if (p <= pageNum) targetIndex = i
   }
-  const fileUrl = getBookFileUrl(bookId)
-  console.log('[Reader] 开始加载 PDF:', fileUrl)
-  loading.value = true
-
-  try {
-    const token = localStorage.getItem('token')
-    const response = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 60000,
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    })
-
-    if (!response.data || response.data.byteLength === 0) {
-      throw new Error('下载的 PDF 文件为空')
-    }
-
-    const pdfjsLib = (window as any).pdfjsLib
-    if (!pdfjsLib) {
-      throw new Error('PDF.js 库未加载，请检查网络连接')
-    }
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs'
-
-    const loadingTask = pdfjsLib.getDocument({ data: response.data })
-    pdfDoc = await loadingTask.promise
-    pdfTotalPages.value = pdfDoc.numPages
-    console.log('[Reader] PDF 加载完成, 共', pdfTotalPages.value, '页')
-
-    // 加载 PDF 目录
-    await loadPdfOutline()
-
-    // 用 requestAnimationFrame 等待 DOM 更新后渲染
-    await nextTick()
-    await new Promise(r => requestAnimationFrame(r))
-
-    renderAllPdfPages()
-
-    // 监听 PDF 文字选中事件
-    setupPdfSelection()
-
-    // 监听 PDF 滚动，自动更新当前目录高亮
-    setupPdfScrollListener()
-
-    // 恢复上次阅读位置
-    await restorePdfPosition()
-
-    loading.value = false
-  } catch (err: any) {
-    console.error('[Reader] PDF 加载失败:', err)
-    MessagePlugin.error(t('reader.loadEpubError', { msg: err?.message || 'Unknown error' }))
-    loading.value = false
+  if (targetIndex >= 0 && currentChapter.value !== targetIndex) {
+    currentChapter.value = targetIndex
   }
 }
 
-async function renderAllPdfPages() {
-  if (!pdfDoc) return
-  const containerWidth = (pdfContainerRef.value?.clientWidth || 700) - 32 // padding
-  for (let i = 1; i <= pdfTotalPages.value; i++) {
-    await renderPdfPage(i, containerWidth)
-  }
+function onPdfSelectText(text: string) {
+  selectedText = text
+  selectedContext.value = text
+  contextCollapsed.value = false
 }
 
-async function renderPdfPage(pageNum: number, maxWidth: number) {
-  if (!pdfDoc) return
-  try {
-    const page = await pdfDoc.getPage(pageNum)
-    const viewport = page.getViewport({ scale: 1 })
-    const scale = maxWidth / viewport.width * pdfScale.value
-    const scaledViewport = page.getViewport({ scale })
-
-    const canvas = document.getElementById('pdf-page-' + pageNum) as HTMLCanvasElement | null
-    if (!canvas) return
-    canvas.height = scaledViewport.height
-    canvas.width = scaledViewport.width
-
-    const ctx = canvas.getContext('2d')!
-    await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
-
-    // 渲染文本层，使文字可选
-    const textLayerDiv = document.getElementById('pdf-text-layer-' + pageNum) as HTMLDivElement | null
-    if (textLayerDiv) {
-      textLayerDiv.innerHTML = ''
-      textLayerDiv.style.width = scaledViewport.width + 'px'
-      textLayerDiv.style.height = scaledViewport.height + 'px'
-      const textContent = await page.getTextContent()
-      const pdfjsLib = (window as any).pdfjsLib
-      if (pdfjsLib && pdfjsLib.renderTextLayer) {
-        await pdfjsLib.renderTextLayer({
-          textContentSource: textContent,
-          container: textLayerDiv,
-          viewport: scaledViewport,
-          textDivs: []
-        }).promise
-        // 修复文本层选区溢出：给每个 span 添加独立选区
-        const spans = textLayerDiv.querySelectorAll('span')
-        spans.forEach((span: HTMLElement) => {
-          span.style.display = 'inline-block'
-          span.style.overflow = 'hidden'
-          span.style.contain = 'layout paint'
-        })
-      }
-    }
-  } catch (e) {
-    console.warn('[Reader] PDF 渲染第', pageNum, '页失败:', e)
-  }
-}
-
-function pdfZoomIn() {
-  pdfScale.value = Math.min(3, pdfScale.value + PDF_SCALE_STEP)
-  renderAllPdfPages()
-}
-
-function pdfZoomOut() {
-  pdfScale.value = Math.max(0.5, pdfScale.value - PDF_SCALE_STEP)
-  renderAllPdfPages()
-}
-
-/** 递归扁平化 PDF 大纲为目录列表 */
-function flattenOutline(items: any[], level: number = 0): Array<{ label: string; dest: any; level: number }> {
-  const result: Array<{ label: string; dest: any; level: number }> = []
-  for (const item of items) {
-    result.push({ label: item.title, dest: item.dest, level })
-    if (item.items && item.items.length > 0) {
-      result.push(...flattenOutline(item.items, level + 1))
-    }
-  }
-  return result
-}
-
-/** 加载 PDF 目录（大纲） */
-async function loadPdfOutline() {
-  if (!pdfDoc) return
-  try {
-    const outline = await pdfDoc.getOutline()
-    console.log('[Reader] PDF getOutline 结果:', outline)
-    if (!outline || outline.length === 0) {
-      console.log('[Reader] PDF 无目录/大纲，将使用页码作为目录')
-    // 无大纲时，用页码作为简易目录
-      toc.value = Array.from({ length: pdfTotalPages.value }, (_, i) => ({
-        label: `第 ${i + 1} 页`,
-        href: String(i + 1),
-        level: 0,
-      }))
-      return
-    }
-    const flatItems = flattenOutline(outline)
-    // 转换为 toc 格式，支持点击跳转
-    toc.value = await Promise.all(flatItems.map(async (item, index) => {
-      let pageNumber = 0
-      try {
-        if (item.dest) {
-          let dest = item.dest
-          // dest 可能是命名字符串引用
-          if (typeof dest === 'string') {
-            dest = await pdfDoc.getDestination(dest)
-          }
-          if (dest && Array.isArray(dest) && dest.length > 0) {
-            const pageRef = dest[0]
-            if (pageRef && typeof pageRef === 'object') {
-              const pageIndex = await pdfDoc.getPageIndex(pageRef)
-              pageNumber = pageIndex + 1
-            }
-          }
-        }
-      } catch (destErr) {
-        console.warn('[Reader] 解析目录项目标页失败:', item.title, destErr)
-      }
-      return {
-        label: item.label,
-        href: String(pageNumber),
-        level: item.level,
-      }
-    }))
-    // 过滤掉 pageNumber 为 0 的无效条目
-    toc.value = toc.value.filter(item => parseInt(item.href) > 0)
-    console.log('[Reader] PDF 目录加载完成, 共', toc.value.length, '条:', toc.value.map(t => t.label + ' -> 页' + t.href))
-  } catch (e) {
-    console.warn('[Reader] 加载 PDF 目录失败:', e)
-    // 降级：使用页码作为目录
-    toc.value = Array.from({ length: pdfTotalPages.value }, (_, i) => ({
-      label: `第 ${i + 1} 页`,
-      href: String(i + 1),
-      level: 0,
-    }))
-  }
-}
-
-/** 监听 PDF 滚动，自动更新当前目录高亮并保存进度 */
-function setupPdfScrollListener() {
-  if (!pdfContainerRef.value) return
-  const container = pdfContainerRef.value
-  let saveTimer: ReturnType<typeof setTimeout> | null = null
-
-  const handleScroll = () => {
-    const pages = container.querySelectorAll('.pdf-page-container')
-    let currentPage = 1
-    for (const page of pages) {
-      const rect = page.getBoundingClientRect()
-      const containerRect = container.getBoundingClientRect()
-      if (rect.top < containerRect.top + 50) {
-        currentPage = Number(page.id.replace('pdf-page-container-', ''))
-      }
-    }
-    // 根据当前页码找到对应的最后一个目录项
-    let targetIndex = -1
-    for (let i = 0; i < toc.value.length; i++) {
-      const pageNum = parseInt(toc.value[i].href, 10)
-      if (pageNum <= currentPage) {
-        targetIndex = i
-      }
-    }
-    if (targetIndex >= 0 && currentChapter.value !== targetIndex) {
-      currentChapter.value = targetIndex
-    }
-
-    // 防抖保存 PDF 阅读进度（滚动停止 2 秒后保存）
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => {
-      const percent = pdfTotalPages.value > 0
-        ? Math.round((currentPage / pdfTotalPages.value) * 10000) / 100
-        : 0
-      updateProgress(bookId, {
-        chapterIndex: currentPage,
-        cfi: String(currentPage),
-        percent: percent
-      }).catch(() => {})
-      console.log('[Reader] PDF 进度已保存: 第', currentPage, '页,', percent, '%')
-    }, 2000)
-  }
-  container.addEventListener('scroll', handleScroll, { passive: true })
-  ;(container as any).__scrollHandler = handleScroll
-}
-
-/** 恢复 PDF 上次阅读位置 */
-async function restorePdfPosition() {
-  const savedPage = book.value?.currentChapter
-  if (!savedPage || savedPage <= 0) {
-    console.log('[Reader] PDF 无历史阅读位置，从头开始')
-    return
-  }
-  if (!pdfContainerRef.value) return
-
-  // 等待页面渲染完成
-  await nextTick()
-  await new Promise(r => requestAnimationFrame(r))
-
-  const targetPage = Math.min(savedPage, pdfTotalPages.value)
-  const targetEl = pdfContainerRef.value.querySelector(`#pdf-page-container-${targetPage}`)
-  if (targetEl) {
-    targetEl.scrollIntoView({ behavior: 'instant', block: 'start' })
-    console.log('[Reader] PDF 恢复阅读位置: 第', targetPage, '页')
-  }
-}
-function setupPdfSelection() {
-  if (!pdfPageListRef.value) return
-  const timerRef = { current: null as ReturnType<typeof setTimeout> | null }
-  let lastWarnedSelection = ''
-
-  const processSelection = () => {
-    const sel = window.getSelection()
-    if (!sel || sel.isCollapsed) {
-      selectedText = ''
-      selectedContext.value = ''
-      lastWarnedSelection = ''
-      return
-    }
-    // 检查选区是否在 PDF 文本层内
-    const container = pdfPageListRef.value
-    if (!container) return
-    let insidePdf = false
-    for (let i = 0; i < sel.rangeCount; i++) {
-      const r = sel.getRangeAt(i)
-      if (container.contains(r.commonAncestorContainer)) {
-        insidePdf = true
-        break
-      }
-    }
-    if (!insidePdf) return
-    // 规范化文本：去除首尾空白，合并内部换行/多余空白为单个空格
-    const text = sel.toString().replace(/\s+/g, ' ').trim()
-    if (!text) {
-      selectedText = ''
-      selectedContext.value = ''
-      lastWarnedSelection = ''
-      return
-    }
-    if (text.length > MAX_SELECTION_LENGTH) {
-      selectedText = text.substring(0, MAX_SELECTION_LENGTH)
-      // 避免同一选区重复弹出提示
-      if (lastWarnedSelection !== text) {
-        MessagePlugin.warning(t('reader.selectionTooLong', { max: MAX_SELECTION_LENGTH, actual: text.length }))
-        lastWarnedSelection = text
-      }
-    } else {
-      selectedText = text
-      lastWarnedSelection = ''
-    }
-    selectedContext.value = selectedText
-  }
-
-  const handleSelectionChange = () => {
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => {
-      processSelection()
-      timerRef.current = null
-    }, 250)
-  }
-
-  document.addEventListener('selectionchange', handleSelectionChange)
-  // 保存引用以便清理
-  ;(pdfPageListRef.value as any).__selectionHandler = handleSelectionChange
-  ;(pdfPageListRef.value as any).__selectionTimer = timerRef
+function onPdfError(msg: string) {
+  MessagePlugin.error(t('reader.loadEpubError', { msg }))
 }
 
 // ============== EPUB 阅读器 ==============
@@ -1797,11 +1481,8 @@ function goToChapter(index: number, href: string) {
   if (book.value?.fileType === 'pdf') {
     const pageNum = parseInt(href, 10)
     if (!isNaN(pageNum) && pageNum > 0) {
-      const el = document.getElementById('pdf-page-container-' + pageNum)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        currentChapter.value = index
-      }
+      pdfReaderRef.value?.goToPage(pageNum)
+      currentChapter.value = index
     }
     return
   }
@@ -2526,91 +2207,7 @@ async function copyText(text: string) {
   position: relative;
 }
 
-/* PDF 阅读器 */
-.pdf-viewer {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: #525659;
-}
-
-.pdf-zoom-bar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: rgba(0, 0, 0, 0.7);
-  border-radius: 0 0 8px 8px;
-  margin-bottom: 12px;
-}
-
-.pdf-zoom-value {
-  color: #fff;
-  font-size: 13px;
-  min-width: 48px;
-  text-align: center;
-}
-
-.pdf-zoom-bar :deep(.t-button) {
-  color: #ccc;
-}
-.pdf-zoom-bar :deep(.t-button:hover) {
-  color: #fff;
-}
-
-.pdf-page-count {
-  color: #aaa;
-  font-size: 12px;
-  margin-left: 12px;
-}
-
-.pdf-page-list {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 24px;
-}
-
-.pdf-canvas {
-  display: block;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.pdf-page-container {
-  position: relative;
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.pdf-text-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow: hidden;
-  opacity: 0.2;
-  line-height: 1;
-  pointer-events: auto;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.pdf-text-layer :deep(span) {
-  color: transparent;
-  position: absolute;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0 0;
-}
+/* PDF 样式已移至 PdfReader.vue */
 
 .reader-loading {
   position: absolute;
