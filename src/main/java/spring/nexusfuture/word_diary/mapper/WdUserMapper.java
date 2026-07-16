@@ -17,6 +17,9 @@ public interface WdUserMapper {
     @Select("SELECT * FROM wd_user WHERE phone = #{phone} AND is_deleted = 0 LIMIT 1")
     WdUser selectByPhone(String phone);
 
+    @Select("SELECT * FROM wd_user WHERE email = #{email} AND is_deleted = 0 LIMIT 1")
+    WdUser selectByEmail(String email);
+
     @Select("SELECT * FROM wd_user WHERE id = #{id} AND is_deleted = 0")
     WdUser selectById(Long id);
 

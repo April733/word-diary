@@ -147,7 +147,7 @@
         <!-- 选中文字后的内容区 -->
         <template v-else>
           <!-- 选中文本展示（可折叠） -->
-          <div v-if="selectedContext" class="ai-context" :class="{ 'ai-context--collapsed': contextCollapsed }">
+          <div v-if="selectedContext" class="ai-context" :class="{ 'ai-context--collapsed': contextCollapsed }" style="width:100%;box-sizing:border-box;">
             <div class="ai-context-label">
               <t-icon name="quote" size="14px" />
               <span>{{ $t('reader.selectedText') }}</span>
@@ -166,8 +166,8 @@
                 </t-button>
               </div>
             </div>
-            <div class="ai-context-text" v-if="!contextCollapsed">{{ selectedContext }}</div>
-            <div class="ai-context-text ai-context-preview" v-else>
+            <div class="ai-context-text" v-if="!contextCollapsed" style="width:100%;box-sizing:border-box;white-space:normal;word-break:break-word;">{{ selectedContext }}</div>
+            <div class="ai-context-text ai-context-preview" v-else style="width:100%;box-sizing:border-box;white-space:normal;word-break:break-word;">
               {{ selectedContext.substring(0, 80) }}...
             </div>
           </div>
@@ -196,18 +196,6 @@
                 :class="{ 'ai-feature-tag--active': selectedFeatureKeysForQuery.includes(feature.featureKey) }"
                 @click="toggleFeatureKeyForQuery(feature.featureKey)"
               >
-                <t-icon
-                  v-if="selectedFeatureKeysForQuery.includes(feature.featureKey)"
-                  name="check-circle-filled"
-                  size="14px"
-                  class="ai-feature-tag-icon"
-                />
-                <t-icon
-                  v-else
-                  name="circle"
-                  size="14px"
-                  class="ai-feature-tag-icon"
-                />
                 {{ $t('reader.aiFeature_' + feature.featureKey) }}
               </span>
             </div>
@@ -1424,7 +1412,8 @@ function setupPdfSelection() {
       }
     }
     if (!insidePdf) return
-    const text = sel.toString().trim()
+    // 规范化文本：去除首尾空白，合并内部换行/多余空白为单个空格
+    const text = sel.toString().replace(/\s+/g, ' ').trim()
     if (!text) {
       selectedText = ''
       selectedContext.value = ''
@@ -1699,7 +1688,8 @@ function mountRendition(initialCfi?: string) {
       selectedContext.value = ''
       return
     }
-    const text = selection.toString().trim()
+    // 规范化文本：去除首尾空白，合并内部换行/多余空白为单个空格
+    const text = selection.toString().replace(/\s+/g, ' ').trim()
     if (!text) {
       selectedText = ''
       selectedContext.value = ''
@@ -2729,9 +2719,9 @@ async function copyText(text: string) {
 }
 
 .ai-msg {
-  padding: 10px 12px;
+  padding: 6px 10px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.7;
   position: relative;
 }
@@ -2825,7 +2815,11 @@ async function copyText(text: string) {
 
 /* AI 提示词上下文 */
 .ai-context {
-  padding: 10px 12px;
+  display: block;
+  width: 100%;
+  align-self: stretch;
+  box-sizing: border-box;
+  padding: 6px 8px 6px 6px;
   background: #fffbeb;
   border-bottom: 1px solid #fde68a;
   flex-shrink: 0;
@@ -2859,9 +2853,11 @@ async function copyText(text: string) {
   line-height: 1.7;
   max-height: 120px;
   overflow-y: auto;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
-  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 8px 8px 8px;
   background: #fffbeb;
   border-left: 3px solid #fcd34d;
   border-radius: 0 6px 6px 0;
@@ -2875,7 +2871,7 @@ async function copyText(text: string) {
 
 /* AI 功能多选框区域 */
 .ai-feature-panel {
-  padding: 10px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid #eee;
   flex-shrink: 0;
 }
@@ -2884,11 +2880,11 @@ async function copyText(text: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .ai-feature-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #4b5563;
 }
@@ -2902,17 +2898,17 @@ async function copyText(text: string) {
 .ai-feature-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 .ai-feature-tag {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
-  border-radius: 16px;
-  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 14px;
+  font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   user-select: none;
@@ -2948,7 +2944,7 @@ async function copyText(text: string) {
 .ai-feature-send {
   margin-top: 2px;
   width: 100%;
-  font-size: 13px;
+  font-size: 12px;
   border-color: #5e57b5 !important;
   color: #fff !important;
   background: #5e57b5 !important;
@@ -3057,7 +3053,7 @@ async function copyText(text: string) {
 }
 
 .ai-input {
-  padding: 12px;
+  padding: 6px 10px 8px;
   border-top: 1px solid #eee;
   display: flex;
   gap: 8px;

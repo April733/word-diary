@@ -22,6 +22,7 @@ import spring.nexusfuture.word_diary.service.ReaderSettingsService;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.service.AiFeatureService;
 import spring.nexusfuture.word_diary.service.CosService;
+import spring.nexusfuture.word_diary.service.FeedbackService;
 import spring.nexusfuture.word_diary.service.MailService;
 import spring.nexusfuture.word_diary.dto.AiFeaturePreferenceVO;
 
@@ -45,6 +46,7 @@ public class BookController {
     private final CosService cosService;
     private final AiPromptBuilder promptBuilder;
     private final MailService mailService;
+    private final FeedbackService feedbackService;
 
     /** 上传书籍 */
     @PostMapping("/upload")
@@ -400,15 +402,16 @@ public class BookController {
         return R.ok();
     }
 
-    /** 用户提交问题报告 */
+    /** 用户提交问题反馈 */
     @PostMapping("/report-issue")
     public R<?> reportIssue(@RequestAttribute Long userId,
                             @RequestBody Map<String, String> body) {
+        String username = body.getOrDefault("username", "用户" + userId);
+        String reporterEmail = body.getOrDefault("reporterEmail", "");
+        String subject = body.getOrDefault("subject", "");
         String description = body.getOrDefault("description", "");
         String errorDetail = body.getOrDefault("errorDetail", "");
-        // 获取用户名
-        String username = body.getOrDefault("username", "用户" + userId);
-        mailService.sendBugReport(username, description, errorDetail);
+        feedbackService.saveFeedback(userId, username, reporterEmail, subject, description, errorDetail);
         return R.ok();
     }
 }

@@ -33,10 +33,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         String path = request.getRequestURI();
 
         // Skip auth for login/register and public user APIs
+        // Include email-related public endpoints so frontend can call them
+        // without being blocked by auth interceptor.
         if (path.contains("/api/user/login") || path.contains("/api/user/register")
-                || path.contains("/api/user/check-phone") || path.contains("/api/user/check-invite-code")
-                || path.contains("/api/user/send-sms") || path.contains("/api/user/send-reset-sms")
-                || path.contains("/api/user/reset-password")) {
+                || path.contains("/api/user/check-phone") || path.contains("/api/user/check-email")
+                || path.contains("/api/user/check-invite-code")
+                || path.contains("/api/user/send-sms") || path.contains("/api/user/send-mail-code")
+                || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/reset-password")
+                || path.contains("/api/user/report-issue-public")) {
             return true;
         }
 

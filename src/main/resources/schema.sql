@@ -388,3 +388,24 @@ CREATE TABLE IF NOT EXISTS `wd_ai_message` (
   KEY `idx_parent_id` (`parent_id`),
   KEY `idx_create_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI对话消息表';
+
+-- =============================================
+-- 用户反馈表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_feedback` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint DEFAULT NULL COMMENT '用户ID，NULL表示匿名用户',
+  `username` varchar(128) NOT NULL COMMENT '用户名（匿名用户填写的昵称或邮箱）',
+  `reporter_email` varchar(128) DEFAULT '' COMMENT '反馈者邮箱',
+  `subject` varchar(256) DEFAULT '' COMMENT '反馈标题',
+  `description` text NOT NULL COMMENT '反馈内容',
+  `error_detail` text COMMENT '错误详情',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '处理状态：0待处理 1已处理',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈表';

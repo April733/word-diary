@@ -30,8 +30,10 @@ export const register = (data: any) => api.post('/user/register', data)
 export const login = (data: any) => api.post('/user/login', data)
 export const updateUserLocale = (locale: string) => api.put('/user/locale', { locale })
 export const checkPhone = (phone: string) => api.get('/user/check-phone', { params: { phone } })
+export const checkEmail = (email: string) => api.get('/user/check-email', { params: { email } })
 export const checkInviteCode = (code: string) => api.get('/user/check-invite-code', { params: { code } })
 export const sendSms = (phone: string) => api.post('/user/send-sms', { phone })
+export const sendMailCode = (email: string) => api.post('/user/send-mail-code', { email })
 export const sendResetSms = (phone: string) => api.post('/user/send-reset-sms', { phone })
 export const resetPassword = (data: { phone: string; smsCode: string; newPassword: string }) =>
   api.post('/user/reset-password', data)
@@ -124,3 +126,9 @@ export const getAiMessages = (sessionId: number) => api.get(`/books/ai-sessions/
 export const getAiMessagesPaged = (sessionId: number, offset: number, limit: number) =>
   api.get(`/books/ai-sessions/${sessionId}/messages/paged`, { params: { offset, limit } })
 export const deleteAiSession = (sessionId: number) => api.delete(`/books/ai-sessions/${sessionId}`)
+
+// Admin contact & issue reporting
+export const reportIssue = (data: { username?: string; description: string; errorDetail?: string; subject?: string }) =>
+  api.post('/books/report-issue', data)
+export const reportIssuePublic = (data: { username: string; description: string; errorDetail?: string; subject?: string }) =>
+  api.post('/user/report-issue-public', data)

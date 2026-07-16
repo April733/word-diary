@@ -47,10 +47,26 @@ public class UserServiceImpl implements UserService {
         if (exist != null) {
             throw new BizException("用户名已存在");
         }
-        WdUser phoneExist = userMapper.selectByPhone(req.getPhone());
-        if (phoneExist != null) {
-            throw new BizException("手机号已被注册");
+
+        // 手机号/邮箱二选一校验
+        if ("phone".equals(req.getRegisterType())) {
+            if (req.getPhone() == null || req.getPhone().isBlank()) {
+                throw new BizException("手机号不能为空");
+            }
+            if (userMapper.selectByPhone(req.getPhone()) != null) {
+                throw new BizException("手机号已被注册");
+            }
+        } else if ("email".equals(req.getRegisterType())) {
+            if (req.getEmail() == null || req.getEmail().isBlank()) {
+                throw new BizException("邮箱不能为空");
+            }
+            if (userMapper.selectByEmail(req.getEmail()) != null) {
+                throw new BizException("邮箱已被注册");
+            }
+        } else {
+            throw new BizException("注册方式不正确");
         }
+
         // 校验邀请码
         WdInviteCode inviteCode = inviteCodeMapper.selectByCode(req.getInviteCode());
         if (inviteCode == null) {
@@ -68,7 +84,8 @@ public class UserServiceImpl implements UserService {
                 .username(req.getUsername())
                 .password(passwordEncoder.encode(req.getPassword()))
                 .nickname(req.getUsername())
-                .phone(req.getPhone())
+                .phone("phone".equals(req.getRegisterType()) ? req.getPhone() : null)
+                .email("email".equals(req.getRegisterType()) ? req.getEmail() : null)
                 .isMember(0)
                 .memberTier(tier)
                 .build();
@@ -124,6 +141,11 @@ public class UserServiceImpl implements UserService {
     @Override
     public boolean isPhoneExists(String phone) {
         return userMapper.selectByPhone(phone) != null;
+    }
+
+    @Override
+    public boolean isEmailExists(String email) {
+        return userMapper.selectByEmail(email) != null;
     }
 
     @Override

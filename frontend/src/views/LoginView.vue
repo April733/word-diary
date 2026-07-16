@@ -24,6 +24,7 @@
 
         <t-tab-panel value="register" :label="$t('login.registerBtn')">
           <t-form
+            ref="registerFormRef"
             :data="registerForm"
             :rules="registerRules"
             @submit="handleRegister"
@@ -45,28 +46,45 @@
                 :placeholder="$t('login.confirmPasswordPlaceholder')"
               />
             </t-form-item>
-            <t-form-item :label="$t('login.phone')" name="phone" required-mark>
+
+            <!-- 注册方式切换：手机号 / 邮箱 -->
+            <t-form-item :label="$t('login.registerType')" required-mark>
+              <t-radio-group v-model="registerType" variant="default-filled" @change="onRegisterTypeChange">
+                <t-radio-button value="phone">{{ $t('login.phone') }}</t-radio-button>
+                <t-radio-button value="email">{{ $t('login.email') }}</t-radio-button>
+              </t-radio-group>
+            </t-form-item>
+
+            <!-- 手机号输入 -->
+            <t-form-item v-if="registerType === 'phone'" :label="$t('login.phone')" name="phone" required-mark>
               <t-input v-model="registerForm.phone" :placeholder="$t('login.phonePlaceholder')" />
             </t-form-item>
-            <t-form-item :label="$t('login.smsCode')" name="smsCode" required-mark>
+            <!-- 邮箱输入 -->
+            <t-form-item v-if="registerType === 'email'" :label="$t('login.email')" name="email" required-mark>
+              <t-input v-model="registerForm.email" :placeholder="$t('login.emailPlaceholder')" />
+            </t-form-item>
+
+            <!-- 验证码 -->
+            <t-form-item :label="$t('login.verifyCode')" name="code" required-mark>
               <div class="sms-row">
-                <t-input v-model="registerForm.smsCode" :placeholder="$t('login.smsCodePlaceholder')" class="sms-input" maxlength="6" />
+                <t-input v-model="registerForm.code" :placeholder="$t('login.verifyCodePlaceholder')" class="sms-input" maxlength="6" />
                 <t-button
                   variant="outline"
                   class="sms-btn"
-                  :disabled="smsCooldown > 0 || !phonePattern.test(registerForm.phone)"
-                  :loading="smsSending"
-                  @click="handleSendSms"
+                  :disabled="codeCooldown > 0 || !canSendCode"
+                  :loading="codeSending"
+                  @click="handleSendCode"
                 >
-                  {{ smsCooldown > 0 ? $t('login.sendSmsRetry', { seconds: smsCooldown }) : $t('login.sendSms') }}
+                  {{ codeCooldown > 0 ? $t('login.sendSmsRetry', { seconds: codeCooldown }) : $t('login.sendCode') }}
                 </t-button>
               </div>
             </t-form-item>
+
             <t-form-item :label="$t('login.inviteCode')" name="inviteCode" required-mark :help="$t('login.inviteCodeHint')">
               <t-input v-model="registerForm.inviteCode" :placeholder="$t('login.inviteCodePlaceholder')" />
             </t-form-item>
             <t-form-item class="submit-item">
-              <t-button theme="primary" type="submit" block :loading="loading">{{ $t('login.registerBtn') }}</t-button>
+              <t-button theme="primary" block :loading="loading" @click="handleRegisterClick">{{ $t('login.registerBtn') }}</t-button>
             </t-form-item>
           </t-form>
         </t-tab-panel>
@@ -100,39 +118,67 @@
           </t-form>
         </t-tab-panel>
       </t-tabs>
+      <!-- 报错时让用户可以直接联系管理员 -->
+      <t-dialog v-model:visible="showReportDialog" header="问题反馈" width="520px" :confirm-btn="{ content: '提交反馈', disabled: !reportForm.description }" @confirm="submitReport">
+        <div class="feedback-form">
+          <t-form :data="reportForm" label-width="120px">
+            <t-form-item label="联系邮箱">
+              <t-input v-model="reportForm.reporterEmail" placeholder="填写邮箱方便管理员回复（选填）" />
+            </t-form-item>
+            <t-form-item label="反馈标题">
+              <t-input v-model="reportForm.subject" placeholder="请简要描述问题" />
+            </t-form-item>
+            <t-form-item label="详细描述">
+              <t-textarea v-model="reportForm.description" rows="6" placeholder="请详细描述您遇到的问题，便于我们快速定位和修复..." />
+            </t-form-item>
+          </t-form>
+        </div>
+      </t-dialog>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onBeforeUnmount } from 'vue'
+import type { FormInstanceFunctions } from 'tdesign-vue-next'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { reportIssue, reportIssuePublic } from '../api'
 import { useUserStore } from '../stores/user'
-import { checkPhone, checkInviteCode, sendSms, sendResetSms, resetPassword } from '../api'
+import { checkPhone, checkEmail, checkInviteCode, sendSms, sendMailCode, sendResetSms, resetPassword } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const { t } = useI18n()
+const registerFormRef = ref<FormInstanceFunctions>()
 const tab = ref('login')
 const loading = ref(false)
-const smsSending = ref(false)
-const smsCooldown = ref(0)
+const codeSending = ref(false)
+const codeCooldown = ref(0)
 const forgotSmsSending = ref(false)
 const forgotCooldown = ref(0)
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let forgotCooldownTimer: ReturnType<typeof setInterval> | null = null
 
 const loginForm = reactive({ username: '', password: '' })
+const registerType = ref('phone') // 'phone' | 'email'
 const registerForm = reactive({
   username: '',
   password: '',
   confirmPassword: '',
   phone: '',
-  smsCode: '',
+  email: '',
+  code: '',
   inviteCode: ''
+})
+// report dialog state
+const showReportDialog = ref(false)
+const reportForm = reactive({
+  reporterEmail: '',
+  subject: '',
+  description: ''
 })
 const forgotForm = reactive({
   phone: '',
@@ -144,26 +190,65 @@ const forgotForm = reactive({
 const usernamePattern = /^[a-zA-Z][a-zA-Z0-9_]{3,31}$/
 // 密码：6-20位，必须包含大小写字母、数字和符号
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{6,20}$/
-// 简单的手机号格式校验（不发验证码）
+// 简单的手机号格式校验
 const phonePattern = /^\+?\d{6,20}$/
+// 邮箱格式校验
+const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 
-/** 手机号失焦时异步校验是否已注册 */
+// 是否可以发送验证码
+const canSendCode = computed(() => {
+  if (registerType.value === 'phone') {
+    return phonePattern.test(registerForm.phone)
+  }
+  return emailPattern.test(registerForm.email)
+})
+
+/** 切换注册方式时清空对应字段 */
+function onRegisterTypeChange() {
+  registerForm.phone = ''
+  registerForm.email = ''
+  registerForm.code = ''
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer)
+    cooldownTimer = null
+  }
+  codeCooldown.value = 0
+}
+
+/** 手机号异步校验是否已注册 */
 async function phoneExistsValidator(val: string) {
-  if (!val || !phonePattern.test(val)) return { result: true }
+  if (!val || !phonePattern.test(val)) return { result: true as const }
   try {
     const res = await checkPhone(val)
     if (res.data?.data === true) {
-      return { result: false, message: t('login.errorPhoneExists') }
+      return { result: false as const, message: t('login.errorPhoneExists') }
     }
-    return { result: true }
+    return { result: true as const }
   } catch (e) {
-    // 401 时 axios 拦截器已跳转 /login，这里返回 false 阻断提交
     const status = (e as any)?.response?.status
     if (status === 401) {
-      return { result: false, message: t('login.errorPhoneExists') }
+      return { result: false as const, message: t('login.errorPhoneExists') }
     }
-    // 其它网络异常：抛出错误让 t-form 显示并阻断提交
-    throw e
+    // 网络异常时不阻断提交，由后端兜底
+    return { result: true as const }
+  }
+}
+
+/** 邮箱异步校验是否已注册 */
+async function emailExistsValidator(val: string) {
+  if (!val || !emailPattern.test(val)) return { result: true as const }
+  try {
+    const res = await checkEmail(val)
+    if (res.data?.data === true) {
+      return { result: false as const, message: t('login.errorEmailExists') }
+    }
+    return { result: true as const }
+  } catch (e) {
+    const status = (e as any)?.response?.status
+    if (status === 401) {
+      return { result: false as const, message: t('login.errorEmailExists') }
+    }
+    return { result: true as const }
   }
 }
 
@@ -184,101 +269,82 @@ async function inviteCodeValidator(val: string) {
     if (status === 401) {
       return { result: false, message: t('login.errorInviteCodeInvalid') }
     }
-    throw e
+    // Network error → don't block registration, let backend handle it
+    return { result: true }
   }
 }
 
-const registerRules = {
-  username: [
-    { required: true, message: t('login.errorUsernameRequired'), trigger: 'blur' },
-    {
-      pattern: usernamePattern,
-      message: t('login.errorUsernameFormat'),
-      trigger: 'blur'
-    }
-  ],
-  password: [
-    { required: true, message: t('login.errorPasswordRequired'), trigger: 'blur' },
-    {
-      pattern: passwordPattern,
-      message: t('login.errorPasswordFormat'),
-      trigger: 'blur'
-    }
-  ],
-  confirmPassword: [
-    { required: true, message: t('login.errorConfirmPasswordRequired'), trigger: 'blur' },
-    {
-      validator: (val: string) => val === registerForm.password,
-      message: t('login.errorPasswordMismatch'),
-      trigger: 'blur'
-    }
-  ],
-  phone: [
-    { required: true, message: t('login.errorPhoneRequired'), trigger: 'blur' },
-    {
-      pattern: phonePattern,
-      message: t('login.errorPhoneFormat'),
-      trigger: 'blur'
-    },
-    {
-      validator: phoneExistsValidator,
-      message: t('login.errorPhoneExists'),
-      trigger: 'blur'
-    },
-    {
-      validator: phoneExistsValidator,
-      message: t('login.errorPhoneExists'),
-      trigger: 'change'
-    },
-    {
-      validator: phoneExistsValidator,
-      message: t('login.errorPhoneExists'),
-      trigger: 'submit'
-    }
-  ],
-  smsCode: [
-    { required: true, message: t('login.errorSmsCodeRequired'), trigger: 'blur' },
-    {
-      pattern: /^\d{6}$/,
-      message: t('login.errorSmsCodeFormat'),
-      trigger: 'blur'
-    }
-  ],
-  inviteCode: [
-    { required: true, message: t('login.errorInviteCodeRequired'), trigger: 'blur' },
-    {
-      validator: inviteCodeValidator,
-      message: t('login.errorInviteCodeFormat'),
-      trigger: 'blur'
-    },
-    {
-      validator: inviteCodeValidator,
-      message: t('login.errorInviteCodeFormat'),
-      trigger: 'change'
-    },
-    {
-      validator: inviteCodeValidator,
-      message: t('login.errorInviteCodeFormat'),
-      trigger: 'submit'
-    }
-  ]
-}
-
-/** 发送短信验证码 */
-async function handleSendSms() {
-  if (!phonePattern.test(registerForm.phone)) {
-    MessagePlugin.warning(t('login.errorPhoneFormat'))
-    return
+const registerRules = computed(() => {
+  const submitTriggers = ['blur', 'submit'] as const
+  const rules: any = {
+    username: [
+      { required: true, message: t('login.errorUsernameRequired'), trigger: submitTriggers },
+      { pattern: usernamePattern, message: t('login.errorUsernameFormat'), trigger: submitTriggers }
+    ],
+    password: [
+      { required: true, message: t('login.errorPasswordRequired'), trigger: submitTriggers },
+      { pattern: passwordPattern, message: t('login.errorPasswordFormat'), trigger: submitTriggers }
+    ],
+    confirmPassword: [
+      { required: true, message: t('login.errorConfirmPasswordRequired'), trigger: submitTriggers },
+      { validator: (val: string) => val === registerForm.password, message: t('login.errorPasswordMismatch'), trigger: submitTriggers }
+    ],
+    code: [
+      { required: true, message: t('login.errorVerifyCodeRequired'), trigger: submitTriggers },
+      { pattern: /^\d{6}$/, message: t('login.errorVerifyCodeFormat'), trigger: submitTriggers }
+    ],
+    inviteCode: [
+      { required: true, message: t('login.errorInviteCodeRequired'), trigger: 'blur' },
+      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'blur' },
+      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'change' },
+      { validator: inviteCodeValidator, message: t('login.errorInviteCodeFormat'), trigger: 'submit' }
+    ]
   }
-  smsSending.value = true
+  if (registerType.value === 'phone') {
+    rules.phone = [
+      { required: true, message: t('login.errorPhoneRequired'), trigger: 'blur' },
+      { pattern: phonePattern, message: t('login.errorPhoneFormat'), trigger: 'blur' },
+      { validator: phoneExistsValidator, message: t('login.errorPhoneExists'), trigger: 'blur' },
+      { validator: phoneExistsValidator, message: t('login.errorPhoneExists'), trigger: 'change' },
+      { validator: phoneExistsValidator, message: t('login.errorPhoneExists'), trigger: 'submit' }
+    ]
+  } else {
+    rules.email = [
+      { required: true, message: t('login.errorEmailRequired'), trigger: 'blur' },
+      { pattern: emailPattern, message: t('login.errorEmailFormat'), trigger: 'blur' },
+      { validator: emailExistsValidator, message: t('login.errorEmailExists'), trigger: 'blur' },
+      { validator: emailExistsValidator, message: t('login.errorEmailExists'), trigger: 'change' },
+      { validator: emailExistsValidator, message: t('login.errorEmailExists'), trigger: 'submit' }
+    ]
+  }
+  return rules
+})
+
+/** 发送验证码（短信或邮箱） */
+async function handleSendCode() {
+  if (registerType.value === 'phone') {
+    if (!phonePattern.test(registerForm.phone)) {
+      MessagePlugin.warning(t('login.errorPhoneFormat'))
+      return
+    }
+  } else {
+    if (!emailPattern.test(registerForm.email)) {
+      MessagePlugin.warning(t('login.errorEmailFormat'))
+      return
+    }
+  }
+  codeSending.value = true
   try {
-    const res = await sendSms(registerForm.phone)
-    console.log('sendSms 完整响应:', JSON.stringify(res.data, null, 2))
-    MessagePlugin.success(t('login.sendSmsSuccess'))
-    smsCooldown.value = 60
+    if (registerType.value === 'phone') {
+      await sendSms(registerForm.phone)
+    } else {
+      await sendMailCode(registerForm.email)
+    }
+    MessagePlugin.success(t('login.sendCodeSuccess'))
+    codeCooldown.value = 60
     cooldownTimer = setInterval(() => {
-      smsCooldown.value--
-      if (smsCooldown.value <= 0) {
+      codeCooldown.value--
+      if (codeCooldown.value <= 0) {
         if (cooldownTimer) {
           clearInterval(cooldownTimer)
           cooldownTimer = null
@@ -286,9 +352,42 @@ async function handleSendSms() {
       }
     }, 1000)
   } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.message || t('login.sendSmsFailed'))
+    const status = e?.response?.status
+    const msg = e?.response?.data?.message || e.message || t('login.sendCodeFailed')
+    if (status === 503) {
+      reportForm.subject = '邮件服务未配置 - 无法发送验证码'
+      reportForm.description = `我在注册页面尝试给邮箱 ${registerForm.email} 发送验证码时遇到错误：\n\n${msg}\n\n请管理员检查邮件服务配置。`
+      reportForm.reporterEmail = registerForm.email || ''
+      showReportDialog.value = true
+    } else {
+      MessagePlugin.error(msg)
+    }
   } finally {
-    smsSending.value = false
+    codeSending.value = false
+  }
+}
+
+/** 提交反馈到后台 */
+async function submitReport() {
+  try {
+    const payload = {
+      username: userStore.user?.username || (reportForm.reporterEmail || '匿名用户'),
+      description: reportForm.description,
+      errorDetail: `用户邮箱: ${reportForm.reporterEmail || ''}`,
+      subject: reportForm.subject
+    }
+    if (userStore.user && userStore.user.username) {
+      await reportIssue(payload)
+    } else {
+      await reportIssuePublic(payload)
+    }
+    MessagePlugin.success('反馈已提交，感谢您的建议')
+    showReportDialog.value = false
+    reportForm.subject = ''
+    reportForm.description = ''
+    reportForm.reporterEmail = ''
+  } catch (err: any) {
+    MessagePlugin.error(err.response?.data?.message || '提交失败')
   }
 }
 
@@ -302,6 +401,21 @@ onBeforeUnmount(() => {
     forgotCooldownTimer = null
   }
 })
+
+/** 点击注册：先校验表单，通过后再提交 */
+async function handleRegisterClick() {
+  const form = registerFormRef.value
+  if (!form) {
+    await handleRegister()
+    return
+  }
+  const result = await form.validate()
+  if (result !== true) {
+    MessagePlugin.warning(t('login.errorFormInvalid'))
+    return
+  }
+  await handleRegister()
+}
 
 async function handleLogin() {
   if (!loginForm.username || !loginForm.password) {
@@ -323,7 +437,16 @@ async function handleLogin() {
 
 async function handleRegister() {
   // 二次前端兜底校验
-  if (!registerForm.username || !registerForm.password || !registerForm.confirmPassword || !registerForm.phone || !registerForm.smsCode || !registerForm.inviteCode) {
+  const missingFields = []
+  if (!registerForm.username) missingFields.push(t('login.username'))
+  if (!registerForm.password) missingFields.push(t('login.password'))
+  if (!registerForm.confirmPassword) missingFields.push(t('login.confirmPassword'))
+  if (registerType.value === 'phone' && !registerForm.phone) missingFields.push(t('login.phone'))
+  if (registerType.value === 'email' && !registerForm.email) missingFields.push(t('login.email'))
+  if (!registerForm.code) missingFields.push(t('login.verifyCode'))
+  if (!registerForm.inviteCode) missingFields.push(t('login.inviteCode'))
+
+  if (missingFields.length > 0) {
     MessagePlugin.warning(t('login.errorAllRequired'))
     return
   }
@@ -339,39 +462,32 @@ async function handleRegister() {
     MessagePlugin.warning(t('login.errorPasswordMismatch'))
     return
   }
-  if (!phonePattern.test(registerForm.phone)) {
+  if (registerType.value === 'phone' && !phonePattern.test(registerForm.phone)) {
     MessagePlugin.warning(t('login.errorPhoneFormat'))
     return
   }
-  if (!/^\d{6}$/.test(registerForm.smsCode)) {
-    MessagePlugin.warning(t('login.errorSmsCodeFormat'))
+  if (registerType.value === 'email' && !emailPattern.test(registerForm.email)) {
+    MessagePlugin.warning(t('login.errorEmailFormat'))
+    return
+  }
+  if (!/^\d{6}$/.test(registerForm.code)) {
+    MessagePlugin.warning(t('login.errorVerifyCodeFormat'))
     return
   }
 
   loading.value = true
   try {
-    // 1. 手机号查重
-    const phoneCheck = await checkPhone(registerForm.phone)
-    if (phoneCheck.data?.data === true) {
-      MessagePlugin.error(t('login.errorPhoneExists'))
-      return
-    }
-
-    // 2. 邀请码有效性
-    const inviteCheck = await checkInviteCode(registerForm.inviteCode)
-    if (inviteCheck.data?.data !== true) {
-      MessagePlugin.error(t('login.errorInviteCodeInvalid'))
-      return
-    }
-
     await userStore.registerAction({
       username: registerForm.username,
       password: registerForm.password,
-      phone: registerForm.phone,
-      smsCode: registerForm.smsCode,
-      inviteCode: registerForm.inviteCode
+      phone: registerType.value === 'phone' ? registerForm.phone : null,
+      email: registerType.value === 'email' ? registerForm.email : null,
+      code: registerForm.code,
+      inviteCode: registerForm.inviteCode,
+      registerType: registerType.value
     })
     MessagePlugin.success(t('login.registerSuccess'))
+    // 注册成功后自动切到登录 tab，并预填用户名方便用户登录
     tab.value = 'login'
     loginForm.username = registerForm.username
   } catch (e: any) {
@@ -529,6 +645,7 @@ async function handleForgotPassword() {
   margin-bottom: 6px;
   font-weight: 500;
   color: #374151;
+  min-width: 96px;
 }
 
 .login-tabs :deep(.t-form__help) {
@@ -550,5 +667,18 @@ async function handleForgotPassword() {
 .login-tabs :deep(.t-button--theme-primary) {
   border-radius: 8px;
   font-weight: 500;
+}
+
+.feedback-form {
+  padding: 8px 4px 0 4px;
+}
+
+.feedback-form :deep(.t-form__item) {
+  margin-bottom: 20px;
+}
+
+.feedback-form :deep(.t-form__label) {
+  font-weight: 500;
+  color: #374151;
 }
 </style>
