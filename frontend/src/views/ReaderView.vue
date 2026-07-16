@@ -445,7 +445,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import ePub from 'epubjs'
-import type { Book, Rendition, Location, NavItem } from 'epubjs'
+import type { Book, Rendition, Location } from 'epubjs'
 import axios from 'axios'
 import {
   getBookDetail, getBookFileUrl, updateProgress,
@@ -476,7 +476,7 @@ const { t, locale } = useI18n()
 const bookId = Number(route.params.id)
 
 const book = ref<any>(null)
-const toc = ref<NavItem[]>([])
+const toc = ref<any[]>([])
 const currentChapter = ref(0)
 const showToc = ref(true)
 
@@ -1146,7 +1146,7 @@ async function renderAllHighlights() {
     notes.forEach((note: any) => {
       if (note.cfiStart && note.cfiEnd) {
         try {
-          const hl = rendition!.annotations.highlight(
+          const hl = (rendition as any).annotations.highlight(
             note.cfiStart,
             note.cfiEnd,
             {},
@@ -1170,7 +1170,7 @@ async function renderAllHighlights() {
 function clearAllHighlights() {
   if (!rendition) return
   try {
-    rendition.annotations.remove('highlight')
+    ;(rendition as any).annotations.remove('highlight')
     renderedHighlights.value = []
     console.log('[Reader] 纯净阅读: 已清除所有划线')
   } catch (e) {
