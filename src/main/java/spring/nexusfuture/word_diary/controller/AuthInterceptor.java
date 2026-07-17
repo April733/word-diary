@@ -39,7 +39,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.contains("/api/user/check-phone") || path.contains("/api/user/check-email")
                 || path.contains("/api/user/check-invite-code")
                 || path.contains("/api/user/send-sms") || path.contains("/api/user/send-mail-code")
-                || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/reset-password")
+                || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/send-reset-mail")
+                || path.contains("/api/user/reset-password")
                 || path.contains("/api/user/report-issue-public")) {
             return true;
         }

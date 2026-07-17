@@ -10,5 +10,7 @@ public interface UserService {
     void updateLocale(Long userId, String locale);
     boolean isPhoneExists(String phone);
     boolean isEmailExists(String email);
-    void resetPassword(String phone, String newPassword);
+    void resetPasswordByPhone(String phone, String newPassword);
+
+    void resetPasswordByEmail(String email, String newPassword);
 }

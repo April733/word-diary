@@ -258,28 +258,101 @@ public class UserController {
     }
 
     /**
-     * 通过手机号+验证码重置密码
+     * 发送密码找回邮箱验证码（要求邮箱已注册）
+     */
+    @PostMapping("/send-reset-mail")
+    public org.springframework.http.ResponseEntity<R<Void>> sendResetMail(@RequestBody Map<String, String> body) {
+        String email = body.get("email");
+        if (email == null || email.isBlank()) {
+            return org.springframework.http.ResponseEntity.badRequest().body(R.fail("邮箱不能为空"));
+        }
+        if (!email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$")) {
+            return org.springframework.http.ResponseEntity.badRequest().body(R.fail("邮箱格式不正确"));
+        }
+        if (!userService.isEmailExists(email)) {
+            return org.springframework.http.ResponseEntity.badRequest().body(R.fail("该邮箱未注册"));
+        }
+        if (!mailService.isMailEnabled()) {
+            return org.springframework.http.ResponseEntity.status(503).body(R.fail("邮件服务未配置，请联系管理员"));
+        }
+        if (redisTemplate != null) {
+            String rateMinuteKey = "ratelimit:email_reset:minute:" + email;
+            String rateHourKey = "ratelimit:email_reset:hour:" + email;
+            Long minuteCount = redisTemplate.opsForValue().increment(rateMinuteKey);
+            if (minuteCount != null && minuteCount == 1) {
+                redisTemplate.expire(rateMinuteKey, 60, TimeUnit.SECONDS);
+            }
+            if (minuteCount != null && minuteCount > 1) {
+                return org.springframework.http.ResponseEntity.status(429).body(R.fail("发送过于频繁，请稍后再试"));
+            }
+            Long hourCount = redisTemplate.opsForValue().increment(rateHourKey);
+            if (hourCount != null && hourCount == 1) {
+                redisTemplate.expire(rateHourKey, 1, TimeUnit.HOURS);
+            }
+            if (hourCount != null && hourCount > 10) {
+                return org.springframework.http.ResponseEntity.status(429).body(R.fail("发送次数超出限制，请稍后再试"));
+            }
+        }
+
+        String code = String.format("%06d", (int) (Math.random() * 1000000));
+        mailService.sendVerifyCode(email, code);
+        if (redisTemplate != null) {
+            redisTemplate.opsForValue().set("email_reset_" + email, code, Duration.ofMinutes(10));
+        } else {
+            codeStore.put("email_reset_" + email, code);
+        }
+        return org.springframework.http.ResponseEntity.ok(R.ok());
+    }
+
+    /**
+     * 通过手机号或邮箱 + 验证码重置密码（与注册方式对应）
      */
     @PostMapping("/reset-password")
     public R<Void> resetPassword(@Valid @RequestBody ResetPasswordReq req) {
+        String resetType = req.getResetType();
+        if (!"phone".equals(resetType) && !"email".equals(resetType)) {
+            return R.fail("找回方式无效");
+        }
+
+        String codeKey;
+        if ("phone".equals(resetType)) {
+            String phone = req.getPhone();
+            if (phone == null || phone.isBlank() || !phone.matches("^\\+?\\d{6,20}$")) {
+                return R.fail("手机号格式不正确");
+            }
+            codeKey = "phone_reset_" + phone;
+        } else {
+            String email = req.getEmail();
+            if (email == null || email.isBlank()
+                    || !email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$")) {
+                return R.fail("邮箱格式不正确");
+            }
+            codeKey = "email_reset_" + email;
+        }
+
         String storedCode = null;
         if (redisTemplate != null) {
-            storedCode = redisTemplate.opsForValue().get("phone_reset_" + req.getPhone());
+            storedCode = redisTemplate.opsForValue().get(codeKey);
         } else {
-            storedCode = codeStore.get("phone_reset_" + req.getPhone());
+            storedCode = codeStore.get(codeKey);
         }
         if (storedCode == null) {
-            return R.fail("请先获取短信验证码");
+            return R.fail("请先获取验证码");
         }
-        if (!storedCode.equals(req.getSmsCode())) {
+        if (!storedCode.equals(req.getCode())) {
             return R.fail("验证码错误");
         }
         if (redisTemplate != null) {
-            redisTemplate.delete("phone_reset_" + req.getPhone());
+            redisTemplate.delete(codeKey);
         } else {
-            codeStore.remove("phone_reset_" + req.getPhone());
+            codeStore.remove(codeKey);
         }
-        userService.resetPassword(req.getPhone(), req.getNewPassword());
+
+        if ("phone".equals(resetType)) {
+            userService.resetPasswordByPhone(req.getPhone(), req.getNewPassword());
+        } else {
+            userService.resetPasswordByEmail(req.getEmail(), req.getNewPassword());
+        }
         return R.ok();
     }
 }

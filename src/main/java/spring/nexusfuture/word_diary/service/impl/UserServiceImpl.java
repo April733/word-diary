@@ -108,10 +108,19 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public void resetPassword(String phone, String newPassword) {
+    public void resetPasswordByPhone(String phone, String newPassword) {
         WdUser user = userMapper.selectByPhone(phone);
         if (user == null) {
             throw new BizException("该手机号未注册");
+        }
+        userMapper.updatePassword(user.getId(), passwordEncoder.encode(newPassword));
+    }
+
+    @Override
+    public void resetPasswordByEmail(String email, String newPassword) {
+        WdUser user = userMapper.selectByEmail(email);
+        if (user == null) {
+            throw new BizException("该邮箱未注册");
         }
         userMapper.updatePassword(user.getId(), passwordEncoder.encode(newPassword));
     }

@@ -45,8 +45,14 @@ export const checkInviteCode = (code: string) => api.get('/user/check-invite-cod
 export const sendSms = (phone: string) => api.post('/user/send-sms', { phone })
 export const sendMailCode = (email: string) => api.post('/user/send-mail-code', { email })
 export const sendResetSms = (phone: string) => api.post('/user/send-reset-sms', { phone })
-export const resetPassword = (data: { phone: string; smsCode: string; newPassword: string }) =>
-  api.post('/user/reset-password', data)
+export const sendResetMail = (email: string) => api.post('/user/send-reset-mail', { email })
+export const resetPassword = (data: {
+  resetType: 'phone' | 'email'
+  phone?: string
+  email?: string
+  code: string
+  newPassword: string
+}) => api.post('/user/reset-password', data)
 
 // Notebooks
 export const createNotebook = (data: any) => api.post('/notebooks', data)
