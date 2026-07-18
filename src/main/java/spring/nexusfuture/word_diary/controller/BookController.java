@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.CollectJsonSupport;
 import spring.nexusfuture.word_diary.common.R;
@@ -321,7 +322,8 @@ public class BookController {
         final long t0 = System.currentTimeMillis();
         String question = (String) body.get("question");
         String context = (String) body.getOrDefault("context", "");
-        String locale = (String) body.getOrDefault("locale", "zh-CN");
+        String locale = AiFeatureI18nSupport.normalizeLocale(
+                (String) body.getOrDefault("locale", "zh-CN"));
         Long bookId = body.get("bookId") != null
                 ? Long.valueOf(body.get("bookId").toString()) : null;
         String featureKey = (String) body.get("featureKey");

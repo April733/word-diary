@@ -6,7 +6,7 @@
         <t-button variant="text" type="button" @click="goBack">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
-        <span class="book-title-header">{{ book?.title }}</span>
+        <span class="book-title-header" :title="book?.title || undefined">{{ book?.title }}</span>
       </div>
       <div class="header-center">
         <span class="header-brand">{{ $t('reader.aiAssistant') }}</span>
@@ -2474,16 +2474,21 @@ function renderMarkdown(text: string): string {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
   justify-self: start;
 }
 
 .book-title-header {
+  flex: 1;
   font-size: 16px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  max-width: 100%;
+  cursor: default;
 }
 
 .header-center {

@@ -57,9 +57,11 @@ public class DatabaseInitConfig implements ApplicationRunner {
             ensureScenePromptTable(conn, stmt);
             seedScenePromptsIfEmpty(stmt);
             migrateScenePromptLanguagePlaceholder(stmt);
+            migrateReadingChatLanguagePlaceholder(stmt);
             migrateWordParsePromptSchema(conn);
             ensureWordFeaturePhonetics(conn, stmt);
             migrateWordFeatureConciseGloss(conn, stmt);
+            migrateFeaturePromptLanguageNeutral(conn, stmt);
             migrateSplitAiModelAndScene(conn, stmt);
             ensureAiProviderTable(conn, stmt);
             // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
@@ -508,6 +510,61 @@ public class DatabaseInitConfig implements ApplicationRunner {
         }
     }
 
+    /** reading_chat 旧种子「请用中文回答」→「请用{language}回答」 */
+    private void migrateReadingChatLanguagePlaceholder(Statement stmt) {
+        try {
+            int n = stmt.executeUpdate("""
+                    UPDATE `sys_ai_scene_prompt`
+                    SET `system_prompt` = REPLACE(
+                      `system_prompt`,
+                      '请用中文回答用户的问题',
+                      '请用{language}回答用户的问题'
+                    ),
+                    `update_time` = NOW()
+                    WHERE `is_deleted` = 0
+                      AND `scene_key` = 'reading_chat'
+                      AND `system_prompt` LIKE '%请用中文回答用户的问题%'
+                    """);
+            if (n > 0) {
+                log.info("数据库迁移完成: reading_chat 已改为 {{language}}，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 reading_chat 语言占位符失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 功能细节 prompt 里硬编码「中文释义」会盖过非中文 locale 的全局语言规则；
+     * 改为「用户语言」中性表述（运行时 AiPromptBuilder 还会再按 locale 替换残留「中文」）。
+     */
+    private void migrateFeaturePromptLanguageNeutral(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            int n1 = stmt.executeUpdate("""
+                    UPDATE sys_ai_feature
+                    SET prompt = REPLACE(prompt, '中文释义', '用户语言释义'),
+                        update_time = NOW()
+                    WHERE is_deleted = 0 AND prompt LIKE '%中文释义%'
+                    """);
+            int n2 = stmt.executeUpdate("""
+                    UPDATE sys_ai_feature
+                    SET prompt = REPLACE(prompt, 'n./v./adj. + 中文', 'n./v./adj. + 用户语言'),
+                        update_time = NOW()
+                    WHERE is_deleted = 0 AND prompt LIKE '%n./v./adj. + 中文%'
+                    """);
+            if (n1 > 0 || n2 > 0) {
+                log.info("数据库迁移完成: sys_ai_feature.prompt 语言中性化 n1={}, n2={}", n1, n2);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_feature 语言中性化失败: {}", e.getMessage());
+        }
+    }
+
     /**
      * 旧 word_parse 种子未写死 JSON 字段名，模型会返回 word/cn_definition 等导致前端表格空白。
      */
@@ -608,9 +665,9 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     WHERE feature_key = 'word' AND is_deleted = 0
                       AND prompt LIKE '%名词，意为%'
                     """);
-            String conciseRule = """
+                    String conciseRule = """
 
-                    【释义格式】每个单词用「英文词性缩写 + 中文释义」，如 n. 律师；v. 建议；adj. 地下的。禁止写「名词，意为“…」」「动词，意为“…」。
+                    【释义格式】每个单词用「英文词性缩写 + 用户语言释义」，如 n. 律师；v. 建议；adj. 地下的。禁止写「名词，意为“…」」「动词，意为“…」。
                     """;
             try (var ps = conn.prepareStatement(
                     "UPDATE sys_ai_feature SET prompt = CONCAT(IFNULL(prompt,''), ?), update_time = NOW() " +

@@ -94,7 +94,7 @@ public final class CollectJsonSupport {
             case "id", "vi", "th" -> """
 
                     [Words] Only difficult words (skip names & high-frequency words). Prefer 1–5 items.
-                    Format: - **word**: US /…/, UK /…/; n. meaning
+                    Format: - **word**: US /…/, UK /…/; n. meaning (in the user's language)
                     """;
             default -> """
 
@@ -110,9 +110,9 @@ public final class CollectJsonSupport {
     public static String phoneticFormatInstruction(String locale) {
         String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
         return switch (loc) {
-            case "en" -> """
+            case "en", "id", "vi", "th" -> """
 
-                    [Word format] - **word**: US /…/, UK /…/; n. meaning
+                    [Word format] - **word**: US /…/, UK /…/; n. meaning (user language)
                     """;
             default -> """
 
@@ -184,7 +184,8 @@ public final class CollectJsonSupport {
             return "";
         }
         return switch (loc) {
-            case "en" -> "\n[Scope] Only selected features; section order must match the feature list above. No extras.\n";
+            case "en", "id", "vi", "th" ->
+                    "\n[Scope] Only selected features; section order must match the feature list above. No extras.\n";
             default -> "\n【范围】只输出上方已列功能对应小节，顺序与列表一致，勿增删调换。\n";
         };
     }
@@ -200,7 +201,7 @@ public final class CollectJsonSupport {
         String joined = String.join(", ", targetWords);
         String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
         return switch (loc) {
-            case "en" -> """
+            case "en", "id", "vi", "th" -> """
 
                     [Target words] For word / collocation / root sections, explain ONLY: %s.
                     Do NOT explain any other words. Translation / grammar may use the full passage.

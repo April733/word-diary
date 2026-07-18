@@ -1,6 +1,7 @@
 package spring.nexusfuture.word_diary.config;
 
 import org.springframework.stereotype.Component;
+import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
@@ -289,14 +290,14 @@ public class AiPromptBuilder {
     public String buildReadingAssistantPrompt(String locale, String context) {
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_READING_CHAT, locale);
         if (fromDb != null) {
-            return applyPlaceholders(fromDb, context, "", locale);
+            return applyPlaceholders(fromDb, context, "", locale) + replyLanguageReinforcement(locale);
         }
         PromptTemplate t = getTemplateByLocale(locale);
         String base = t.globalConstraint() + "\n" + t.readingAssistantSystem();
         if (context != null && !context.isEmpty()) {
             base += "\n" + String.format(t.readingAssistantContext(), context);
         }
-        return base;
+        return base + replyLanguageReinforcement(locale);
     }
 
     /**
@@ -326,8 +327,9 @@ public class AiPromptBuilder {
      * 场景壳来自 sys_ai_scene_prompt(feature)；功能细节来自 sys_ai_feature.prompt。
      */
     public String buildFeaturePrompt(String locale, String featureKey, String context) {
-        SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
-        String featurePrompt = feature != null && feature.getPrompt() != null ? feature.getPrompt() : "";
+        SysAiFeature feature = loadFeatureForLocale(featureKey, locale);
+        String featurePrompt = adaptFeaturePromptForLocale(
+                feature != null && feature.getPrompt() != null ? feature.getPrompt() : "", locale);
 
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
         String base;
@@ -344,15 +346,16 @@ public class AiPromptBuilder {
             prompt.append(t.featureDirectInstruction());
             base = prompt.toString();
         }
-        return base + markdownFormatHint(locale);
+        return base + markdownFormatHint(locale) + replyLanguageReinforcement(locale);
     }
 
     /**
      * 功能预设 user prompt（基于 locale 和 featureKey）。
      */
     public String buildFeatureUserPrompt(String locale, String featureKey, String context) {
-        SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
-        String featureName = feature != null ? feature.getFeatureName() : featureKey;
+        SysAiFeature feature = loadFeatureForLocale(featureKey, locale);
+        String featureName = feature != null && feature.getFeatureName() != null
+                ? feature.getFeatureName() : featureKey;
         PromptTemplate t = getTemplateByLocale(locale);
         return String.format(t.featureUserFormat(), featureName, context);
     }
@@ -367,10 +370,11 @@ public class AiPromptBuilder {
         featureDescs.append(orderLine).append('\n');
         int i = 1;
         for (String key : featureKeys) {
-            SysAiFeature feature = featureMapper.selectByFeatureKey(key);
+            SysAiFeature feature = loadFeatureForLocale(key, locale);
             if (feature == null) continue;
             String name = feature.getFeatureName() != null ? feature.getFeatureName() : key;
-            String prompt = feature.getPrompt() != null ? feature.getPrompt().trim() : "";
+            String prompt = adaptFeaturePromptForLocale(
+                    feature.getPrompt() != null ? feature.getPrompt().trim() : "", locale);
             featureDescs.append(i++).append('.').append(name).append('(').append(key).append("): ");
             if (!prompt.isEmpty()) {
                 // 压成单段，去掉过多空行
@@ -395,8 +399,8 @@ public class AiPromptBuilder {
             prompt.append(t.featureDirectInstruction());
             base = prompt.toString();
         }
-        // 样式提示合并进短格式说明（不再重复整段顺序规则）
-        return base + markdownFormatHint(locale);
+        // 样式提示合并进短格式说明；末尾再强化回复语言（覆盖功能细节里残留的「中文」）
+        return base + markdownFormatHint(locale) + replyLanguageReinforcement(locale);
     }
 
     /**
@@ -406,8 +410,9 @@ public class AiPromptBuilder {
         StringBuilder featureNames = new StringBuilder();
         int i = 1;
         for (String key : featureKeys) {
-            SysAiFeature feature = featureMapper.selectByFeatureKey(key);
-            String name = feature != null && feature.getFeatureName() != null ? feature.getFeatureName() : key;
+            SysAiFeature feature = loadFeatureForLocale(key, locale);
+            String name = feature != null && feature.getFeatureName() != null
+                    ? feature.getFeatureName() : key;
             if (featureNames.length() > 0) featureNames.append(" → ");
             featureNames.append(i++).append('.').append(name);
         }
@@ -415,23 +420,19 @@ public class AiPromptBuilder {
         return String.format(t.multiFeatureUserFormat(), featureNames, context);
     }
 
-    /** 强制输出章节顺序与用户勾选顺序一致 */
-    private String outputOrderInstruction(String locale, List<String> featureKeys) {
-        return "\n" + compactOrderLine(locale, featureKeys) + "\n";
-    }
-
     private String compactOrderLine(String locale, List<String> featureKeys) {
         if (featureKeys == null || featureKeys.isEmpty()) return "";
         StringBuilder ordered = new StringBuilder();
         int i = 1;
         for (String key : featureKeys) {
-            SysAiFeature feature = featureMapper.selectByFeatureKey(key);
-            String name = feature != null && feature.getFeatureName() != null ? feature.getFeatureName() : key;
+            SysAiFeature feature = loadFeatureForLocale(key, locale);
+            String name = feature != null && feature.getFeatureName() != null
+                    ? feature.getFeatureName() : key;
             if (ordered.length() > 0) ordered.append(" → ");
             ordered.append(i++).append('.').append(name);
         }
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        if (AiFeatureI18nSupport.isChinese(loc)) {
             return "【顺序】按此输出：" + ordered + "。标题用「翻译：」「单词：」等，词条 **加粗**。";
         }
         return "[Order] Output sections as: " + ordered + ". Title each section; bold lemmas.";
@@ -441,11 +442,68 @@ public class AiPromptBuilder {
      * 语言学习范围约束：拒答与阅读/词汇/语法等无关的问题，并给出友好提示文案。
      */
     public String languageLearningScopeInstruction(String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        if (AiFeatureI18nSupport.isChinese(loc)) {
             return "\n【范围】仅回答语言学习相关问题；无关则只回复：抱歉，我是 Aiko 语言学习助手，请换个英语学习相关问题～\n";
         }
         return "\n[Scope] Language-learning only. If off-topic, reply briefly that Aiko only helps with language learning.\n";
+    }
+
+    /** 按 locale 取功能行并解析展示名；不修改 Mapper 缓存对象。 */
+    private SysAiFeature loadFeatureForLocale(String featureKey, String locale) {
+        SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
+        if (feature == null) return null;
+        SysAiFeature copy = copyFeature(feature);
+        AiFeatureI18nSupport.resolveInPlace(copy, locale);
+        return copy;
+    }
+
+    private static SysAiFeature copyFeature(SysAiFeature src) {
+        SysAiFeature f = new SysAiFeature();
+        f.setId(src.getId());
+        f.setFeatureKey(src.getFeatureKey());
+        f.setFeatureName(src.getFeatureName());
+        f.setDescription(src.getDescription());
+        f.setNameI18n(src.getNameI18n());
+        f.setDescriptionI18n(src.getDescriptionI18n());
+        f.setPrompt(src.getPrompt());
+        f.setSortNum(src.getSortNum());
+        f.setStatus(src.getStatus());
+        return f;
+    }
+
+    /**
+     * 功能细节 prompt 多为中文编写；非中文 locale 时把「中文」改成目标语言名，
+     * 避免盖过场景壳里的 {global_constraint}。
+     */
+    private String adaptFeaturePromptForLocale(String prompt, String locale) {
+        if (prompt == null || prompt.isBlank()) return "";
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        if (AiFeatureI18nSupport.isChinese(loc)) return prompt;
+        String lang = getTemplateByLocale(loc).localeName();
+        return prompt
+                .replace("英文词性缩写 + 中文释义", "English POS abbrev. + " + lang + " meaning")
+                .replace("英文词性缩写 + 用户语言释义", "English POS abbrev. + " + lang + " meaning")
+                .replace("n./v./adj. + 中文", "n./v./adj. + " + lang)
+                .replace("n./v./adj. + 用户语言", "n./v./adj. + " + lang)
+                .replace("中文释义", lang + " meaning")
+                .replace("用户语言释义", lang + " meaning")
+                .replace("中文翻译", lang + " translation")
+                .replace("用中文", "in " + lang)
+                .replace("用户语言", lang)
+                .replace("中文", lang);
+    }
+
+    /** 放在 prompt 末尾，优先于功能细节里残留的语言要求。 */
+    private String replyLanguageReinforcement(String locale) {
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        PromptTemplate t = getTemplateByLocale(loc);
+        if (AiFeatureI18nSupport.isChinese(loc)) {
+            return "\n【回复语言】所有释义、翻译、讲解必须使用" + t.localeName() + "（英文原文与音标除外）。\n";
+        }
+        return "\n[Reply language] All glosses, translations, and explanations MUST be in "
+                + t.localeName()
+                + ". Do NOT use Chinese unless the user language is Chinese. English source text and IPA are exceptions.\n";
     }
 
     /**
@@ -454,7 +512,7 @@ public class AiPromptBuilder {
      */
     private String loadScenePrompt(String sceneKey, String locale) {
         try {
-            String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+            String loc = AiFeatureI18nSupport.normalizeLocale(locale);
             SysAiScenePrompt row = scenePromptMapper.selectEnabled(sceneKey, loc);
             if (row != null && row.getSystemPrompt() != null && !row.getSystemPrompt().isBlank()) {
                 return row.getSystemPrompt();
@@ -467,8 +525,8 @@ public class AiPromptBuilder {
 
     /** 阅读解析输出样式：小节与词条加粗，前端可渲染为紫色标题 */
     private static String markdownFormatHint(String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        if (AiFeatureI18nSupport.isChinese(loc)) {
             return "\n【版式】小节标题「翻译：」「单词：」「固定搭配：」「语法：」（不用 ##）；列表词条 **加粗**。\n";
         }
         return "\n[Format] Section titles like Translation:/Words:/Collocations: (no ##); bold lemmas.\n";
@@ -479,7 +537,7 @@ public class AiPromptBuilder {
      * 支持：{context}、{feature_prompts}、{language}（展示名）、{locale}（代码）、{global_constraint}（按请求语言注入全局规则）。
      */
     private String applyPlaceholders(String template, String context, String featurePrompts, String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
         PromptTemplate t = getTemplateByLocale(loc);
         String ctx = context == null ? "" : context;
         String feats = featurePrompts == null ? "" : featurePrompts;
@@ -500,14 +558,14 @@ public class AiPromptBuilder {
         try {
             WdUser user = userMapper.selectById(userId);
             if (user != null && user.getPreferredLocale() != null) {
-                return user.getPreferredLocale();
+                return AiFeatureI18nSupport.normalizeLocale(user.getPreferredLocale());
             }
         } catch (Exception ignored) {}
         return "zh-CN";
     }
 
     private PromptTemplate getTemplateByLocale(String locale) {
-        if (locale == null || locale.isEmpty()) return TEMPLATES.get("zh-CN");
-        return TEMPLATES.getOrDefault(locale, TEMPLATES.get("zh-CN"));
+        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
+        return TEMPLATES.getOrDefault(loc, TEMPLATES.get("zh-CN"));
     }
 }

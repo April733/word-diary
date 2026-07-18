@@ -1141,14 +1141,15 @@ onBeforeUnmount(() => {
 .pdf-scroll {
   width: 100%;
   height: 100%;
+  overflow-x: auto;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  /* 允许手指左右/上下滑动浏览放大后的页面 */
+  touch-action: pan-x pan-y;
 }
 
 .pdf-scroll.is-annotating {
   cursor: crosshair;
+  touch-action: none;
 }
 
 /* 顶部缩放：原位置，透明悬浮、字号偏小 */
@@ -1252,7 +1253,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 16px 0 24px;
-  width: 100%;
+  /* 放大后页面可宽于视口，底部出现横向滚动条左右滑动 */
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
 }
 
 .pdf-page-list.is-annotating {
@@ -1264,7 +1268,6 @@ onBeforeUnmount(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   background: #fff;
   cursor: crosshair;
-  max-width: 100%;
 }
 
 .pdf-canvas--ready {
@@ -1274,7 +1277,6 @@ onBeforeUnmount(() => {
 .pdf-page-container {
   position: relative;
   display: inline-block;
-  max-width: 100%;
   overflow: hidden;
   background: #3a3d40;
 }
