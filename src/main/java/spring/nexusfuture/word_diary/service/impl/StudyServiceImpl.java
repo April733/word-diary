@@ -11,7 +11,6 @@ import spring.nexusfuture.word_diary.entity.*;
 import spring.nexusfuture.word_diary.mapper.*;
 import spring.nexusfuture.word_diary.service.StudyService;
 import spring.nexusfuture.word_diary.service.StudySessionService;
-import spring.nexusfuture.word_diary.service.SysBaseConfigService;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -27,19 +26,16 @@ public class StudyServiceImpl implements StudyService {
     private final WdWordMapper wordMapper;
     private final WdWordBookMapper bookMapper;
     private final WdStudyQueueMapper queueMapper;
-    private final SysBaseConfigService configService;
     private final StudySessionService sessionService;
 
     public StudyServiceImpl(WdLearnPlanMapper planMapper, WdLearnRecordMapper recordMapper,
                             WdWordMapper wordMapper, WdWordBookMapper bookMapper,
-                            WdStudyQueueMapper queueMapper,
-                            SysBaseConfigService configService, StudySessionService sessionService) {
+                            WdStudyQueueMapper queueMapper, StudySessionService sessionService) {
         this.planMapper = planMapper;
         this.recordMapper = recordMapper;
         this.wordMapper = wordMapper;
         this.bookMapper = bookMapper;
         this.queueMapper = queueMapper;
-        this.configService = configService;
         this.sessionService = sessionService;
     }
 
@@ -52,9 +48,13 @@ public class StudyServiceImpl implements StudyService {
 
     @Override
     public List<StudyTaskVO> getTodayReview(Long userId) {
-        List<WdLearnPlan> plans = planMapper.selectReviewTasks(userId, configService.getReviewUnlockHour());
+        LocalDate today = sessionService.currentStudyDate(userId);
+        List<WdLearnPlan> plans = planMapper.selectReviewTasks(userId, today);
         List<Long> todayCompletedWordIds = queueMapper.selectWordIdsWithMinDonePasses(
-                userId, LocalDate.now(), 2);
+                userId,
+                sessionService.currentStudyDayStart(userId),
+                sessionService.currentStudyDayEnd(userId),
+                2);
         return dedupByWordId(plans).stream()
                 .filter(p -> !todayCompletedWordIds.contains(p.getWordId()))
                 .map(this::toTaskVO)
@@ -63,8 +63,12 @@ public class StudyServiceImpl implements StudyService {
 
     @Override
     public List<StudyTaskVO> getTodayCompleted(Long userId) {
-        // 一天内至少背完 2 遍才算已完成
-        List<Long> todayWordIds = queueMapper.selectWordIdsWithMinDonePasses(userId, LocalDate.now(), 2);
+        // 仅统计当前学习日时间窗内（默认今早7点～明早7点）至少背完 2 遍的词
+        List<Long> todayWordIds = queueMapper.selectWordIdsWithMinDonePasses(
+                userId,
+                sessionService.currentStudyDayStart(userId),
+                sessionService.currentStudyDayEnd(userId),
+                2);
         if (todayWordIds.isEmpty()) {
             return List.of();
         }
@@ -89,7 +93,7 @@ public class StudyServiceImpl implements StudyService {
         }
 
         int feedback = mapLegacyResult(result);
-        LocalDate today = LocalDate.now();
+        LocalDate today = sessionService.currentStudyDate(userId);
         StudyAlgorithm.applyFeedback(plan, feedback, today, true);
         planMapper.updatePlan(plan);
         saveRecord(userId, plan, LearnStatus.STUDY_TYPE_FIRST, feedback);
@@ -107,7 +111,7 @@ public class StudyServiceImpl implements StudyService {
         }
 
         int feedback = mapLegacyResult(result);
-        LocalDate today = LocalDate.now();
+        LocalDate today = sessionService.currentStudyDate(userId);
         StudyAlgorithm.applyFeedback(plan, feedback, today, false);
         if (feedback == StudyFeedback.FORGET) {
             plan.setScheduledNewDate(null);
@@ -151,22 +155,67 @@ public class StudyServiceImpl implements StudyService {
     @Override
     public StatsVO getStats(Long userId) {
         planMapper.migrateForgottenToNotLearned(userId);
-        List<WdLearnPlan> allPlans = planMapper.selectAllByUserId(userId);
-        List<WdLearnPlan> reviewTasks = planMapper.selectReviewTasks(userId, configService.getReviewUnlockHour());
+        // 全部在背：仅统计已开启参与每日学习的单词本
+        List<WdLearnPlan> inPlan = planMapper.selectAllInStudyPlan(userId);
+        LocalDate studyDate = sessionService.currentStudyDate(userId);
+        List<WdLearnPlan> reviewTasks = planMapper.selectReviewTasks(userId, studyDate);
         StudyTodayVO today = sessionService.getToday(userId);
 
+        long pending = inPlan.stream().filter(p -> p.getLearnStatus() == LearnStatus.NOT_LEARNED).count();
+        long learning = inPlan.stream()
+                .filter(p -> p.getLearnStatus() == LearnStatus.FIRST_LEARNED
+                        || p.getLearnStatus() == LearnStatus.REVIEWING).count();
+        long mastered = inPlan.stream().filter(p -> p.getLearnStatus() == LearnStatus.MASTERED).count();
+
         return StatsVO.builder()
-                .totalWords(allPlans.size())
-                .newWords(allPlans.stream().filter(p -> p.getLearnStatus() == LearnStatus.NOT_LEARNED).count())
-                .reviewingWords(allPlans.stream()
-                        .filter(p -> p.getLearnStatus() == LearnStatus.FIRST_LEARNED
-                                || p.getLearnStatus() == LearnStatus.REVIEWING).count())
-                .masteredWords(allPlans.stream().filter(p -> p.getLearnStatus() == LearnStatus.MASTERED).count())
+                .totalWords(inPlan.size())
+                .newWords(pending)
+                .reviewingWords(learning)
+                .masteredWords(mastered)
+                .pausedWords(planMapper.countPausedByUserId(userId))
                 .todayReviewCount(reviewTasks.size())
                 .todayReviewPending(today.getReviewPending())
                 .todayNewPending(today.getNewPending())
                 .reviewPhaseDone(today.isReviewPhaseDone())
                 .build();
+    }
+
+    @Override
+    public List<StudyTaskVO> listPlanWords(Long userId, String status) {
+        planMapper.migrateForgottenToNotLearned(userId);
+        String key = status == null || status.isBlank() ? "all" : status.trim().toLowerCase();
+        return dedupByWordId(planMapper.selectAllInStudyPlan(userId)).stream()
+                .filter(p -> matchPlanStatus(p.getLearnStatus(), key))
+                .sorted((a, b) -> {
+                    int cmp = Integer.compare(
+                            statusSortKey(a.getLearnStatus()),
+                            statusSortKey(b.getLearnStatus()));
+                    if (cmp != 0) return cmp;
+                    return Long.compare(b.getId(), a.getId());
+                })
+                .map(this::toTaskVO)
+                .collect(Collectors.toList());
+    }
+
+    private static boolean matchPlanStatus(Integer learnStatus, String key) {
+        int s = learnStatus == null ? LearnStatus.NOT_LEARNED : learnStatus;
+        return switch (key) {
+            case "pending" -> s == LearnStatus.NOT_LEARNED;
+            case "learning" -> s == LearnStatus.FIRST_LEARNED || s == LearnStatus.REVIEWING;
+            case "mastered" -> s == LearnStatus.MASTERED;
+            default -> s == LearnStatus.NOT_LEARNED
+                    || s == LearnStatus.FIRST_LEARNED
+                    || s == LearnStatus.REVIEWING
+                    || s == LearnStatus.MASTERED;
+        };
+    }
+
+    private static int statusSortKey(Integer learnStatus) {
+        int s = learnStatus == null ? LearnStatus.NOT_LEARNED : learnStatus;
+        if (s == LearnStatus.NOT_LEARNED) return 0;
+        if (s == LearnStatus.FIRST_LEARNED || s == LearnStatus.REVIEWING) return 1;
+        if (s == LearnStatus.MASTERED) return 2;
+        return 9;
     }
 
     private int mapLegacyResult(Integer result) {

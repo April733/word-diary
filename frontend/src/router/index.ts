@@ -33,6 +33,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/plan',
+      name: 'StudyPlan',
+      component: () => import('../views/StudyPlanView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/study/settings',
       name: 'StudySettings',
       component: () => import('../views/StudySettingsView.vue'),
@@ -42,12 +48,6 @@ const router = createRouter({
       path: '/study/browse',
       name: 'StudyBrowse',
       component: () => import('../views/StudyBrowseView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/records',
-      name: 'Records',
-      component: () => import('../views/RecordView.vue'),
       meta: { requiresAuth: true }
     },
     {

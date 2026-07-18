@@ -2,9 +2,9 @@
  * PDF 懒加载渲染 + 框选 OCR 相关工具（与 EPUB 逻辑隔离）
  */
 import * as pdfjsLib from 'pdfjs-dist'
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+// 使用 public 下的 .js，避免线上 Nginx 把 .mjs 当成 octet-stream
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
 
 export { pdfjsLib }
 

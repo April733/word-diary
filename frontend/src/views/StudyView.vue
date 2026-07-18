@@ -73,6 +73,33 @@
       </div>
 
       <t-empty v-else-if="!loading" :description="$t('study.allDone')" />
+
+      <t-collapse
+        v-if="todayWords.length > 0 || completedWords.length > 0"
+        class="today-words-section"
+        :default-value="['today', 'completed']"
+      >
+        <t-collapse-panel
+          v-if="todayWords.length > 0"
+          value="today"
+          :header="$t('study.todayWords', { count: todayWords.length })"
+        >
+          <div v-for="word in todayWords" :key="'t-' + word.planId" class="completed-item">
+            <span class="completed-word">{{ word.wordProto }}</span>
+            <span class="completed-mean">{{ word.partSpeechMean || '—' }}</span>
+          </div>
+        </t-collapse-panel>
+        <t-collapse-panel
+          v-if="completedWords.length > 0"
+          value="completed"
+          :header="$t('study.todayCompleted', { count: completedWords.length })"
+        >
+          <div v-for="word in completedWords" :key="'c-' + word.planId" class="completed-item">
+            <span class="completed-word">{{ word.wordProto }}</span>
+            <span class="completed-mean">{{ word.partSpeechMean || '—' }}</span>
+          </div>
+        </t-collapse-panel>
+      </t-collapse>
     </div>
 
     <t-drawer
@@ -94,6 +121,7 @@
           <div class="queue-main">
             <div class="queue-word">{{ item.wordProto }}</div>
             <div class="queue-mean">{{ item.partSpeechMean || '—' }}</div>
+            <div v-if="item.notebookName" class="queue-nb">{{ item.notebookName }}</div>
           </div>
         </div>
       </div>
@@ -115,6 +143,7 @@ const loading = ref(true)
 const showAnswer = ref(false)
 const session = ref<any>(null)
 const completedWords = ref<any[]>([])
+const todayWords = ref<any[]>([])
 const today = ref({
   reviewPending: 0,
   reviewDone: 0,
@@ -159,7 +188,7 @@ const progressPercent = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadSession(), loadCompleted()])
+  await Promise.all([loadSession(), loadCompleted(), loadTodayWords()])
 })
 
 async function loadCompleted() {
@@ -167,6 +196,15 @@ async function loadCompleted() {
     const res = await getTodayCompleted()
     completedWords.value = res.data.data || []
   } catch { /* ignore */ }
+}
+
+async function loadTodayWords() {
+  try {
+    const res = await getStudySessionQueue()
+    todayWords.value = res.data?.data || []
+  } catch {
+    todayWords.value = []
+  }
 }
 
 async function loadSession() {
@@ -217,7 +255,7 @@ async function handleAnswer(feedback: number) {
       MessagePlugin.success(t('study.sessionDone'))
     }
     showAnswer.value = false
-    await loadCompleted()
+    await Promise.all([loadCompleted(), loadTodayWords()])
   } catch (e: any) {
     MessagePlugin.error(e.response?.data?.msg || t('study.actionFailed'))
   }
@@ -437,5 +475,38 @@ async function openCompletedList() {
   font-size: 13px;
   color: #6b7280;
   line-height: 1.4;
+}
+
+.queue-nb {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.today-words-section {
+  margin-top: 24px;
+}
+
+.completed-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.completed-word {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.completed-mean {
+  color: #6b7280;
+  font-size: 14px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 </style>

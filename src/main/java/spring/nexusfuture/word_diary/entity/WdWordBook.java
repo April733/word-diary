@@ -34,7 +34,7 @@ public class WdWordBook {
     /** 排序权重 */
     private Integer sortNum;
 
-    /** 1正常 0停用 */
+    /** 1参与每日学习 0不参与（单词本本身仍可查看/编辑） */
     private Integer status;
 
     /** 创建人 */

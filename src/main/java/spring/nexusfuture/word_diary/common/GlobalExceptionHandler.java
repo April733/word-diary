@@ -1,11 +1,13 @@
 package spring.nexusfuture.word_diary.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -28,6 +30,13 @@ public class GlobalExceptionHandler {
             message = "参数校验失败";
         }
         return ResponseEntity.badRequest().body(R.fail(400, message));
+    }
+
+    /** 爬虫/浏览器扩展探测不存在的静态路径，不当成系统故障 */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<R<Void>> handleNoResource(NoResourceFoundException e) {
+        log.debug("静态资源不存在: {}", e.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(R.fail(404, "not found"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -77,8 +77,17 @@ public class BookCollectServiceImpl implements BookCollectService {
             }
             WdWord existing = wordMapper.selectByNotebookAndWordProto(req.getNotebookId(), proto);
             if (existing != null) {
-                skipped++;
-                messages.add(proto + "：已存在，已跳过");
+                boolean doOverwrite = Boolean.TRUE.equals(item.getOverwrite())
+                        || Boolean.TRUE.equals(req.getOverwriteExisting());
+                if (!doOverwrite) {
+                    skipped++;
+                    messages.add(proto + "：已存在，已跳过");
+                    continue;
+                }
+                applyOverwrite(existing, item, bookId, fullSnippet, req.getSourceLocation());
+                wordMapper.update(existing);
+                updated++;
+                messages.add(proto + "：已覆盖");
                 continue;
             }
 
@@ -121,6 +130,26 @@ public class BookCollectServiceImpl implements BookCollectService {
                 .updated(updated)
                 .messages(messages)
                 .build();
+    }
+
+    /** 用新收录内容覆盖已有词条的释义、音标、词根、例句等 */
+    static void applyOverwrite(WdWord existing, CollectEntryDTO item, Long bookId,
+                               String fullSnippet, String sourceLocation) {
+        String sentence = pickSentenceForLemma(fullSnippet, existing.getWordProto());
+        String example = toOriginalExample(sentence);
+        existing.setPartSpeechMean(item.getPartSpeechMean().trim());
+        existing.setUsPhonetic(emptyToNull(item.getUsPhonetic()));
+        existing.setUkPhonetic(emptyToNull(item.getUkPhonetic()));
+        existing.setRootAffix(emptyToNull(item.getRootAffix()));
+        existing.setEntryType(normalizeEntryType(item.getEntryType()));
+        existing.setSentenceExample(example);
+        existing.setSourceSnippet(emptyToNull(sentence));
+        if (bookId != null) {
+            existing.setSourceBookId(bookId);
+        }
+        if (hasText(sourceLocation)) {
+            existing.setSourceLocation(sourceLocation.trim());
+        }
     }
 
     /** 原文 →「【原文】…」；无原文则 null */

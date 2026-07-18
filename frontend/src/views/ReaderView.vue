@@ -14,17 +14,21 @@
       <div class="header-right">
         <div class="header-notebooks">
           <t-button
-            v-if="activeNotebook"
             variant="outline"
             size="small"
-            :title="activeNotebook.notebookName"
-            @click="openNotebookWords(activeNotebook.notebookId)"
+            :title="activeNotebook?.notebookName || $t('reader.notebookLinkTitle')"
+            @click="onHeaderNotebookClick"
           >
-            {{ truncate(activeNotebook.notebookName, 14) }}
-          </t-button>
-          <t-button variant="outline" size="small" @click="showNotebookLinkDialog = true">
             <template #icon><t-icon name="book" /></template>
-            {{ linkedNotebooks.length ? $t('reader.notebookLinkManage') : $t('reader.notebookLinkTitle') }}
+            {{
+              activeNotebook
+                ? truncate(activeNotebook.notebookName, 14)
+                : $t('reader.notebookLinkTitle')
+            }}
+          </t-button>
+          <t-button variant="outline" size="small" @click="openOperationGuide">
+            <template #icon><t-icon name="info-circle" /></template>
+            {{ $t('reader.operationGuide') }}
           </t-button>
         </div>
         <t-button variant="outline" size="small" @click="showSettings = true">
@@ -67,7 +71,7 @@
 
       <!-- 中间：阅读区 -->
       <main class="reader-main" ref="readerContainer">
-        <div class="reading-area">
+        <div class="reading-area" data-guide="pdf-page">
           <div v-if="loading" class="reader-loading">
             <t-loading size="large" :text="$t('common.loading')" />
           </div>
@@ -107,7 +111,7 @@
       <div class="resize-handle resize-handle-right" @mousedown="startResizeAi" />
 
       <!-- 右侧：AI 对话框 -->
-      <aside class="sidebar-ai" :style="{ width: aiWidth + 'px' }">
+      <aside class="sidebar-ai" data-guide="ai-panel" :style="{ width: aiWidth + 'px' }">
         <!-- 未选文字时的引导状态 -->
         <div v-if="!selectedContext && aiMessages.length === 0" class="ai-empty-state">
           <div class="ai-empty-icon">
@@ -237,7 +241,7 @@
           </div>
         </template>
 
-        <div class="ai-composer">
+        <div class="ai-composer" data-guide="ai-composer">
           <t-textarea
             class="ai-composer-input"
             v-model="aiInput"
@@ -376,6 +380,13 @@
       </div>
     </t-dialog>
 
+    <!-- PDF 首次操作引导 -->
+    <ReaderGuideTour
+      v-model:visible="showPdfSelectTip"
+      :steps="pdfGuideSteps"
+      @finish="dismissPdfSelectTip"
+    />
+
     <!-- 问题报告弹窗 -->
     <t-dialog
       v-model:visible="showReportDialog"
@@ -406,6 +417,7 @@
       :preferred-view-mode="collectDrawerPreferredMode"
       :target-notebook-id="collectTargetNotebookId"
       @open-link-dialog="showNotebookLinkDialog = true"
+      @select-notebook="onDrawerSelectNotebook"
     />
     <ReaderNotebookLinkDialog
       v-model:visible="showNotebookLinkDialog"
@@ -435,15 +447,18 @@ import {
 } from '../api'
 import ReaderCollectDrawer from '../components/ReaderCollectDrawer.vue'
 import ReaderNotebookLinkDialog from '../components/ReaderNotebookLinkDialog.vue'
+import ReaderGuideTour, { type GuideStep } from '../components/ReaderGuideTour.vue'
 import {
-  hydrateStoredAiMessage,
+  extractContextFromUserAiMessage,
+  hydrateAiMessageList,
   makeBasketKey,
+  parseCollectEntriesFromText,
   resolveActiveNotebookId,
   saveActiveNotebookId,
   stripCollectMarker,
   type CollectEntry
 } from '../utils/collectBasket'
-import { normalizeSelectedText, tokenizeContextSegments } from '../utils/selectedText'
+import { normalizeSelectedText, pickSentenceForLemma, tokenizeContextSegments } from '../utils/selectedText'
 import { aiRegionHeaders } from '../utils/aiRegion'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
@@ -629,6 +644,81 @@ const featureOrder = ref<string[]>([])
 const showAiPrefDialog = ref(false)
 const aiPrefSaving = ref(false)
 
+const PDF_SELECT_TIP_KEY = 'aikoread.reader.pdfSelectTip.v4'
+const showPdfSelectTip = ref(false)
+/** 本次进入阅读器已关过引导则不再自动弹出，避免误关后重开到第 1 步 */
+const pdfGuideClosedThisSession = ref(false)
+
+const pdfGuideSteps = computed<GuideStep[]>(() => [
+  {
+    selector: '[data-guide="pdf-select"]',
+    title: t('reader.guideStep1Title'),
+    body: t('reader.guideStep1Body'),
+    placement: 'left',
+    demo: 'tap',
+  },
+  {
+    selector: '[data-guide="pdf-page"]',
+    title: t('reader.guideStep2Title'),
+    body: t('reader.guideStep2Body'),
+    placement: 'bottom',
+    demo: 'drag',
+  },
+  {
+    selector: '[data-guide="ai-panel"]',
+    title: t('reader.guideStep3Title'),
+    body: t('reader.guideStep3Body'),
+    placement: 'left',
+    demo: 'dblclick',
+  },
+  {
+    selector: '[data-guide="ai-panel"]',
+    title: t('reader.guideStep4Title'),
+    body: t('reader.guideStep4Body'),
+    placement: 'left',
+    demo: 'analyze',
+  },
+  {
+    selector: '[data-guide="ai-composer"]',
+    title: t('reader.guideStep5Title'),
+    body: t('reader.guideStep5Body'),
+    placement: 'left',
+    demo: 'ask',
+  },
+])
+
+function maybeShowPdfSelectTip() {
+  if (pdfGuideClosedThisSession.value || showPdfSelectTip.value) return
+  try {
+    if (localStorage.getItem(PDF_SELECT_TIP_KEY)) return
+  } catch {
+    /* ignore */
+  }
+  // 等工具栏渲染完再开引导
+  nextTick(() => {
+    setTimeout(() => {
+      if (pdfGuideClosedThisSession.value || showPdfSelectTip.value) return
+      try {
+        if (localStorage.getItem(PDF_SELECT_TIP_KEY)) return
+      } catch {
+        /* ignore */
+      }
+      showPdfSelectTip.value = true
+    }, 280)
+  })
+}
+
+function dismissPdfSelectTip(payload?: { dontShowAgain?: boolean }) {
+  showPdfSelectTip.value = false
+  pdfGuideClosedThisSession.value = true
+  if (!payload?.dontShowAgain) return
+  try {
+    localStorage.setItem(PDF_SELECT_TIP_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
 // 问题报告
 const showReportDialog = ref(false)
 const reportDescription = ref('')
@@ -662,6 +752,33 @@ watch(activeNotebookId, (id) => {
   if (id != null) saveActiveNotebookId(bookId, id)
 })
 
+/** 顶栏单词本：有本则打开词表（可切换/新建）；无本则打开新建 */
+function onHeaderNotebookClick() {
+  if (!linkedNotebooks.value.length) {
+    showNotebookLinkDialog.value = true
+    return
+  }
+  const id = activeNotebookId.value || linkedNotebooks.value[0].notebookId
+  openNotebookWords(id)
+}
+
+function onDrawerSelectNotebook(notebookId: number) {
+  activeNotebookId.value = notebookId
+}
+
+/** 手动打开操作引导（不受「下次不再提醒」限制） */
+function openOperationGuide() {
+  pdfGuideClosedThisSession.value = false
+  if (showPdfSelectTip.value) {
+    showPdfSelectTip.value = false
+    nextTick(() => {
+      showPdfSelectTip.value = true
+    })
+  } else {
+    showPdfSelectTip.value = true
+  }
+}
+
 /** 顶栏：点当前单词本 → 查看该本词表 */
 function openNotebookWords(notebookId: number) {
   currentCollectEntries.value = []
@@ -678,13 +795,39 @@ function collectableEntriesOf(msg: AiMessage): CollectEntry[] {
   return list.filter(e => e.entryType === 'word' || e.entryType === 'phrase')
 }
 
+/** 合并 AI 已挂载词条 + 正文「单词/固定搭配」小节兜底（模型漏写 COLLECT_JSON 时） */
+function mergeCollectEntriesFromMessage(msg: AiMessage, snippet = ''): CollectEntry[] {
+  const map = new Map<string, CollectEntry>()
+  for (const e of collectableEntriesOf(msg)) {
+    map.set(e.basketKey, e)
+  }
+  for (const e of parseCollectEntriesFromText(msg.content || '', snippet || msg.collectSourceSnippet || '')) {
+    if (e.entryType !== 'word' && e.entryType !== 'phrase') continue
+    if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+  }
+  return [...map.values()]
+}
+
 function collectableCount(msg: AiMessage): number {
-  return collectableEntriesOf(msg).length
+  return mergeCollectEntriesFromMessage(msg).length
 }
 
 /** 某条 AI 回复旁：加入单词本（仅单词/短语） */
 function openCollectForMessage(msg: AiMessage) {
-  const entries = collectableEntriesOf(msg)
+  // 例句来自选中原文；历史消息可能丢了 snippet，从前一条 user 或当前选区补回
+  let snippet = msg.collectSourceSnippet || selectedContext.value || ''
+  if (!snippet) {
+    const idx = aiMessages.value.findIndex(m => m === msg)
+    for (let i = idx - 1; i >= 0; i--) {
+      const prev = aiMessages.value[i]
+      if (prev.role === 'user') {
+        snippet = extractContextFromUserAiMessage(prev.content || '')
+        break
+      }
+    }
+  }
+
+  const entries = mergeCollectEntriesFromMessage(msg, snippet)
   if (!entries.length) {
     MessagePlugin.info(t('reader.collectNothing'))
     return
@@ -694,8 +837,18 @@ function openCollectForMessage(msg: AiMessage) {
     showNotebookLinkDialog.value = true
     return
   }
-  currentCollectEntries.value = entries
-  collectSourceSnippet.value = msg.collectSourceSnippet || ''
+  currentCollectEntries.value = entries.map(e => {
+    const example = pickSentenceForLemma(
+      snippet || e.sourceSnippet || e.sentenceExample || '',
+      e.wordProto
+    )
+    return {
+      ...e,
+      sentenceExample: example || e.sentenceExample,
+      sourceSnippet: snippet || e.sourceSnippet
+    }
+  })
+  collectSourceSnippet.value = snippet
   collectSourceLocation.value = msg.collectSourceLocation || ''
   collectTargetNotebookId.value = activeNotebookId.value || linkedNotebooks.value[0]?.notebookId
   collectDrawerPreferredMode.value = 'current'
@@ -716,27 +869,34 @@ async function loadNotebookLinks() {
 
 async function onNotebookLinksChanged() {
   await loadNotebookLinks()
+  if (showCollectDrawer.value && activeNotebookId.value) {
+    collectTargetNotebookId.value = activeNotebookId.value
+  }
 }
 
 function normalizeCollectEntries(rawEntries: any[], snippet: string): CollectEntry[] {
   return rawEntries
     .filter(e => e?.wordProto && e?.partSpeechMean)
-    .map(e => ({
-      basketKey: makeBasketKey(e),
-      entryType: e.entryType === 'phrase' ? 'phrase' as const : 'word' as const,
-      wordProto: String(e.wordProto).trim(),
-      partSpeechMean: String(e.partSpeechMean).trim(),
-      usPhonetic: e.usPhonetic,
-      ukPhonetic: e.ukPhonetic,
-      sentenceExample: snippet || undefined,
-      rootAffix: e.rootAffix,
-      sourceSnippet: snippet
-    }))
+    .map(e => {
+      const wordProto = String(e.wordProto).trim()
+      const example = snippet ? pickSentenceForLemma(snippet, wordProto) : ''
+      return {
+        basketKey: makeBasketKey(e),
+        entryType: e.entryType === 'phrase' ? 'phrase' as const : 'word' as const,
+        wordProto,
+        partSpeechMean: String(e.partSpeechMean).trim(),
+        usPhonetic: e.usPhonetic,
+        ukPhonetic: e.ukPhonetic,
+        sentenceExample: example || snippet || undefined,
+        rootAffix: e.rootAffix,
+        sourceSnippet: snippet || undefined
+      }
+    })
     .filter(e => e.entryType === 'word' || e.entryType === 'phrase')
 }
 
-function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[]) {
-  const snippet = selectedContext.value || ''
+function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[], snippetOverride?: string) {
+  const snippet = (snippetOverride ?? selectedContext.value) || ''
   const location = selectedCfi.start || ''
   const entries = normalizeCollectEntries(rawEntries, snippet)
   const msg = aiMessages.value[answerIndex]
@@ -744,8 +904,8 @@ function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[]) {
   aiMessages.value[answerIndex] = {
     ...msg,
     collectEntries: entries,
-    collectSourceSnippet: snippet,
-    collectSourceLocation: location
+    collectSourceSnippet: snippet || msg.collectSourceSnippet,
+    collectSourceLocation: location || msg.collectSourceLocation
   }
 }
 
@@ -915,7 +1075,7 @@ async function loadSessionMessages(sessionId: number) {
     const res = await getAiMessagesPaged(sessionId, 0, MESSAGE_PAGE_SIZE)
     const data = res.data.data
     const list: any[] = data.messages || []
-    aiMessages.value = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
+    aiMessages.value = hydrateAiMessageList(list.reverse())
     messagesHasMore.value = data.hasMore || false
     await nextTick()
     scrollAiBottom()
@@ -932,7 +1092,7 @@ async function loadMoreMessages() {
     const res = await getAiMessagesPaged(currentSessionId.value, aiMessages.value.length, MESSAGE_PAGE_SIZE)
     const data = res.data.data
     const list: any[] = data.messages || []
-    const older = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
+    const older = hydrateAiMessageList(list.reverse())
     aiMessages.value = [...older, ...aiMessages.value]
     messagesHasMore.value = data.hasMore || false
     await nextTick()
@@ -1260,7 +1420,7 @@ async function initEpub() {
 
     const response = await axios.get(fileUrl, {
       responseType: 'arraybuffer',
-      timeout: 30000,
+      timeout: 600000,
       signal: controller.signal,
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       onDownloadProgress: (progressEvent) => {
@@ -1321,6 +1481,7 @@ async function initEpub() {
 function onPdfReady(pages: number) {
   pdfTotalPages.value = pages
   console.log('[Reader] PdfReader ready, pages:', pages)
+  maybeShowPdfSelectTip()
 }
 
 function onPdfToc(items: Array<{ label: string; href: string; level: number }>) {
@@ -2039,6 +2200,7 @@ async function sendAiMessage() {
     let fullAnswer = ''
     aiMessages.value.push({ role: 'assistant', content: '' })
     const answerIndex = aiMessages.value.length - 1
+    const contextSnapshot = selectedContext.value || ''
     let buffer = ''
     const sseHandlers: SseHandlers = {
       onChunk: async (text) => {
@@ -2059,7 +2221,7 @@ async function sendAiMessage() {
           currentSessionId.value = doneData.sessionId
         }
       },
-      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
+      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries, contextSnapshot)
     }
 
     while (true) {
@@ -2111,7 +2273,8 @@ async function sendAiFeatures() {
   const targets = targetWords.value.length ? [...targetWords.value] : []
 
   const targetSuffix = targets.length ? ` · ${targets.join(', ')}` : ''
-  aiMessages.value.push({ role: 'user', content: `【${featureNames}】${selectedContext.value}${targetSuffix}` })
+  const contextSnapshot = selectedContext.value || ''
+  aiMessages.value.push({ role: 'user', content: `【${featureNames}】${contextSnapshot}${targetSuffix}` })
   aiLoading.value = true
   activeFeatureKey.value = 'multi'
 
@@ -2122,6 +2285,7 @@ async function sendAiFeatures() {
 
   try {
     const token = localStorage.getItem('token')
+    // 解析：写入同一 session 便于回查；模型侧不带历史（由后端保证）
     const response = await fetch('/api/books/ai-chat', {
       method: 'POST',
       headers: {
@@ -2132,7 +2296,7 @@ async function sendAiFeatures() {
       body: JSON.stringify({
         bookId,
         featureKeys: orderedFeatureKeys,
-        context: selectedContext.value || '',
+        context: contextSnapshot,
         targetWords: targets,
         locale: locale.value,
         sessionId: currentSessionId.value
@@ -2168,7 +2332,7 @@ async function sendAiFeatures() {
           currentSessionId.value = doneData.sessionId
         }
       },
-      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
+      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries, contextSnapshot)
     }
 
     while (true) {
@@ -2228,33 +2392,36 @@ function renderMarkdown(text: string): string {
   // 行内代码
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
   // ## 标题 → 小节（去掉井号，避免露出 ##）
-  html = html.replace(/(^|\n)#{1,6}\s+([^\n]+)/g, '$1<strong class="ai-section">$2</strong>')
-  // 先把 **翻译：** / **单词** 提成小节（冒号常在粗体内，需单独处理）
+  html = html.replace(/(^|\n)#{1,6}\s+([^\n]+)/g, '$1<span class="ai-section">$2</span>')
+  // 先把 **翻译：** / **单词** 提成小节（冒号常在粗体内；用 span 避免当普通加粗）
   html = html.replace(
     new RegExp(`\\*\\*[ \\t]*(${sectionNames})([：:])?[ \\t]*\\*\\*`, 'g'),
-    '<strong class="ai-section">$1$2</strong>'
+    '<span class="ai-section">$1$2</span>'
   )
   // 粗体 **text**
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   // 斜体 *text*
   html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
 
-  // 已变成 <strong>翻译：</strong> 的小节（兜底）
+  // 已变成 <strong>翻译：</strong> 的小节 → 改成 span，去掉加粗
   html = html.replace(
     new RegExp(`<strong>[ \\t]*(${sectionNames})([：:])?[ \\t]*<\\/strong>`, 'g'),
-    '<strong class="ai-section">$1$2</strong>'
+    '<span class="ai-section">$1$2</span>'
   )
   // 纯文本小节行：翻译： / 单词（允许行首尾空白）
   html = html.replace(
     new RegExp(`(^|\\n)[ \\t]*(${sectionNames})([：:])?[ \\t]*(?=\\n|$)`, 'g'),
-    '$1<strong class="ai-section">$2$3</strong>'
+    '$1<span class="ai-section">$2$3</span>'
   )
   // 其它短行「XXX：」也当小节
   html = html.replace(/(^|\n)[ \t]*([^\n<>]{1,16}?[：:])[ \t]*(?=\n|$)/g, (full, lead, title) => {
     if (/[。.!?]/.test(title)) return full
-    if (title.includes('ai-section') || title.includes('<strong')) return full
-    return `${lead}<strong class="ai-section">${title}</strong>`
+    if (title.includes('ai-section') || title.includes('<strong') || title.includes('<span')) return full
+    return `${lead}<span class="ai-section">${title}</span>`
   })
+
+  // 模型常把整段译文包在 **…** 里 → 含中文的普通加粗还原为正文（不影响词条 ai-term）
+  html = html.replace(/<strong>([^<]*[\u4e00-\u9fff][^<]*)<\/strong>/g, '$1')
 
   // 列表：- **词条**：释义  /  - 词条：释义  → 蓝词条
   html = html.replace(
@@ -2272,11 +2439,11 @@ function renderMarkdown(text: string): string {
   )
 
   // 标题后多余空行压成一行，避免「翻译」和正文隔太远
-  html = html.replace(/(<strong class="ai-section">[^<]*<\/strong>)\n+/g, '$1\n')
+  html = html.replace(/(<span class="ai-section">[^<]*<\/span>)\n+/g, '$1\n')
   html = html.replace(/\n{3,}/g, '\n\n')
   html = html.replace(/\n/g, '<br>')
   // block 标题后再跟 <br> 会多出一截空白
-  html = html.replace(/(<strong class="ai-section">[^<]*<\/strong>)<br>/g, '$1')
+  html = html.replace(/(<span class="ai-section">[^<]*<\/span>)<br>/g, '$1')
   html = html.replace(/(<span class="ai-word-line">[\s\S]*?<\/span>)<br>/g, '$1')
   return html
 }
@@ -2651,26 +2818,22 @@ function renderMarkdown(text: string): string {
   color: inherit;
 }
 
-/* 正文里的普通加粗保持深色；小节标题与词条用主题蓝 */
+/* 正文里的普通加粗保持深色；小节标题与词条用主题蓝（标题不用 strong，避免「翻译」发黑加粗） */
 .ai-msg-content :deep(strong) {
   color: #2d2d3a;
   font-weight: 600;
 }
 
-.ai-msg-content :deep(strong.ai-section) {
+.ai-msg-content :deep(span.ai-section) {
   display: block;
-  margin-top: 10px;
-  margin-bottom: 4px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #5e57b5;
-  color: #fff;
-  font-weight: 700;
+  margin-top: 8px;
+  margin-bottom: 0;
+  color: #5e57b5;
+  font-weight: 600;
   line-height: 1.4;
-  font-size: 12px;
 }
 
-.ai-msg-content :deep(strong.ai-section:first-child) {
+.ai-msg-content :deep(span.ai-section:first-child) {
   margin-top: 0;
 }
 

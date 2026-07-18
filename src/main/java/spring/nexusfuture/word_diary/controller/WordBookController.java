@@ -1,7 +1,9 @@
 package spring.nexusfuture.word_diary.controller;
 
 import org.springframework.web.bind.annotation.*;
+import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.R;
+import spring.nexusfuture.word_diary.dto.NotebookStudyEnabledReq;
 import spring.nexusfuture.word_diary.dto.WordBookAddReq;
 import spring.nexusfuture.word_diary.dto.WordBookVO;
 import spring.nexusfuture.word_diary.service.WordBookService;
@@ -31,6 +33,16 @@ public class WordBookController {
     @PutMapping("/{bookId}")
     public R<Void> update(@RequestAttribute Long userId, @PathVariable Long bookId, @RequestBody WordBookAddReq req) {
         bookService.update(userId, bookId, req);
+        return R.ok();
+    }
+
+    @PutMapping("/{bookId}/study-enabled")
+    public R<Void> setStudyEnabled(@RequestAttribute Long userId, @PathVariable Long bookId,
+                                   @RequestBody NotebookStudyEnabledReq req) {
+        if (req == null || req.getEnabled() == null) {
+            throw new BizException("请指定 enabled");
+        }
+        bookService.setStudyEnabled(userId, bookId, req.getEnabled());
         return R.ok();
     }
 

@@ -22,14 +22,21 @@ public interface WdLearnRecordMapper {
     List<WdLearnRecord> selectByUserIdAndWordId(@Param("userId") Long userId, @Param("wordId") Long wordId);
 
     @Select("SELECT DISTINCT word_id FROM wd_learn_record WHERE user_id = #{userId} " +
-            "AND DATE(study_time) = CURDATE() AND is_deleted = 0")
-    List<Long> selectTodayStudiedWordIds(Long userId);
+            "AND study_time >= #{start} AND study_time < #{end} AND is_deleted = 0")
+    List<Long> selectStudiedWordIdsInRange(@Param("userId") Long userId,
+                                           @Param("start") java.time.LocalDateTime start,
+                                           @Param("end") java.time.LocalDateTime end);
 
     @Select("SELECT DISTINCT word_id FROM wd_learn_record WHERE user_id = #{userId} " +
-            "AND DATE(study_time) = CURDATE() AND study_mode = 1 AND affects_schedule = 1 AND is_deleted = 0")
-    List<Long> selectTodayFormalStudiedWordIds(Long userId);
+            "AND study_time >= #{start} AND study_time < #{end} " +
+            "AND study_mode = 1 AND affects_schedule = 1 AND is_deleted = 0")
+    List<Long> selectFormalStudiedWordIdsInRange(@Param("userId") Long userId,
+                                                 @Param("start") java.time.LocalDateTime start,
+                                                 @Param("end") java.time.LocalDateTime end);
 
     @Select("SELECT DISTINCT word_id FROM wd_learn_record WHERE user_id = #{userId} " +
-            "AND DATE(study_time) = CURDATE() AND feedback = 1 AND is_deleted = 0")
-    List<Long> selectTodayCompletedWordIds(Long userId);
+            "AND study_time >= #{start} AND study_time < #{end} AND feedback = 1 AND is_deleted = 0")
+    List<Long> selectCompletedWordIdsInRange(@Param("userId") Long userId,
+                                             @Param("start") java.time.LocalDateTime start,
+                                             @Param("end") java.time.LocalDateTime end);
 }

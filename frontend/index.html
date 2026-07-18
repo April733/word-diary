@@ -57,18 +57,18 @@
   </head>
   <body>
     <div id="app">
-      <div id="boot-shell" role="status">
+      <div id="boot-shell" role="status" aria-live="polite">
         <div class="boot-card">
           <div class="boot-brand">
             <img src="/brand/logo-circle-64.png" width="48" height="48" alt="" />
             <div>
-              <h1>服务升级中</h1>
+              <h1 id="boot-title">加载中</h1>
               <p>Aikoread 爱可悦读</p>
             </div>
           </div>
-          <p class="boot-lead">系统正在启动或发布更新，请耐心等待约 5 分钟后刷新页面。</p>
-          <p class="boot-sub">若等待后仍无法使用，可向管理员发送反馈（网络恢复后会自动补发暂存的反馈）。</p>
-          <div class="boot-actions">
+          <p class="boot-lead" id="boot-lead">正在打开应用…</p>
+          <p class="boot-sub boot-hidden" id="boot-sub">若长时间无法进入，可向管理员发送反馈。</p>
+          <div class="boot-actions boot-hidden" id="boot-actions">
             <button type="button" class="boot-btn boot-btn-ghost" id="boot-retry">刷新重试</button>
             <button type="button" class="boot-btn boot-btn-primary" id="boot-feedback-toggle">发送反馈</button>
           </div>
@@ -94,7 +94,11 @@
         var form = document.getElementById('boot-form')
         var retry = document.getElementById('boot-retry')
         var msg = document.getElementById('boot-msg')
-        if (!toggle || !form || !retry || !msg) return
+        var title = document.getElementById('boot-title')
+        var lead = document.getElementById('boot-lead')
+        var sub = document.getElementById('boot-sub')
+        var actions = document.getElementById('boot-actions')
+        if (!toggle || !form || !retry || !msg || !title || !lead || !sub || !actions) return
 
         toggle.addEventListener('click', function () {
           form.classList.toggle('open')
@@ -155,13 +159,20 @@
           })
         })
 
-        // 若 8 秒后仍未挂载 Vue，保持引导文案（资源可能加载失败）
+        // 正常刷新：短暂「加载中」即可，避免误报「服务升级」
+        // 仅当 Vue 长时间未挂载时，再切换为升级/故障引导
         setTimeout(function () {
-          if (document.getElementById('boot-shell')) {
-            var lead = document.querySelector('.boot-lead')
-            if (lead) lead.textContent = '页面资源可能尚未就绪，或服务正在发布。请再等待约 5 分钟后刷新；也可发送反馈。'
-          }
-        }, 8000)
+          if (!document.getElementById('boot-shell')) return
+          title.textContent = '服务升级中'
+          lead.textContent = '系统正在启动或发布更新，请耐心等待约 5 分钟后刷新页面。'
+          sub.classList.remove('boot-hidden')
+          actions.classList.remove('boot-hidden')
+        }, 4000)
+
+        setTimeout(function () {
+          if (!document.getElementById('boot-shell')) return
+          lead.textContent = '页面资源可能尚未就绪，或服务正在发布。请再等待约 5 分钟后刷新；也可发送反馈。'
+        }, 12000)
       })()
     </script>
     <script type="module" src="/src/main.ts"></script>

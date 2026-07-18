@@ -13,8 +13,9 @@
         :before-upload="beforeUpload"
         @change="handleFileChange"
         :show-upload-list="false"
+        :disabled="uploading || atBookLimit"
       >
-        <t-button theme="primary">
+        <t-button theme="primary" :disabled="uploading || atBookLimit">
           <template #icon><t-icon name="add" /></template>
           {{ $t('bookshelf.import') }}
         </t-button>
@@ -77,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
@@ -90,9 +91,17 @@ const loading = ref(true)
 const uploading = ref(false)
 const uploadingFileName = ref('')
 
+/** 与后端 BookServiceImpl.MAX_BOOKS_PER_USER 一致 */
+const MAX_BOOKS_PER_USER = 10
+const atBookLimit = computed(() => books.value.length >= MAX_BOOKS_PER_USER)
+
 onMounted(() => loadBooks())
 
 function beforeUpload(file: File): boolean {
+  if (atBookLimit.value) {
+    MessagePlugin.warning(t('bookshelf.limitReached', { n: MAX_BOOKS_PER_USER }))
+    return false
+  }
   const name = file.name.toLowerCase()
   if (!name.endsWith('.epub') && !name.endsWith('.pdf')) {
     MessagePlugin.warning(t('bookshelf.formatError'))
@@ -123,6 +132,10 @@ async function loadBooks() {
 async function handleFileChange(files: any) {
   const file = files[0]?.raw || files[0]
   if (!file) return
+  if (atBookLimit.value) {
+    MessagePlugin.warning(t('bookshelf.limitReached', { n: MAX_BOOKS_PER_USER }))
+    return
+  }
 
   // 版权确认弹窗
   const confirmed = await new Promise<boolean>(resolve => {

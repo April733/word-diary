@@ -20,9 +20,8 @@
     </main>
 
     <main v-else class="body">
-      <!-- 有书：只推一本书、一个按钮 -->
+      <!-- 有书：只推一本书、一个按钮（不要「阅读」小标题） -->
       <section v-if="focusBook" class="block">
-        <p class="muted">{{ $t('dashboard.homeReading') }}</p>
         <h1 class="book-name">{{ focusBook.title }}</h1>
         <p class="muted">{{ bookStatusText }}</p>
         <t-button theme="primary" size="large" block class="btn" @click="openBook">
@@ -32,7 +31,6 @@
 
       <!-- 没书 -->
       <section v-else class="block">
-        <p class="muted">{{ $t('dashboard.homeReading') }}</p>
         <h1 class="book-name">{{ $t('dashboard.homeNoBookTitle') }}</h1>
         <p class="muted">{{ $t('dashboard.homeNoBookHint') }}</p>
         <t-button theme="primary" size="large" block class="btn" @click="router.push('/bookshelf')">
@@ -40,17 +38,16 @@
         </t-button>
       </section>
 
-      <!-- 有词要背：一行提示，不重复出现在下方 -->
-      <button v-if="studyHint" type="button" class="study-hint" @click="router.push('/study')">
+      <!-- 今日学习：一行点击进入（与旧版一致） -->
+      <button type="button" class="study-hint" @click="router.push(studyCtaPath)">
         <span>{{ studyHint }}</span>
-        <span class="go">{{ $t('dashboard.startStudy') }} →</span>
+        <span class="go">{{ studyCtaLabel }} →</span>
       </button>
 
-      <!-- 去处：不再放「开始学习」 -->
       <nav class="nav">
-        <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
+        <button type="button" @click="router.push('/plan')">{{ $t('study.planOverviewTitle') }}</button>
         <button type="button" @click="router.push('/notebooks')">{{ $t('nav.wordbook') }}</button>
-        <button type="button" @click="router.push('/records')">{{ $t('nav.records') }}</button>
+        <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
       </nav>
     </main>
   </div>
@@ -72,7 +69,9 @@ const userStore = useUserStore()
 const loading = ref(true)
 const books = ref<any[]>([])
 const stats = ref({
+  totalWords: 0,
   newWords: 0,
+  pausedWords: 0,
   todayReviewPending: 0,
   todayNewPending: 0
 })
@@ -107,6 +106,13 @@ const bookButtonText = computed(() =>
   bookStarted.value ? t('dashboard.continueReading') : t('dashboard.startReading')
 )
 
+const hasStudyWork = computed(() =>
+  stats.value.todayReviewPending > 0
+  || stats.value.todayNewPending > 0
+  || stats.value.newWords > 0
+)
+
+/** 一行提示文案（左侧） */
 const studyHint = computed(() => {
   if (stats.value.todayReviewPending > 0) {
     return t('dashboard.todayHeadlineReview', { count: stats.value.todayReviewPending })
@@ -117,7 +123,25 @@ const studyHint = computed(() => {
   if (stats.value.newWords > 0) {
     return t('dashboard.todayHeadlineUnlearned', { count: stats.value.newWords })
   }
-  return ''
+  if (stats.value.totalWords > 0) {
+    return t('dashboard.todayHeadlineDone')
+  }
+  if (stats.value.pausedWords > 0) {
+    return t('dashboard.todayHeadlinePaused', { count: stats.value.pausedWords })
+  }
+  return t('dashboard.studyStripEmpty')
+})
+
+const studyCtaLabel = computed(() => {
+  if (hasStudyWork.value) return t('dashboard.startStudy')
+  if (stats.value.pausedWords > 0) return t('nav.wordbook')
+  return t('study.sessionTitle')
+})
+
+const studyCtaPath = computed(() => {
+  if (hasStudyWork.value) return '/study'
+  if (stats.value.pausedWords > 0) return '/notebooks'
+  return '/study'
 })
 
 function openBook() {
@@ -127,12 +151,21 @@ function openBook() {
 onMounted(async () => {
   userStore.loadFromStorage()
   try {
-    const [statsRes, booksRes] = await Promise.all([
-      getStats().catch(() => null),
-      getBooks().catch(() => null)
+    const [booksRes, statsRes] = await Promise.all([
+      getBooks().catch(() => null),
+      getStats().catch(() => null)
     ])
-    if (statsRes?.data?.data) stats.value = { ...stats.value, ...statsRes.data.data }
     books.value = booksRes?.data?.data || []
+    const s = statsRes?.data?.data
+    if (s) {
+      stats.value = {
+        totalWords: s.totalWords || 0,
+        newWords: s.newWords || 0,
+        pausedWords: s.pausedWords || 0,
+        todayReviewPending: s.todayReviewPending || 0,
+        todayNewPending: s.todayNewPending || 0
+      }
+    }
   } finally {
     loading.value = false
   }

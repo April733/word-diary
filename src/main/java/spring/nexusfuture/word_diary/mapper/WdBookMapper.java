@@ -33,6 +33,9 @@ public interface WdBookMapper {
     @Select("SELECT * FROM wd_book WHERE user_id=#{userId} AND is_deleted=0 ORDER BY last_read_at DESC")
     List<WdBook> selectByUserId(@Param("userId") Long userId);
 
+    @Select("SELECT COUNT(*) FROM wd_book WHERE user_id=#{userId} AND is_deleted=0")
+    int countByUserId(@Param("userId") Long userId);
+
     @Update("UPDATE wd_book SET current_chapter=#{currentChapter}, current_cfi=#{currentCfi}, " +
             "progress_percent=#{progressPercent}, last_read_at=#{lastReadAt}, update_time=NOW() " +
             "WHERE id=#{id} AND is_deleted=0")

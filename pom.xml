@@ -124,6 +124,7 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
 	<dependencyManagement>
 		<dependencies>
 			<dependency>
@@ -198,6 +199,16 @@
 				</executions>
 			</plugin>
 		</plugins>
+
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <!-- 打包时剔除所有 static 下的前端文件，本地文件完全不动 -->
+                    <exclude>static/**</exclude>
+                </excludes>
+            </resource>
+        </resources>
 	</build>
 
 </project>

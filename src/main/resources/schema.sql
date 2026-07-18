@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS `wd_user_study_pref` (
 CREATE TABLE IF NOT EXISTS `wd_study_daily` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `user_id` bigint NOT NULL,
-  `study_date` date NOT NULL COMMENT '学习自然日',
+  `study_date` date NOT NULL COMMENT '学习日（按解锁时刻切分，默认早7点至次日早7点）',
   `review_total` int NOT NULL DEFAULT 0 COMMENT '当日复习任务总数',
   `review_done` int NOT NULL DEFAULT 0 COMMENT '当日复习已完成数',
   `new_total` int NOT NULL DEFAULT 0 COMMENT '当日新词任务总数',

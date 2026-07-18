@@ -40,6 +40,12 @@ frontend/node_modules/
 frontend/dist/
 admin/node_modules/
 admin/dist/
+# 前端产物勿进后端 resources（由 Nginx 托管）
+src/main/resources/static/admin/
+src/main/resources/static/assets/
+src/main/resources/static/index.html
+src/main/resources/static/favicon.svg
+src/main/resources/static/icons.svg
 
 ### CodeBuddy ###
 .codebuddy/

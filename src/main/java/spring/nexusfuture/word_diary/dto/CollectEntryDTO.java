@@ -20,4 +20,6 @@ public class CollectEntryDTO {
     private String rootAffix;
     /** 已存在时是否仅追加例句 */
     private Boolean appendExample;
+    /** 已存在时是否覆盖释义/音标/词根/例句等 */
+    private Boolean overwrite;
 }

@@ -10,7 +10,7 @@
     </header>
 
     <div class="page-body">
-      <t-form label-align="top" @submit.prevent="handleSave">
+      <t-form label-align="top">
         <t-form-item :label="$t('study.dailyNewLimit')">
           <t-input-number v-model="form.dailyNewLimit" :min="1" :max="200" theme="column" />
         </t-form-item>
@@ -22,7 +22,7 @@
           <t-switch v-model="form.autoSpreadNew" />
           <p class="hint">{{ $t('study.autoSpreadNewHint') }}</p>
         </t-form-item>
-        <t-button theme="primary" type="submit" block :loading="saving">{{ $t('common.save') }}</t-button>
+        <t-button theme="primary" block :loading="saving" @click="handleSave">{{ $t('common.save') }}</t-button>
       </t-form>
     </div>
   </div>
@@ -64,7 +64,7 @@ async function handleSave() {
     await updateStudySettings(form.value)
     MessagePlugin.success(t('study.settingsSaved'))
   } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.msg || t('study.saveFailed'))
+    MessagePlugin.error(e.response?.data?.message || t('study.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -105,5 +105,6 @@ async function handleSave() {
   margin-top: 8px;
   font-size: 13px;
   color: #6b7280;
+  line-height: 1.5;
 }
 </style>

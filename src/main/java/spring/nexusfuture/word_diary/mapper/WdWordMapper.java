@@ -16,7 +16,7 @@ public interface WdWordMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdWord word);
 
-    @Select("SELECT * FROM wd_word WHERE notebook_id = #{notebookId} AND is_deleted = 0")
+    @Select("SELECT * FROM wd_word WHERE notebook_id = #{notebookId} AND is_deleted = 0 ORDER BY id DESC")
     List<WdWord> selectByNotebookId(Long notebookId);
 
     @Select("SELECT * FROM wd_word WHERE id = #{id} AND is_deleted = 0")
@@ -28,7 +28,8 @@ public interface WdWordMapper {
     @Update("UPDATE wd_word SET word_proto = #{wordProto}, us_phonetic = #{usPhonetic}, " +
             "uk_phonetic = #{ukPhonetic}, part_speech_mean = #{partSpeechMean}, " +
             "sentence_example = #{sentenceExample}, root_affix = #{rootAffix}, " +
-            "entry_type = #{entryType}, source_snippet = #{sourceSnippet}, source_location = #{sourceLocation}, " +
+            "entry_type = #{entryType}, source_book_id = #{sourceBookId}, " +
+            "source_snippet = #{sourceSnippet}, source_location = #{sourceLocation}, " +
             "update_time = NOW() WHERE id = #{id} AND is_deleted = 0")
     int update(WdWord word);
 

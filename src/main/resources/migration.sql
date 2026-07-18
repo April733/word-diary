@@ -566,8 +566,14 @@ VALUES
 
 -- =============================================
 -- 2026-07-18: AI 线路地区（与语言分离）
--- 运行时由 DatabaseInitConfig.migrateAiSceneRegion 自动迁移。
+-- 运行时由 DatabaseInitConfig 自动迁移（preferred_locale → preferred_ai_region）。
 -- =============================================
+ALTER TABLE wd_user ADD COLUMN preferred_locale varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言' AFTER role;
 ALTER TABLE wd_user ADD COLUMN preferred_ai_region varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global' AFTER preferred_locale;
 ALTER TABLE sys_ai_scene ADD COLUMN region varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global' AFTER scene_name;
 -- 随后需：为每条 cn 场景补 global 行；DROP uk_scene_key；ADD uk_scene_region (scene_key, region)
+
+-- =============================================
+-- 2026-07-18: 单词本 status 语义：1参与每日学习 0不参与（无新列）
+-- =============================================
+-- ALTER TABLE wd_word_book MODIFY COLUMN status tinyint NOT NULL DEFAULT 1 COMMENT '1参与每日学习 0不参与';

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -22,6 +23,7 @@ import spring.nexusfuture.word_diary.service.AiRegionResolver;
 import spring.nexusfuture.word_diary.service.AiService;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -57,6 +59,7 @@ public class AiServiceImpl implements AiService {
         String systemPrompt = "";
         String userPrompt = "";
         String inputText = words == null ? "" : String.join(", ", words);
+        String usedModelKey = null;
         try {
             String wordsJson = words.stream()
                     .map(w -> "\"" + w + "\"")
@@ -68,6 +71,7 @@ public class AiServiceImpl implements AiService {
             userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
 
             SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
+            usedModelKey = call.modelKey();
             ChatResponse chatResponse = call.client().prompt()
                     .options(call.options())
                     .system(systemPrompt)
@@ -79,7 +83,8 @@ public class AiServiceImpl implements AiService {
             Generation generation = chatResponse.getResult();
             String content = generation.getOutput().getText();
 
-            saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt, content, chatResponse, durationMs);
+            saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt, content,
+                    chatResponse, usedModelKey, durationMs);
 
             String json = extractJsonArray(content);
             try {
@@ -92,7 +97,8 @@ public class AiServiceImpl implements AiService {
             int durationMs = (int) (System.currentTimeMillis() - startTime);
             log.error("AI调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
             try {
-                saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt, e.getMessage(), null, durationMs);
+                saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
+                        e.getMessage(), null, usedModelKey, durationMs);
             } catch (Exception ignored) {}
             throw e;
         }
@@ -113,71 +119,106 @@ public class AiServiceImpl implements AiService {
         log.info("开始AI流式调用, userId={}, words={}", userId, words);
 
         StringBuilder fullResponseText = new StringBuilder();
+        final ChatResponse[] lastWithUsage = {null};
         SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
+        String usedModelKey = call.modelKey();
+        // chatResponse + streamUsage：末包带 usage，流式结束后写入 token
         return call.client().prompt()
                 .options(call.options())
                 .system(systemPrompt)
                 .user(userPrompt)
                 .stream()
-                .content()
-                .filter(text -> text != null && !text.isEmpty())
-                .doOnNext(fullResponseText::append)
+                .chatResponse()
+                .doOnNext(cr -> {
+                    if (hasTokenUsage(cr)) {
+                        lastWithUsage[0] = cr;
+                    }
+                    String text = extractDeltaText(cr);
+                    if (!text.isEmpty()) {
+                        fullResponseText.append(text);
+                    }
+                })
+                .map(this::extractDeltaText)
+                .filter(text -> !text.isEmpty())
                 .doOnError(e -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     log.error("AI流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
                     try {
                         saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
-                                e.getMessage(), null, durationMs);
+                                e.getMessage(), lastWithUsage[0], usedModelKey, durationMs);
                     } catch (Exception ignored) {}
                 })
                 .doOnComplete(() -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     String fullText = fullResponseText.toString();
-                    log.info("AI流式调用完成, 耗时: {}ms, 响应长度={}", durationMs, fullText.length());
+                    log.info("AI流式调用完成, 耗时: {}ms, 响应长度={}, hasUsage={}",
+                            durationMs, fullText.length(), lastWithUsage[0] != null);
                     saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
-                            fullText, null, durationMs);
+                            fullText, lastWithUsage[0], usedModelKey, durationMs);
                 });
     }
 
     @Override
     public Flux<String> chatStream(Long userId, String systemPrompt, String userPrompt) {
-        return chatStream(userId, SCENE_READING_CHAT, null, systemPrompt, userPrompt);
+        return chatStream(userId, SCENE_READING_CHAT, null, systemPrompt, userPrompt, null);
     }
 
     @Override
     public Flux<String> chatStream(Long userId, String callScene, String inputText,
                                    String systemPrompt, String userPrompt) {
+        return chatStream(userId, callScene, inputText, systemPrompt, userPrompt, null);
+    }
+
+    @Override
+    public Flux<String> chatStream(Long userId, String callScene, String inputText,
+                                   String systemPrompt, String userPrompt,
+                                   List<Message> history) {
         long startTime = System.currentTimeMillis();
         String scene = (callScene == null || callScene.isBlank()) ? SCENE_READING_CHAT : callScene;
         String rawInput = inputText != null ? inputText : "";
-        log.info("[ai-stream] 开始 userId={}, scene={}, inputWords={}, sysChars={}, userChars={}",
+        List<Message> historyMessages = history == null ? Collections.emptyList() : history;
+        log.info("[ai-stream] 开始 userId={}, scene={}, inputWords={}, sysChars={}, userChars={}, historyMsgs={}",
                 userId, scene, TextMetrics.wordCount(rawInput),
                 systemPrompt != null ? systemPrompt.length() : 0,
-                userPrompt != null ? userPrompt.length() : 0);
+                userPrompt != null ? userPrompt.length() : 0,
+                historyMessages.size());
 
         StringBuilder fullResponseText = new StringBuilder();
+        final ChatResponse[] lastWithUsage = {null};
         final long[] providerRequestAt = {0L};
         final long[] firstChunkAt = {0L};
 
         long tResolve = System.currentTimeMillis();
         SceneCall call = resolveCall(userId, scene);
-        log.info("[ai-stream] resolveCall 耗时={}ms model/options就绪", System.currentTimeMillis() - tResolve);
+        String usedModelKey = call.modelKey();
+        log.info("[ai-stream] resolveCall 耗时={}ms model={} 就绪",
+                System.currentTimeMillis() - tResolve, usedModelKey);
 
-        // 使用 content() 拿增量 token，避免 chatResponse 在部分供应商下整段回传
-        return call.client().prompt()
+        // chatResponse：增量仍按 delta 推前端；streamUsage 末包带回 usage，完成后落库
+        var promptSpec = call.client().prompt()
                 .options(call.options())
-                .system(systemPrompt)
+                .system(systemPrompt);
+        if (!historyMessages.isEmpty()) {
+            promptSpec = promptSpec.messages(historyMessages);
+        }
+        return promptSpec
                 .user(userPrompt)
                 .stream()
-                .content()
-                .filter(text -> text != null && !text.isEmpty())
+                .chatResponse()
                 .doOnSubscribe(s -> {
                     providerRequestAt[0] = System.currentTimeMillis();
                     // ★ 重要指标③起点：真正向大模型发起 stream
-                    log.info("========== [耗时] ③已请求大模型 scene={} model就绪耗时={}ms (等待首token…) ==========",
-                            scene, providerRequestAt[0] - startTime);
+                    log.info("========== [耗时] ③已请求大模型 scene={} model={} history={} model就绪耗时={}ms (等待首token…) ==========",
+                            scene, usedModelKey, historyMessages.size(), providerRequestAt[0] - startTime);
                 })
-                .doOnNext(text -> {
+                .doOnNext(cr -> {
+                    if (hasTokenUsage(cr)) {
+                        lastWithUsage[0] = cr;
+                    }
+                    String text = extractDeltaText(cr);
+                    if (text.isEmpty()) {
+                        return;
+                    }
                     if (firstChunkAt[0] == 0L) {
                         firstChunkAt[0] = System.currentTimeMillis();
                         long sinceProvider = providerRequestAt[0] > 0
@@ -191,28 +232,30 @@ public class AiServiceImpl implements AiService {
                     }
                     fullResponseText.append(text);
                 })
+                .map(this::extractDeltaText)
+                .filter(text -> !text.isEmpty())
                 .doOnError(e -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     log.error("[ai-stream] 失败 耗时={}ms, 错误={}", durationMs, e.getMessage(), e);
                     try {
                         saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
-                                e.getMessage(), null, durationMs);
+                                e.getMessage(), lastWithUsage[0], usedModelKey, durationMs);
                     } catch (Exception ignored) {}
                 })
                 .doOnComplete(() -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
                     long ttfbProvider = (firstChunkAt[0] > 0 && providerRequestAt[0] > 0)
                             ? firstChunkAt[0] - providerRequestAt[0] : -1;
-                    log.info("[ai-stream] 完成 total={}ms, 请求大模型→首token={}ms, afterFirst={}ms, 响应长度={}",
+                    log.info("[ai-stream] 完成 total={}ms, 请求大模型→首token={}ms, afterFirst={}ms, 响应长度={}, hasUsage={}",
                             durationMs, ttfbProvider,
                             firstChunkAt[0] > 0 ? durationMs - (firstChunkAt[0] - startTime) : durationMs,
-                            fullResponseText.length());
+                            fullResponseText.length(), lastWithUsage[0] != null);
                     saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
-                            fullResponseText.toString(), null, durationMs);
+                            fullResponseText.toString(), lastWithUsage[0], usedModelKey, durationMs);
                 });
     }
 
-    private record SceneCall(ChatClient client, OpenAiChatOptions options) {}
+    private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey) {}
 
     /** 场景 + 用户地区 → DB 模型 + provider → ChatClient */
     private SceneCall resolveCall(Long userId, String sceneKey) {
@@ -224,22 +267,25 @@ public class AiServiceImpl implements AiService {
                 chatClientRouter.require(endpoint.provider()),
                 OpenAiChatOptions.builder()
                         .model(endpoint.modelKey())
-                        // 部分兼容网关不支持 stream_options，开启会导致整段缓冲、前端感觉“流式失效”
-                        .streamUsage(false)
-                        .build()
+                        // 开启后末包带回 usage；OpenAI 兼容网关一般不影响增量推流
+                        .streamUsage(true)
+                        .build(),
+                endpoint.modelKey()
         );
     }
 
     private void saveCallLog(Long userId, String callScene, String inputText,
                              String systemPrompt, String userPrompt, String responseData,
-                             ChatResponse chatResponse, int durationMs) {
+                             ChatResponse chatResponse, String usedModelKey, int durationMs) {
         try {
             String safeInput = inputText != null ? inputText : "";
             String sys = systemPrompt != null ? systemPrompt : "";
             String usr = userPrompt != null ? userPrompt : "";
             int assembledChars = TextMetrics.charCount(sys) + TextMetrics.charCount(usr);
 
-            String modelName = chatResponse != null ? getModelName(chatResponse) : resolveFallbackModelName();
+            // 流式必须以 resolveCall 得到的 modelKey 为准，
+            // 不能回退 default 场景模型（否则看板会把 qwen 误记成 deepseek）
+            String modelName = resolveLoggedModelName(chatResponse, usedModelKey);
             int promptTokens = chatResponse != null ? getPromptTokens(chatResponse) : 0;
             int completionTokens = chatResponse != null ? getCompletionTokens(chatResponse) : 0;
             int totalTokens = chatResponse != null ? getTotalTokens(chatResponse) : 0;
@@ -263,6 +309,11 @@ public class AiServiceImpl implements AiService {
                     .durationMs(durationMs)
                     .build();
             aiCallLogMapper.insert(callLog);
+            if (promptTokens == 0 && completionTokens == 0 && responseData != null && !responseData.isBlank()) {
+                log.warn("AI调用记录 token 仍为 0（供应商可能未回 usage）, id={}, scene={}, model={}, responseChars={}",
+                        callLog.getId(), callLog.getCallScene(), callLog.getModelName(),
+                        TextMetrics.charCount(responseData));
+            }
             log.info("AI调用记录已保存, id={}, scene={}, model={}, inputWords={}, assembledChars={}, tokens in/out={}/{}, cost={}, {}ms",
                     callLog.getId(), callLog.getCallScene(), callLog.getModelName(),
                     callLog.getInputWordCount(), callLog.getAssembledPromptChars(),
@@ -273,18 +324,23 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    private String getModelName(ChatResponse chatResponse) {
-        try {
-            if (chatResponse.getMetadata() != null
-                    && chatResponse.getMetadata().get("model") != null) {
-                return chatResponse.getMetadata().get("model").toString();
-            }
-        } catch (Exception ignored) {
+    /** 优先用请求时解析到的模型；同步响应元数据仅作补充 */
+    private String resolveLoggedModelName(ChatResponse chatResponse, String usedModelKey) {
+        if (usedModelKey != null && !usedModelKey.isBlank()) {
+            return usedModelKey.trim();
         }
-        return resolveFallbackModelName();
-    }
-
-    private String resolveFallbackModelName() {
+        if (chatResponse != null) {
+            try {
+                if (chatResponse.getMetadata() != null
+                        && chatResponse.getMetadata().get("model") != null) {
+                    String fromMeta = chatResponse.getMetadata().get("model").toString();
+                    if (fromMeta != null && !fromMeta.isBlank()) {
+                        return fromMeta.trim();
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
         try {
             return aiModelService.requireActiveModelKey();
         } catch (Exception e) {
@@ -292,16 +348,44 @@ public class AiServiceImpl implements AiService {
         }
     }
 
+    private String extractDeltaText(ChatResponse chatResponse) {
+        try {
+            if (chatResponse == null || chatResponse.getResult() == null
+                    || chatResponse.getResult().getOutput() == null) {
+                return "";
+            }
+            String text = chatResponse.getResult().getOutput().getText();
+            return text != null ? text : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private boolean hasTokenUsage(ChatResponse chatResponse) {
+        org.springframework.ai.chat.metadata.Usage usage = extractUsage(chatResponse);
+        return nullToZero(usage.getPromptTokens()) > 0
+                || nullToZero(usage.getCompletionTokens()) > 0
+                || nullToZero(usage.getTotalTokens()) > 0;
+    }
+
     private Integer getPromptTokens(ChatResponse chatResponse) {
-        return extractUsage(chatResponse).getPromptTokens();
+        return nullToZero(extractUsage(chatResponse).getPromptTokens());
     }
 
     private Integer getCompletionTokens(ChatResponse chatResponse) {
-        return extractUsage(chatResponse).getCompletionTokens();
+        return nullToZero(extractUsage(chatResponse).getCompletionTokens());
     }
 
     private Integer getTotalTokens(ChatResponse chatResponse) {
-        return extractUsage(chatResponse).getTotalTokens();
+        int total = nullToZero(extractUsage(chatResponse).getTotalTokens());
+        if (total > 0) {
+            return total;
+        }
+        return getPromptTokens(chatResponse) + getCompletionTokens(chatResponse);
+    }
+
+    private static int nullToZero(Integer value) {
+        return value != null ? value : 0;
     }
 
     private org.springframework.ai.chat.metadata.Usage extractUsage(ChatResponse chatResponse) {

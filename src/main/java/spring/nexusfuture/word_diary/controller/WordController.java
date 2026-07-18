@@ -70,8 +70,8 @@ public class WordController {
     @PostMapping("/ai-parse")
     public R<List<AiParseResult>> aiParse(@RequestAttribute Long userId,
                                           @PathVariable Long notebookId, @RequestBody AiParseReq req) {
-        if (req.getWords() == null || req.getWords().size() > 50) {
-            return R.fail("单次最多导入 50 个单词");
+        if (req.getWords() == null || req.getWords().size() > 20) {
+            return R.fail("单次最多生成 20 个单词");
         }
         List<AiParseResult> results = aiService.parseWords(userId, req.getWords());
         return R.ok(results);
@@ -80,9 +80,9 @@ public class WordController {
     @PostMapping(value = "/ai-parse-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter aiParseStream(@RequestAttribute Long userId,
                                     @PathVariable Long notebookId, @RequestBody AiParseReq req) {
-        if (req.getWords() == null || req.getWords().size() > 50) {
+        if (req.getWords() == null || req.getWords().size() > 20) {
             SseEmitter emitter = new SseEmitter(0L);
-            emitter.completeWithError(new RuntimeException("单次最多导入 50 个单词"));
+            emitter.completeWithError(new RuntimeException("单次最多生成 20 个单词"));
             return emitter;
         }
         // 服务端二次校验：必须是英文

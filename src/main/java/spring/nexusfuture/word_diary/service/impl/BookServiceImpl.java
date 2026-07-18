@@ -23,6 +23,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class BookServiceImpl implements BookService {
 
+    /** 每用户书架最多保留的书籍数（未删除） */
+    public static final int MAX_BOOKS_PER_USER = 10;
+
     private final WdBookMapper bookMapper;
     private final CosService cosService;
     private final PdfCompressor pdfCompressor;
@@ -32,6 +35,10 @@ public class BookServiceImpl implements BookService {
     public WdBook uploadBook(Long userId, MultipartFile file) {
         if (file.isEmpty()) {
             throw new BizException("文件不能为空");
+        }
+        int existing = bookMapper.countByUserId(userId);
+        if (existing >= MAX_BOOKS_PER_USER) {
+            throw new BizException("书架最多 " + MAX_BOOKS_PER_USER + " 本书，请先删除后再导入");
         }
 
         String originalName = file.getOriginalFilename();
@@ -67,11 +74,14 @@ public class BookServiceImpl implements BookService {
         long originalSize = fileSize;
         log.info("开始上传到 COS: key={}, size={} bytes ({} MB), type={}", cosKey, fileSize, String.format("%.2f", fileSize / 1024.0 / 1024.0), contentType);
 
+        // 过大 PDF 现场压缩极慢（雅思真题等扫描件可达数分钟），直接传原文件加快接口返回
+        final long skipCompressAboveBytes = 40L * 1024 * 1024;
+
         String storedKey;
         try {
             byte[] fileData;
-            // PDF 文件尝试压缩
-            if (".pdf".equals(ext) && pdfCompressor.isAvailable()) {
+            // PDF 文件尝试压缩（小文件跳过；超大文件跳过以免拖死上传）
+            if (".pdf".equals(ext) && originalSize < skipCompressAboveBytes && pdfCompressor.isAvailable()) {
                 try {
                     fileData = pdfCompressor.compress(file.getInputStream());
                     long compressedSize = fileData.length;
@@ -85,6 +95,9 @@ public class BookServiceImpl implements BookService {
                     fileData = file.getBytes();
                 }
             } else {
+                if (".pdf".equals(ext) && originalSize >= skipCompressAboveBytes) {
+                    log.info("PDF 超过 {}MB，跳过压缩直接上传 COS", skipCompressAboveBytes / 1024 / 1024);
+                }
                 fileData = file.getBytes();
             }
 

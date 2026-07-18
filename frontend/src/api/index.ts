@@ -67,6 +67,8 @@ export const resetPassword = (data: {
 export const createNotebook = (data: any) => api.post('/notebooks', data)
 export const getNotebooks = () => api.get('/notebooks')
 export const updateNotebook = (id: number, data: any) => api.put(`/notebooks/${id}`, data)
+export const setNotebookStudyEnabled = (id: number, enabled: boolean) =>
+  api.put(`/notebooks/${id}/study-enabled`, { enabled })
 export const deleteNotebook = (id: number) => api.delete(`/notebooks/${id}`)
 
 // Words
@@ -95,8 +97,6 @@ export const aiParseWordsStream = (notebookId: number, data: any): Promise<Respo
 }
 
 export const batchAddWords = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words/batch-add`, data)
-export const fillWordGaps = (notebookId: number, data?: { wordIds?: number[] }) =>
-  api.post(`/notebooks/${notebookId}/words/ai-fill-gaps`, data || {}, { timeout: 120000 })
 
 // Study
 export const getStudyToday = () => api.get('/study/today')
@@ -117,8 +117,9 @@ export const getTodayReview = () => api.get('/study/today-review')
 export const getTodayCompleted = () => api.get('/study/today-completed')
 export const firstLearn = (planId: number, result: number) => api.post(`/study/first-learn/${planId}`, { result })
 export const review = (planId: number, result: number) => api.post(`/study/review/${planId}`, { result })
-export const getRecords = () => api.get('/study/records')
 export const getStats = () => api.get('/study/stats')
+export const getPlanWords = (params?: { status?: 'pending' | 'learning' | 'mastered' | 'all' }) =>
+  api.get('/study/plan/words', { params })
 
 export default api
 
@@ -136,7 +137,8 @@ export const uploadBook = (file: File) => {
   formData.append('file', file)
   return api.post('/books/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000
+    // 大 PDF：浏览器上传 + 服务端压缩 + COS，可能远超 1 分钟
+    timeout: 300000
   }).then(res => {
     console.log('[API] uploadBook 响应:', res.status, res.data)
     return res
@@ -150,6 +152,8 @@ export const getBookDetail = (bookId: number) => api.get(`/books/${bookId}`)
 export const deleteBook = (bookId: number) => api.delete(`/books/${bookId}`)
 export const updateProgress = (bookId: number, data: any) => api.post(`/books/${bookId}/progress`, data)
 export const getBookFileUrl = (bookId: number) => `/api/books/${bookId}/file`
+/** COS 预签名直链（大 PDF 直连，避免经后端中转超时） */
+export const getBookPresignedFileUrl = (bookId: number) => api.get(`/books/${bookId}/file-url`)
 
 // Annotations
 export const getAnnotations = (bookId: number) => api.get(`/books/${bookId}/annotations`)

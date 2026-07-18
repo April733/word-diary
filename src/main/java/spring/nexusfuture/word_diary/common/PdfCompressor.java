@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * PDF 压缩工具
@@ -14,6 +16,11 @@ import java.io.*;
 @Slf4j
 @Component
 public class PdfCompressor {
+
+    /** 超过此时长未完成则放弃压缩，避免上传接口长时间挂起 */
+    private static final long COMPRESS_TIMEOUT_SEC = 60;
+
+    private final AtomicReference<Boolean> availableCache = new AtomicReference<>();
 
     /**
      * 压缩 PDF 文件
@@ -53,44 +60,41 @@ public class PdfCompressor {
             Process process = pb.start();
 
             // 读取 stderr/stdout 避免进程阻塞
-            String gsOutput;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line).append("\n");
+            StringBuilder sb = new StringBuilder();
+            Thread gobbler = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line).append('\n');
+                    }
+                } catch (IOException ignored) {
                 }
-                gsOutput = sb.toString();
+            }, "gs-output-gobbler");
+            gobbler.setDaemon(true);
+            gobbler.start();
+
+            boolean finished = process.waitFor(COMPRESS_TIMEOUT_SEC, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                log.warn("PDF 压缩超时({}s)，改用原文件", COMPRESS_TIMEOUT_SEC);
+                return readAll(tempInput);
             }
 
-            int exitCode = process.waitFor();
+            int exitCode = process.exitValue();
             if (exitCode != 0) {
-                log.error("Ghostscript 压缩失败, exitCode={}, output={}", exitCode, gsOutput);
+                log.error("Ghostscript 压缩失败, exitCode={}, output={}", exitCode, sb);
                 throw new IOException("PDF 压缩失败: Ghostscript 返回错误码 " + exitCode);
             }
 
-            // 读取压缩后的文件
             long compressedSize = tempOutput.length();
-            byte[] compressedData;
-            try (FileInputStream fis = new FileInputStream(tempOutput);
-                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-                fis.transferTo(bos);
-                compressedData = bos.toByteArray();
-            }
+            byte[] compressedData = readAll(tempOutput);
 
             double ratio = (1.0 - (double) compressedSize / originalSize) * 100;
             log.info("PDF 压缩完成: {} bytes -> {} bytes, 压缩率 {:.1f}%", originalSize, compressedSize, ratio);
 
-            // 如果压缩后反而更大，返回原始数据
             if (compressedSize >= originalSize) {
                 log.info("压缩后文件未变小，返回原始数据");
-                byte[] originalData;
-                try (FileInputStream fis = new FileInputStream(tempInput);
-                     ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-                    fis.transferTo(bos);
-                    originalData = bos.toByteArray();
-                }
-                return originalData;
+                return readAll(tempInput);
             }
 
             return compressedData;
@@ -98,32 +102,44 @@ public class PdfCompressor {
             Thread.currentThread().interrupt();
             throw new IOException("PDF 压缩被中断", e);
         } finally {
-            // 清理临时文件
             if (tempInput != null) tempInput.delete();
             if (tempOutput != null) tempOutput.delete();
         }
     }
 
+    private static byte[] readAll(File file) throws IOException {
+        try (FileInputStream fis = new FileInputStream(file);
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            fis.transferTo(bos);
+            return bos.toByteArray();
+        }
+    }
+
     /**
-     * 检查系统是否安装了 Ghostscript
+     * 检查系统是否安装了 Ghostscript（结果缓存，避免每次上传都起进程）
      */
     public boolean isAvailable() {
+        Boolean cached = availableCache.get();
+        if (cached != null) {
+            return cached;
+        }
+        boolean ok = false;
         try {
             ProcessBuilder pb = new ProcessBuilder("gs", "--version");
             pb.redirectErrorStream(true);
             Process process = pb.start();
-            int exitCode = process.waitFor();
-            if (exitCode == 0) {
+            boolean finished = process.waitFor(5, TimeUnit.SECONDS);
+            if (finished && process.exitValue() == 0) {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String version = reader.readLine();
                     log.info("Ghostscript 可用, 版本: {}", version);
-                    return true;
                 }
+                ok = true;
             }
-            return false;
         } catch (Exception e) {
             log.warn("Ghostscript 不可用: {}", e.getMessage());
-            return false;
         }
+        availableCache.set(ok);
+        return ok;
     }
 }

@@ -107,15 +107,30 @@ public class CosServiceImpl implements CosService {
     @Override
     public String generatePresignedUrl(String key) {
         ensureClient();
+        if (bucket == null || bucket.isBlank()) {
+            throw new BizException("COS bucket 未配置");
+        }
+        if (key == null || key.isBlank()) {
+            throw new BizException("文件路径为空");
+        }
         String fullKey = buildKey(key);
 
-        Date expiration = new Date(System.currentTimeMillis() + 3600 * 1000); // 1 小时有效
+        Date expiration = new Date(System.currentTimeMillis() + 3600 * 1000L); // 1 小时
         try {
-            URL url = cosClient.generatePresignedUrl(bucket, fullKey, expiration, HttpMethodName.GET);
-            log.info("生成签名 URL: key={}", fullKey);
-            return url.toString();
-        } catch (CosClientException e) {
-            log.error("生成签名 URL 失败: key={}", fullKey, e);
+            com.qcloud.cos.model.GeneratePresignedUrlRequest req =
+                    new com.qcloud.cos.model.GeneratePresignedUrlRequest(bucket, fullKey, HttpMethodName.GET);
+            req.setExpiration(expiration);
+            URL url = cosClient.generatePresignedUrl(req);
+            if (url == null) {
+                throw new BizException("生成文件访问链接失败: 返回空 URL");
+            }
+            String result = url.toString();
+            log.info("生成签名 URL: key={}, urlHost={}", fullKey, url.getHost());
+            return result;
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("生成签名 URL 失败: key={}, bucket={}, region={}", fullKey, bucket, region, e);
             throw new BizException("生成文件访问链接失败: " + e.getMessage());
         }
     }

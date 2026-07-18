@@ -76,13 +76,35 @@ public class WordBookServiceImpl implements WordBookService {
 
     @Override
     @Transactional
+    public void setStudyEnabled(Long userId, Long bookId, boolean enabled) {
+        WdWordBook book = bookMapper.selectById(bookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("单词本不存在");
+        }
+        int status = enabled ? 1 : 0;
+        if (book.getStatus() != null && book.getStatus() == status) {
+            return;
+        }
+        bookMapper.updateStatus(bookId, status);
+        if (!enabled) {
+            // 移出今日队列（含已完成遍次），并清掉未学新词排期，避免占每日名额 / 被补第二遍加回
+            queueMapper.deleteAllByNotebookId(bookId);
+            planMapper.clearNewScheduleByNotebookId(bookId);
+        } else {
+            // 重新开启：清掉旧排期，下次打开每日学习时按上限重新分配今日名额
+            planMapper.clearNewScheduleByNotebookId(bookId);
+        }
+    }
+
+    @Override
+    @Transactional
     public void delete(Long userId, Long bookId) {
         WdWordBook book = bookMapper.selectById(bookId);
         if (book == null || !book.getUserId().equals(userId)) {
             throw new BizException("单词本不存在");
         }
-        // 先清今日待学队列，再软删计划与单词，避免幽灵新词
-        queueMapper.deletePendingByNotebookId(bookId);
+        // 先清今日队列，再软删计划与单词，避免幽灵新词
+        queueMapper.deleteAllByNotebookId(bookId);
         planMapper.softDeleteByNotebookId(bookId);
         wordMapper.softDeleteByNotebookId(bookId);
         bookMapper.deleteById(bookId);

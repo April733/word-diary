@@ -8,8 +8,8 @@
         <h1>{{ notebookName }}</h1>
       </div>
       <div class="header-actions">
-        <t-button :loading="fillGapsLoading" @click="handleFillGaps">AI 补全空缺</t-button>
-        <t-button @click="openBatchImport">批量导入</t-button>
+        <!-- 暂时隐藏批量生成入口 -->
+        <!-- <t-button @click="openBatchImport">批量生成</t-button> -->
         <t-button theme="primary" @click="openAddDialog">添加单词</t-button>
       </div>
     </header>
@@ -91,25 +91,27 @@
       </t-form>
     </t-dialog>
 
-    <!-- 批量导入弹窗 -->
+    <!-- 批量生成弹窗 -->
     <t-dialog
       v-model:visible="showBatchDialog"
-      header="批量导入单词"
+      header="批量生成单词"
       width="900px"
       :footer="false"
+      :close-btn="!batchParsing"
+      :close-on-esc-keydown="!batchParsing"
       :close-on-overlay-click="false"
     >
       <!-- 步骤 1：输入 -->
       <div v-if="batchStep === 1">
-        <p class="batch-hint">粘贴单词/短语列表，每行一个：</p>
+        <p class="batch-hint">粘贴单词/短语列表，每行一个，AI 将自动生成音标与释义（单次最多 20 个）：</p>
         <t-textarea
           v-model="batchInput"
           placeholder="unload&#10;set up&#10;strategy&#10;strategic"
           :autosize="{ minRows: 8, maxRows: 16 }"
         />
         <div class="batch-actions">
-          <t-button @click="showBatchDialog = false">取消</t-button>
-          <t-button theme="primary" :loading="batchParsing" @click="handleAiParse">生成</t-button>
+          <t-button :disabled="batchParsing" @click="closeBatchDialog">取消</t-button>
+          <t-button theme="primary" :loading="batchParsing" @click="handleAiParse">开始生成</t-button>
         </div>
       </div>
 
@@ -127,33 +129,33 @@
           stripe
         >
           <template #wordProto="{ row, rowIndex }">
-            <t-input v-model="batchResults[rowIndex].wordProto" size="small" />
+            <t-input v-model="batchResults[rowIndex].wordProto" size="small" :disabled="batchParsing" />
           </template>
           <template #usPhonetic="{ row, rowIndex }">
-            <t-input v-model="batchResults[rowIndex].usPhonetic" size="small" />
+            <t-input v-model="batchResults[rowIndex].usPhonetic" size="small" :disabled="batchParsing" />
           </template>
           <template #ukPhonetic="{ row, rowIndex }">
-            <t-input v-model="batchResults[rowIndex].ukPhonetic" size="small" />
+            <t-input v-model="batchResults[rowIndex].ukPhonetic" size="small" :disabled="batchParsing" />
           </template>
           <template #partSpeechMean="{ row, rowIndex }">
-            <t-input v-model="batchResults[rowIndex].partSpeechMean" size="small" />
+            <t-input v-model="batchResults[rowIndex].partSpeechMean" size="small" :disabled="batchParsing" />
           </template>
           <template #sentenceExample="{ row, rowIndex }">
             <t-tooltip :content="row.sentenceExample" placement="top" :show-arrow="true">
-              <t-input v-model="batchResults[rowIndex].sentenceExample" size="small" />
+              <t-input v-model="batchResults[rowIndex].sentenceExample" size="small" :disabled="batchParsing" />
             </t-tooltip>
           </template>
           <template #rootAffix="{ row, rowIndex }">
             <t-tooltip :content="row.rootAffix" placement="top" :show-arrow="true">
-              <t-input v-model="batchResults[rowIndex].rootAffix" size="small" />
+              <t-input v-model="batchResults[rowIndex].rootAffix" size="small" :disabled="batchParsing" />
             </t-tooltip>
           </template>
           <template #op="{ rowIndex }">
-            <t-button variant="text" theme="danger" size="small" @click="batchResults.splice(rowIndex, 1)">删除</t-button>
+            <t-button variant="text" theme="danger" size="small" :disabled="batchParsing" @click="batchResults.splice(rowIndex, 1)">删除</t-button>
           </template>
         </t-table>
         <div class="batch-actions">
-          <t-button @click="resetBatch">返回修改</t-button>
+          <t-button :disabled="batchParsing" @click="resetBatch">返回修改</t-button>
           <span class="batch-count">共 {{ batchResults.length }} 条</span>
           <t-button theme="primary" :loading="batchSaving" :disabled="batchParsing" @click="handleBatchSave">确认导入</t-button>
         </div>
@@ -163,10 +165,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted, onBeforeUnmount, watch, reactive, computed } from 'vue'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getWords, addWord, updateWord, deleteWord, aiParseWords, aiParseWordsStream, batchAddWords, fillWordGaps } from '../api'
+import { getWords, addWord, updateWord, deleteWord, aiParseWords, aiParseWordsStream, batchAddWords } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,7 +178,6 @@ const words = ref<any[]>([])
 const showDialog = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
-const fillGapsLoading = ref(false)
 
 // Batch import state
 const showBatchDialog = ref(false)
@@ -186,6 +187,47 @@ const batchParsing = ref(false)
 const batchSaving = ref(false)
 const batchResults = ref<any[]>([])
 const batchStreamText = ref('')
+
+function warnBatchBusy() {
+  MessagePlugin.warning('AI 正在生成中，请稍候完成后再操作')
+}
+
+function closeBatchDialog() {
+  if (batchParsing.value) {
+    warnBatchBusy()
+    return
+  }
+  showBatchDialog.value = false
+}
+
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (!batchParsing.value) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+
+watch(showBatchDialog, (visible) => {
+  if (!visible && batchParsing.value) {
+    showBatchDialog.value = true
+    warnBatchBusy()
+  }
+})
+
+onBeforeRouteLeave(() => {
+  if (batchParsing.value) {
+    warnBatchBusy()
+    return false
+  }
+})
+
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
+  loadWords()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
+})
 
 const batchColumns = [
   { colKey: 'wordProto', title: '单词', width: 120, cell: 'wordProto' },
@@ -224,8 +266,6 @@ function openEditDialog(word: any) {
   form.rootAffix = word.rootAffix ?? ''
   showDialog.value = true
 }
-
-onMounted(() => loadWords())
 
 async function loadWords() {
   try {
@@ -285,24 +325,6 @@ async function handleDelete(wordId: number) {
   }
 }
 
-async function handleFillGaps() {
-  fillGapsLoading.value = true
-  try {
-    const res = await fillWordGaps(notebookId, {})
-    const updated = res.data.data?.updated ?? 0
-    if (updated > 0) {
-      MessagePlugin.success(`已补全 ${updated} 个单词的空缺字段`)
-      await loadWords()
-    } else {
-      MessagePlugin.info('没有需要补全的单词')
-    }
-  } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.message || '补全失败')
-  } finally {
-    fillGapsLoading.value = false
-  }
-}
-
 // Batch import functions
 function openBatchImport() {
   batchInput.value = ''
@@ -322,8 +344,8 @@ async function handleAiParse() {
     MessagePlugin.warning('请输入单词')
     return
   }
-  if (lines.length > 50) {
-    MessagePlugin.warning('单次最多导入 50 个单词')
+  if (lines.length > 20) {
+    MessagePlugin.warning('单次最多生成 20 个单词')
     return
   }
   // 校验：每行必须是英文（允许字母、空格、连字符、撇号、点）
@@ -423,6 +445,36 @@ async function handleAiParse() {
 // 用于记录已解析到文本的哪个位置，避免重复解析
 let parsedOffset = 0
 
+/** 兼容模型自创字段名（word/cn_definition 等）→ 前端表格字段 */
+function normalizeBatchResult(raw: any) {
+  const pick = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = raw?.[k]
+      if (v != null && String(v).trim() !== '') return String(v).trim()
+    }
+    return ''
+  }
+  const wordProto = pick('wordProto', 'word', 'lemma', 'text')
+  const usPhonetic = pick('usPhonetic', 'phonetic', 'us_phonetic', 'ipa')
+  const ukPhonetic = pick('ukPhonetic', 'uk_phonetic') || usPhonetic
+  const pos = pick('pos', 'partOfSpeech')
+  const cn = pick('partSpeechMean', 'cn_definition', 'definition', 'meaning')
+  const en = pick('en_definition')
+  let partSpeechMean = cn
+  if (pos && cn && !cn.startsWith(pos)) {
+    partSpeechMean = `${pos} ${cn}`
+  } else if (!partSpeechMean && en) {
+    partSpeechMean = pos ? `${pos} ${en}` : en
+  }
+  const exampleEn = pick('sentenceExample', 'example_en', 'example')
+  const exampleCn = pick('example_cn')
+  const sentenceExample = exampleEn && exampleCn && !exampleEn.includes(exampleCn)
+    ? `${exampleEn} ${exampleCn}`
+    : exampleEn || exampleCn
+  const rootAffix = pick('rootAffix', 'root_affix', 'etymology') || '暂无'
+  return { wordProto, usPhonetic, ukPhonetic, partSpeechMean, sentenceExample, rootAffix }
+}
+
 /** 从流式文本中逐步提取 JSON 对象并更新表格（基于大括号平衡） */
 function tryUpdateBatchResults(text: string, force: boolean = false) {
   // 找到 JSON 数组起始位置
@@ -484,12 +536,12 @@ function tryUpdateBatchResults(text: string, force: boolean = false) {
     }
     const objStr = text.substring(objStart, objEnd + 1)
     try {
-      const obj = JSON.parse(objStr)
+      const obj = normalizeBatchResult(JSON.parse(objStr))
       // 避免重复追加（防御性，正常 parsedOffset 已保证不重复）
       const exists = batchResults.value.some(
         (r: any) => r.wordProto && obj.wordProto && r.wordProto === obj.wordProto
       )
-      if (!exists) {
+      if (!exists && obj.wordProto) {
         batchResults.value.push(obj)
       }
     } catch (e) {
@@ -505,6 +557,10 @@ function tryUpdateBatchResults(text: string, force: boolean = false) {
 }
 
 function resetBatch() {
+  if (batchParsing.value) {
+    warnBatchBusy()
+    return
+  }
   batchStep.value = 1
   batchResults.value = []
   batchStreamText.value = ''

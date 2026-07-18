@@ -131,6 +131,13 @@ async function createForBook() {
     MessagePlugin.warning(t('reader.notebookLinkNameRequired'))
     return
   }
+  const dup = notebooks.value.some(
+    n => (n.notebookName || '').trim().toLowerCase() === name.toLowerCase()
+  )
+  if (dup) {
+    MessagePlugin.warning(t('reader.notebookLinkDuplicateName'))
+    return
+  }
   creating.value = true
   try {
     const res = await createNotebook({
@@ -144,12 +151,14 @@ async function createForBook() {
       activeId.value = newId
       emit('update:activeNotebookId', newId)
     }
-    resetCreateForm()
+    createForm.bookName = ''
+    createForm.bookDesc = ''
     await loadData()
     emit('changed')
     MessagePlugin.success(t('reader.notebookLinkCreateSuccess'))
+    visibleModel.value = false
   } catch (e: any) {
-    MessagePlugin.error(e.response?.data?.message || t('reader.notebookLinkCreateError'))
+    MessagePlugin.error(e.response?.data?.message || e.message || t('reader.notebookLinkCreateError'))
   } finally {
     creating.value = false
   }

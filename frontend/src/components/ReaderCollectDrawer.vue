@@ -8,14 +8,33 @@
     <template #header>
       <div class="drawer-header">
         <div class="drawer-title">
-          <span class="drawer-title-text">{{ drawerTitle }}</span>
-          <span
-            v-if="viewMode === 'notebook'"
-            class="trash-badge"
-            :title="$t('reader.collectWordCount', { n: savedWords.length })"
-          >{{ savedWords.length }}</span>
+          <template v-if="viewMode === 'notebook' && linkedNotebooks.length">
+            <t-dropdown trigger="click" :options="notebookMenuOptions" @click="onNotebookMenuClick">
+              <button type="button" class="drawer-title-switch" :title="$t('reader.notebookLinkManage')">
+                <span class="drawer-title-text">{{ drawerTitle }}</span>
+                <t-icon name="chevron-down" size="16px" />
+              </button>
+            </t-dropdown>
+            <span
+              class="trash-badge"
+              :title="$t('reader.collectWordCount', { n: savedWords.length })"
+            >{{ savedWords.length }}</span>
+          </template>
+          <template v-else>
+            <span class="drawer-title-text">{{ drawerTitle }}</span>
+          </template>
         </div>
         <div v-if="linkedNotebooks.length && viewMode !== 'current'" class="drawer-header-actions">
+          <t-button
+            v-if="viewMode === 'notebook'"
+            variant="text"
+            size="small"
+            :title="$t('reader.notebookLinkCreate')"
+            @click="emit('open-link-dialog')"
+          >
+            <t-icon name="add" size="18px" />
+            {{ $t('reader.notebookLinkCreateConfirm') }}
+          </t-button>
           <t-button
             v-if="viewMode === 'trash'"
             variant="text"
@@ -294,7 +313,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { collectBookWords, deleteWord, getWordTrash, getWords, restoreWord } from '../api'
 import type { CollectEntry } from '../utils/collectBasket'
@@ -328,6 +347,7 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
   'open-link-dialog': []
+  'select-notebook': [notebookId: number]
 }>()
 
 const { t } = useI18n()
@@ -347,9 +367,35 @@ const visibleModel = computed({
   set: (v: boolean) => emit('update:visible', v)
 })
 
+const notebookMenuOptions = computed(() => {
+  const items = props.linkedNotebooks.map((nb) => ({
+    content: nb.notebookName,
+    value: String(nb.notebookId),
+    active: nb.notebookId === notebookId.value,
+  }))
+  items.push({
+    content: t('reader.notebookLinkCreate'),
+    value: '__create__',
+    active: false,
+  })
+  return items
+})
+
+function onNotebookMenuClick(dropdownItem: { value?: string | number }) {
+  const val = dropdownItem?.value
+  if (val == null) return
+  if (val === '__create__') {
+    emit('open-link-dialog')
+    return
+  }
+  const id = Number(val)
+  if (!Number.isFinite(id) || id === notebookId.value) return
+  notebookId.value = id
+  emit('select-notebook', id)
+}
 /** 本次收录：每词只展示包含该词的那一句原文 */
 function exampleForEntry(entry: CollectEntry): string {
-  const snippet = props.sourceSnippet || entry.sentenceExample || ''
+  const snippet = props.sourceSnippet || entry.sourceSnippet || entry.sentenceExample || ''
   return pickSentenceForLemma(snippet, entry.wordProto)
 }
 
@@ -475,19 +521,36 @@ async function saveToNotebook() {
     emit('open-link-dialog')
     return
   }
+
+  // 保存前刷新词表，检测已存在词条
+  await loadSavedWords(notebookId.value)
+  const existingKeys = new Set(
+    savedWords.value.map(w => (w.wordProto || '').trim().toLowerCase()).filter(Boolean)
+  )
+  const duplicates = checkedEntries.value.filter(e =>
+    existingKeys.has(e.wordProto.trim().toLowerCase())
+  )
+  let overwriteExisting = false
+  if (duplicates.length > 0) {
+    const names = duplicates.map(e => e.wordProto).join(t('reader.collectWordListSep'))
+    overwriteExisting = await askOverwriteExisting(names, duplicates.length)
+  }
+
   saving.value = true
   try {
     const res = await collectBookWords(props.bookId, {
       notebookId: notebookId.value,
       sourceSnippet: props.sourceSnippet || '',
       sourceLocation: props.sourceLocation || '',
+      overwriteExisting,
       items: checkedEntries.value.map(e => ({
         entryType: e.entryType,
         wordProto: e.wordProto,
         partSpeechMean: e.partSpeechMean,
         usPhonetic: e.usPhonetic,
         ukPhonetic: e.ukPhonetic,
-        rootAffix: e.rootAffix
+        rootAffix: e.rootAffix,
+        overwrite: overwriteExisting
       }))
     })
     const data = res.data.data
@@ -506,6 +569,41 @@ async function saveToNotebook() {
   } finally {
     saving.value = false
   }
+}
+
+/**
+ * 已存在时询问是否覆盖。
+ * 注意：TDesign 点「确定」时可能先触发 onClose，不能在 onClose 里直接判为取消。
+ */
+function askOverwriteExisting(names: string, count: number): Promise<boolean> {
+  return new Promise(resolve => {
+    let settled = false
+    let choseOverwrite = false
+    const finish = (overwrite: boolean) => {
+      if (settled) return
+      settled = true
+      resolve(overwrite)
+    }
+    const dialog = DialogPlugin.confirm({
+      header: t('reader.collectOverwriteTitle'),
+      body: t('reader.collectOverwriteBody', { words: names, n: count }),
+      confirmBtn: { content: t('reader.collectOverwriteYes'), theme: 'primary' },
+      cancelBtn: t('reader.collectOverwriteNo'),
+      onConfirm: () => {
+        choseOverwrite = true
+        finish(true)
+        dialog.destroy()
+      },
+      onCancel: () => {
+        finish(false)
+        dialog.destroy()
+      },
+      onClose: () => {
+        // 仅在未点「覆盖」时视为取消/跳过
+        if (!choseOverwrite) finish(false)
+      }
+    })
+  })
 }
 
 function speak(text: string, accent: 'us' | 'uk' = 'us') {
@@ -545,6 +643,27 @@ watch(() => props.visible, (open) => {
   }
 })
 
+watch(
+  () => props.targetNotebookId,
+  (id) => {
+    if (!props.visible || id == null) return
+    if (id === notebookId.value) return
+    if (!props.linkedNotebooks.some(n => n.notebookId === id)) return
+    notebookId.value = id
+  },
+)
+
+watch(
+  () => props.linkedNotebooks.map(n => n.notebookId).join(','),
+  () => {
+    if (!props.visible || !props.linkedNotebooks.length) return
+    if (notebookId.value && props.linkedNotebooks.some(n => n.notebookId === notebookId.value)) return
+    const nextId = props.targetNotebookId && props.linkedNotebooks.some(n => n.notebookId === props.targetNotebookId)
+      ? props.targetNotebookId
+      : props.linkedNotebooks[0].notebookId
+    notebookId.value = nextId
+  },
+)
 watch(() => props.currentEntries, (entries) => {
   if (entries.length > 0 && props.visible && viewMode.value === 'current') {
     checkedKeys.value = new Set(entries.map(e => e.basketKey))
@@ -602,6 +721,24 @@ watch(notebookId, (id) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.drawer-title-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+}
+.drawer-title-switch:hover {
+  color: #5e57b5;
 }
 .drawer-header-actions {
   flex-shrink: 0;

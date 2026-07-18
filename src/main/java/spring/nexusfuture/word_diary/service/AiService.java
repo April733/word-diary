@@ -1,5 +1,6 @@
 package spring.nexusfuture.word_diary.service;
 
+import org.springframework.ai.chat.messages.Message;
 import spring.nexusfuture.word_diary.dto.AiParseResult;
 import reactor.core.publisher.Flux;
 import java.util.List;
@@ -28,4 +29,12 @@ public interface AiService {
      */
     Flux<String> chatStream(Long userId, String callScene, String inputText,
                             String systemPrompt, String userPrompt);
+
+    /**
+     * 流式对话，可附带多轮历史（按时间正序的 user/assistant 消息）。
+     * history 为空时等价于无记忆单轮调用。
+     */
+    Flux<String> chatStream(Long userId, String callScene, String inputText,
+                            String systemPrompt, String userPrompt,
+                            List<Message> history);
 }

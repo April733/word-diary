@@ -137,6 +137,53 @@ class BookCollectServiceImplTest {
     }
 
     @Test
+    void collect_overwritesWhenFlagSet() {
+        when(wordMapper.selectByNotebookAndWordProto(2L, "approach"))
+                .thenReturn(WdWord.builder().id(10L).wordProto("approach")
+                        .partSpeechMean("n. 方法").sentenceExample("【原文】old").build());
+
+        CollectEntryDTO dto = entry("approach", "n. 方法; 途径; v. 接近; 处理", false);
+        dto.setOverwrite(true);
+        dto.setUsPhonetic("/əˈproʊtʃ/");
+        dto.setRootAffix("approach (词根)");
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setSourceSnippet("A different approach from the cut and cover technique.");
+        req.setItems(List.of(dto));
+
+        BookCollectResultVO result = service.collect(9L, 1L, req);
+        assertEquals(0, result.getAdded());
+        assertEquals(0, result.getSkipped());
+        assertEquals(1, result.getUpdated());
+        ArgumentCaptor<WdWord> captor = ArgumentCaptor.forClass(WdWord.class);
+        verify(wordMapper).update(captor.capture());
+        WdWord updated = captor.getValue();
+        assertEquals("n. 方法; 途径; v. 接近; 处理", updated.getPartSpeechMean());
+        assertEquals("/əˈproʊtʃ/", updated.getUsPhonetic());
+        assertEquals("approach (词根)", updated.getRootAffix());
+        assertEquals(1L, updated.getSourceBookId());
+        assertTrue(updated.getSentenceExample().contains("approach"));
+        verify(wordMapper, never()).insert(any());
+    }
+
+    @Test
+    void collect_overwritesWhenRequestFlagSet() {
+        when(wordMapper.selectByNotebookAndWordProto(2L, "approach"))
+                .thenReturn(WdWord.builder().id(10L).wordProto("approach")
+                        .partSpeechMean("n. 方法").build());
+
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setOverwriteExisting(true);
+        req.setItems(List.of(entry("approach", "n. 方法; v. 接近", false)));
+
+        BookCollectResultVO result = service.collect(9L, 1L, req);
+        assertEquals(1, result.getUpdated());
+        assertEquals(0, result.getSkipped());
+        verify(wordMapper).update(any());
+    }
+
+    @Test
     void collect_ignoresAiSentenceExampleAndDoesNotAppend() {
         when(wordMapper.selectByNotebookAndWordProto(2L, "strategy"))
                 .thenReturn(WdWord.builder().id(10L).wordProto("strategy")

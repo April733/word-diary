@@ -122,6 +122,13 @@ public class StudyController {
         return R.ok(studyService.getStats(userId));
     }
 
+    /** 全部在背单词列表：status = pending | learning | mastered | all */
+    @GetMapping("/plan/words")
+    public R<List<StudyTaskVO>> planWords(@RequestAttribute Long userId,
+                                          @RequestParam(required = false, defaultValue = "all") String status) {
+        return R.ok(studyService.listPlanWords(userId, status));
+    }
+
     @GetMapping("/debug/plans")
     public R<List<Map<String, Object>>> debugPlans(@RequestAttribute Long userId) {
         List<WdLearnPlan> plans = planMapper.selectAllByUserId(userId);

@@ -125,6 +125,30 @@ class CollectJsonSupportTest {
     }
 
     @Test
+    void parseEntriesEnriched_prefersMultiPosMeaningFromProse() {
+        String raw = """
+                单词：
+                - **approach**: 美 /əˈproʊtʃ/, 英 /əˈprəʊtʃ/; n. 方法; 途径; v. 接近; 处理
+
+                %s
+                {"entries":[{"entryType":"word","wordProto":"approach","partSpeechMean":"n. 方法；途径","usPhonetic":"/əˈproʊtʃ/","ukPhonetic":"/əˈprəʊtʃ/"}]}
+                """.formatted(CollectJsonSupport.MARKER);
+
+        List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(raw, mapper);
+        assertEquals(1, entries.size());
+        String mean = entries.get(0).getPartSpeechMean();
+        assertTrue(mean.contains("n."), mean);
+        assertTrue(mean.contains("v."), "应保留正文中的动词义: " + mean);
+    }
+
+    @Test
+    void preferRicherMeaning_keepsMorePosTags() {
+        assertEquals(
+                "n. 方法; 途径; v. 接近; 处理",
+                CollectJsonSupport.preferRicherMeaning("n. 方法；途径", "n. 方法; 途径; v. 接近; 处理"));
+    }
+
+    @Test
     void extractPhrasesFromProse_readsBulletsWithoutJson() {
         String prose = """
                 ## 固定搭配
@@ -137,6 +161,58 @@ class CollectJsonSupportTest {
         assertEquals("pull down", phrases.get(0).getWordProto());
         assertTrue(phrases.get(0).getPartSpeechMean().contains("拆除"));
         assertEquals("require sb to do sth", phrases.get(1).getWordProto());
+    }
+
+    @Test
+    void extractWordsFromProse_readsWordSectionWithPhonetics() {
+        String prose = """
+                翻译：
+                通风井的使用未能防止隧道内的污染。
+
+                单词：
+                - shafts: 美 /ˈʃæftz/, 英 /ˈʃæfts/; n. 井；竖井；通风井
+
+                固定搭配：
+                - use of: 使用……的方法/工具
+                - failed to prevent: 未能阻止
+
+                语法：
+                主语 + 谓语
+                """;
+        List<CollectEntryDTO> words = CollectJsonSupport.extractWordsFromProse(prose);
+        assertEquals(1, words.size());
+        assertEquals("word", words.get(0).getEntryType());
+        assertEquals("shafts", words.get(0).getWordProto());
+        assertEquals("/ˈʃæftz/", words.get(0).getUsPhonetic());
+        assertEquals("/ˈʃæfts/", words.get(0).getUkPhonetic());
+        assertTrue(words.get(0).getPartSpeechMean().contains("井"));
+
+        List<CollectEntryDTO> phrases = CollectJsonSupport.extractPhrasesFromProse(prose);
+        assertEquals(2, phrases.size());
+        assertTrue(phrases.stream().anyMatch(e -> "use of".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(phrases.stream().anyMatch(e -> "failed to prevent".equalsIgnoreCase(e.getWordProto())));
+    }
+
+    @Test
+    void parseEntriesEnriched_mergesWordsFromWordSectionWhenJsonMissesThem() {
+        String raw = """
+                单词：
+                - **shafts**: 美 /ˈʃæftz/, 英 /ˈʃæfts/; n. 井；竖井；通风井
+
+                固定搭配：
+                - **use of**：使用
+                - **failed to prevent**：未能阻止
+
+                %s
+                {"entries":[{"entryType":"phrase","wordProto":"use of","partSpeechMean":"短语. 使用"},{"entryType":"phrase","wordProto":"failed to prevent","partSpeechMean":"短语. 未能阻止"}]}
+                """.formatted(CollectJsonSupport.MARKER);
+
+        List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(raw, mapper);
+        assertTrue(entries.stream().anyMatch(e ->
+                "word".equals(e.getEntryType()) && "shafts".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(entries.stream().anyMatch(e ->
+                "phrase".equals(e.getEntryType()) && "use of".equalsIgnoreCase(e.getWordProto())));
+        assertEquals(3, entries.size());
     }
 
     @Test

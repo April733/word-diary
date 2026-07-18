@@ -23,15 +23,28 @@ public final class CollectJsonSupport {
     private static final Pattern COLLOCATION_HEADING = Pattern.compile(
             "(?i)^#{0,6}\\s*(?:\\*\\*)?(固定搭配|固搭|短语(?:用法)?|常用搭配|词组|collocations?|fixed\\s+phrases?|phrasal\\s+verbs?)(?:\\*\\*)?\\s*[:：]?\\s*$");
 
-    /** 其它 markdown 标题（用于结束搭配小节） */
+    /** 「单词 / Words」等小节标题 */
+    private static final Pattern WORD_HEADING = Pattern.compile(
+            "(?i)^#{0,6}\\s*(?:\\*\\*)?(单词|单词讲解|词汇|words?|vocabulary)(?:\\*\\*)?\\s*[:：]?\\s*$");
+
+    /** 任一已知小节标题（用于结束当前小节；含无 ## 的「翻译：」） */
+    private static final Pattern ANY_SECTION_HEADING = Pattern.compile(
+            "(?i)^#{0,6}\\s*(?:\\*\\*)?(翻译|释义|整体释义|单词|单词讲解|词汇|固搭|固定搭配|语法|语法结构|句式|词根词缀|例句|"
+                    + "words?|vocabulary|collocations?|fixed\\s+phrases?|phrasal\\s+verbs?|grammar|translation)"
+                    + "(?:\\*\\*)?\\s*[:：]?\\s*$");
+
+    /** 其它 markdown 标题（用于结束搭配/单词小节） */
     private static final Pattern OTHER_HEADING = Pattern.compile("^#{1,6}\\s+\\S");
 
     /**
-     * 搭配列表行（避免嵌套量词 ReDoS）：先抓「冒号前英文 + 冒号后释义」。
-     * 例：- **pull down**：拆除
+     * 列表行：- **lemma**：释义（单词/搭配共用）
      */
-    private static final Pattern COLLOCATION_BULLET = Pattern.compile(
+    private static final Pattern LEMMA_BULLET = Pattern.compile(
             "^\\s*(?:[-*•]|\\d+[.)])\\s*(?:\\*\\*)?([^:*：—–\\n]{1,120}?)(?:\\*\\*)?\\s*[:：—–\\-]\\s*(.{1,300})$");
+
+    /** 美/英音标 + 词性释义 */
+    private static final Pattern WORD_PHONETIC_MEANING = Pattern.compile(
+            "(?i)^(?:美|US)\\s*(/[^/\\n]{1,40}/)\\s*[,，]?\\s*(?:英|UK)\\s*(/[^/\\n]{1,40}/)\\s*[;；]?\\s*(.*)$");
 
     private static final int MAX_PROSE_LINE_LEN = 400;
 
@@ -58,8 +71,8 @@ public final class CollectJsonSupport {
         return """
 
                 【收录】讲解结束后另起一行输出 %s，再输出一行 JSON（勿用代码块）：
-                {"entries":[{"entryType":"word|phrase","wordProto":"原形","partSpeechMean":"n. 释义","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"词根或组成"}]}
-                规则：仅收录正文实际讲解的单词/搭配（勿为未讲解的常见词造条）；word 须含美英 IPA；partSpeechMean 用 n./v./adj. 等缩写；勿输出 sentenceExample。
+                {"entries":[{"entryType":"word|phrase","wordProto":"原形","partSpeechMean":"n. 释义；v. 释义","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"词根或组成"}]}
+                规则：仅收录正文实际讲解的单词/搭配（勿为未讲解的常见词造条）；word 须含美英 IPA；partSpeechMean 须与单词小节一致，多词性写成 n. …；v. …（勿只留语境义）；勿输出 sentenceExample。
                 """.formatted(MARKER);
     }
 
@@ -112,8 +125,8 @@ public final class CollectJsonSupport {
         return """
 
                 [Collect] After the explanation, output marker %s on a new line, then one JSON line (no code fence):
-                {"entries":[{"entryType":"word|phrase","wordProto":"lemma","partSpeechMean":"n. meaning","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"root or composition"}]}
-                Rules: one entry per explained word/collocation; words need US+UK IPA; use POS abbreviations; no sentenceExample.
+                {"entries":[{"entryType":"word|phrase","wordProto":"lemma","partSpeechMean":"n. meaning; v. meaning","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"root or composition"}]}
+                Rules: one entry per explained word/collocation; words need US+UK IPA; partSpeechMean must match the word section (include all POS shown, e.g. n. …; v. …); no sentenceExample.
                 """.formatted(MARKER);
     }
 
@@ -262,12 +275,15 @@ public final class CollectJsonSupport {
     }
 
     /**
-     * 解析 COLLECT_JSON，并用讲解正文中的「固定搭配」列表补全漏收的短语。
+     * 解析 COLLECT_JSON，并用讲解正文中的「单词 / 固定搭配」列表补全漏收词条。
      * 含空格的词条若被标成 word，也会纠正为 phrase。
      */
     public static List<CollectEntryDTO> parseEntriesEnriched(String text, ObjectMapper mapper) {
         List<CollectEntryDTO> fromJson = parseEntries(text, mapper);
-        List<CollectEntryDTO> fromProse = extractPhrasesFromProse(stripForDisplay(text));
+        String display = stripForDisplay(text);
+        List<CollectEntryDTO> fromProse = new ArrayList<>();
+        fromProse.addAll(extractWordsFromProse(display));
+        fromProse.addAll(extractPhrasesFromProse(display));
 
         Map<String, CollectEntryDTO> merged = new LinkedHashMap<>();
         for (CollectEntryDTO e : fromJson) {
@@ -278,9 +294,112 @@ public final class CollectJsonSupport {
         for (CollectEntryDTO e : fromProse) {
             CollectEntryDTO normalized = normalizeEntry(e);
             if (normalized == null) continue;
-            merged.putIfAbsent(entryKey(normalized), normalized);
+            String key = entryKey(normalized);
+            CollectEntryDTO existing = merged.get(key);
+            if (existing == null) {
+                merged.put(key, normalized);
+            } else {
+                // JSON 常只留语境义；正文多词性时用更完整释义补全
+                merged.put(key, enrichFromProse(existing, normalized));
+            }
         }
         return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * 同词条合并：释义取词性更全/更长的一方，音标与词根缺则补。
+     */
+    static CollectEntryDTO enrichFromProse(CollectEntryDTO fromJson, CollectEntryDTO fromProse) {
+        if (fromJson == null) return fromProse;
+        if (fromProse == null) return fromJson;
+        return CollectEntryDTO.builder()
+                .entryType(fromJson.getEntryType() != null ? fromJson.getEntryType() : fromProse.getEntryType())
+                .wordProto(fromJson.getWordProto())
+                .partSpeechMean(preferRicherMeaning(fromJson.getPartSpeechMean(), fromProse.getPartSpeechMean()))
+                .usPhonetic(blankToNull(fromJson.getUsPhonetic()) != null
+                        ? fromJson.getUsPhonetic() : fromProse.getUsPhonetic())
+                .ukPhonetic(blankToNull(fromJson.getUkPhonetic()) != null
+                        ? fromJson.getUkPhonetic() : fromProse.getUkPhonetic())
+                .sentenceExample(blankToNull(fromJson.getSentenceExample()) != null
+                        ? fromJson.getSentenceExample() : fromProse.getSentenceExample())
+                .rootAffix(blankToNull(fromJson.getRootAffix()) != null
+                        ? fromJson.getRootAffix() : fromProse.getRootAffix())
+                .appendExample(fromJson.getAppendExample() != null
+                        ? fromJson.getAppendExample() : fromProse.getAppendExample())
+                .build();
+    }
+
+    /** 优先保留含更多词性标记的释义（如 n.…; v.… 优于仅 n.…） */
+    static String preferRicherMeaning(String a, String b) {
+        if (a == null || a.isBlank()) return b;
+        if (b == null || b.isBlank()) return a;
+        int ca = countPosMarkers(a);
+        int cb = countPosMarkers(b);
+        if (cb > ca) return b.trim();
+        if (ca > cb) return a.trim();
+        return b.trim().length() > a.trim().length() ? b.trim() : a.trim();
+    }
+
+    private static int countPosMarkers(String meaning) {
+        if (meaning == null || meaning.isBlank()) return 0;
+        Matcher m = Pattern.compile(
+                "(?i)\\b(?:n|v|adj|adv|prep|conj|pron|det|num|int|phr|vt|vi)\\.|短语\\.?|\\bphrase\\.?")
+                .matcher(meaning);
+        int n = 0;
+        while (m.find()) n++;
+        return n;
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
+    /** 从讲解正文「单词」等小节提取单词（兜底，模型漏写 COLLECT_JSON 时用） */
+    public static List<CollectEntryDTO> extractWordsFromProse(String displayText) {
+        if (displayText == null || displayText.isBlank()) {
+            return Collections.emptyList();
+        }
+        List<CollectEntryDTO> out = new ArrayList<>();
+        boolean inSection = false;
+        for (String rawLine : displayText.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isEmpty() || line.length() > MAX_PROSE_LINE_LEN) continue;
+            if (WORD_HEADING.matcher(line).matches()) {
+                inSection = true;
+                continue;
+            }
+            if (inSection && isSectionExit(line, true)) {
+                inSection = false;
+                continue;
+            }
+            if (!inSection) continue;
+
+            Matcher m = LEMMA_BULLET.matcher(line);
+            if (!m.matches()) continue;
+            String proto = cleanProto(m.group(1));
+            String rawMeaning = cleanMeaning(m.group(2));
+            if (proto.isEmpty() || rawMeaning.isEmpty() || !looksLikeEnglishWord(proto)) continue;
+
+            String us = null;
+            String uk = null;
+            String meaning = rawMeaning;
+            Matcher ph = WORD_PHONETIC_MEANING.matcher(rawMeaning);
+            if (ph.matches()) {
+                us = ph.group(1);
+                uk = ph.group(2);
+                meaning = cleanMeaning(ph.group(3));
+            }
+            if (meaning.isEmpty()) continue;
+
+            out.add(CollectEntryDTO.builder()
+                    .entryType("word")
+                    .wordProto(proto)
+                    .partSpeechMean(meaning)
+                    .usPhonetic(us)
+                    .ukPhonetic(uk)
+                    .build());
+        }
+        return out;
     }
 
     /** 从讲解正文「固定搭配」等小节提取短语（兜底，模型漏写 COLLECT_JSON 时用） */
@@ -297,13 +416,13 @@ public final class CollectJsonSupport {
                 inSection = true;
                 continue;
             }
-            if (inSection && OTHER_HEADING.matcher(line).matches() && !COLLOCATION_HEADING.matcher(line).matches()) {
+            if (inSection && isSectionExit(line, false)) {
                 inSection = false;
                 continue;
             }
             if (!inSection) continue;
 
-            Matcher m = COLLOCATION_BULLET.matcher(line);
+            Matcher m = LEMMA_BULLET.matcher(line);
             if (!m.matches()) continue;
             String proto = cleanProto(m.group(1));
             String meaning = cleanMeaning(m.group(2));
@@ -317,6 +436,17 @@ public final class CollectJsonSupport {
                     .build());
         }
         return out;
+    }
+
+    /** 离开当前单词/搭配小节：遇到其它小节标题或 ## 标题 */
+    private static boolean isSectionExit(String line, boolean inWordSection) {
+        if (OTHER_HEADING.matcher(line).matches()) {
+            if (inWordSection) return !WORD_HEADING.matcher(line).matches();
+            return !COLLOCATION_HEADING.matcher(line).matches();
+        }
+        if (!ANY_SECTION_HEADING.matcher(line).matches()) return false;
+        if (inWordSection) return !WORD_HEADING.matcher(line).matches();
+        return !COLLOCATION_HEADING.matcher(line).matches();
     }
 
     private static CollectEntryDTO normalizeEntry(CollectEntryDTO e) {
@@ -356,6 +486,13 @@ public final class CollectJsonSupport {
         }
         return p.contains(" ") || p.contains("...") || p.contains("…")
                 || (p.indexOf('-') > 0 && p.matches("(?i)[a-z]+(?:-[a-z]+)+"));
+    }
+
+    /** 单词小节里的单词语条（不含空格短语） */
+    private static boolean looksLikeEnglishWord(String proto) {
+        String p = proto.trim();
+        if (p.isEmpty() || looksLikeEnglishPhrase(p)) return false;
+        return p.matches("(?i)^[a-z][a-z0-9'’]*$");
     }
 
     private static String cleanProto(String raw) {

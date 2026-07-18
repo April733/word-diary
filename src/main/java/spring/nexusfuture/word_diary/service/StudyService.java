@@ -13,4 +13,6 @@ public interface StudyService {
     void review(Long userId, Long planId, Integer result);
     List<StudyRecordVO> getRecords(Long userId);
     StatsVO getStats(Long userId);
+    /** status: pending | learning | mastered | all（默认 all） */
+    List<StudyTaskVO> listPlanWords(Long userId, String status);
 }

@@ -48,9 +48,6 @@
             @keydown="onInlineNoteKeydown"
             @blur="onInlineNoteBlur"
           />
-          <div v-if="ocrLoading && selectPage === pageNum" class="pdf-ocr-overlay">
-            <t-loading size="small" text="识别中…" />
-          </div>
         </div>
       </div>
     </div>
@@ -64,17 +61,38 @@
       <t-button variant="text" size="small" title="+" @click="zoomIn">
         <t-icon name="add" size="14px" />
       </t-button>
-      <span class="pdf-page-count">{{ totalPages }}</span>
-      <span v-if="ocrLoading" class="pdf-ocr-status">…</span>
     </div>
 
-    <!-- 右侧：批注工具（透明悬浮，纯图标；全未选中=框选） -->
-    <aside class="pdf-toolbar" aria-label="Tools" @mousedown.stop>
+    <!-- 右侧：批注工具（透明悬浮；框选为默认模式） -->
+    <aside class="pdf-toolbar" data-guide="pdf-tools" aria-label="Tools" @mousedown.stop>
+      <span data-guide="pdf-select" class="pdf-tool-guide-anchor">
+        <t-button
+          variant="text"
+          size="small"
+          :class="{ 'tool-active': annotateMode === 'none' }"
+          :title="$t('reader.pdfToolSelect')"
+          @click="setAnnotateMode('none')"
+        >
+          <svg class="select-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <rect
+              x="4.5"
+              y="4.5"
+              width="15"
+              height="15"
+              rx="1.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-dasharray="3.2 2.4"
+            />
+          </svg>
+        </t-button>
+      </span>
       <t-button
         variant="text"
         size="small"
         :class="{ 'tool-active': annotateMode === 'pen' }"
-        title="Pen"
+        :title="$t('reader.pdfToolPen')"
         @click="setAnnotateMode('pen')"
       >
         <t-icon name="edit" size="18px" />
@@ -83,7 +101,7 @@
         variant="text"
         size="small"
         :class="{ 'tool-active': annotateMode === 'text' }"
-        title="Note"
+        :title="$t('reader.pdfToolNote')"
         @click="setAnnotateMode('text')"
       >
         <t-icon name="keyboard" size="18px" />
@@ -92,7 +110,7 @@
         variant="text"
         size="small"
         :class="{ 'tool-active': annotateMode === 'eraser' }"
-        title="Eraser"
+        :title="$t('reader.pdfToolEraser')"
         @click="setAnnotateMode('eraser')"
       >
         <svg class="eraser-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -109,8 +127,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import axios from 'axios'
-import { getBookFileUrl, updateProgress, getPdfMarkups, addPdfMarkup, deletePdfMarkup } from '../api'
+import { getBookFileUrl, getBookPresignedFileUrl, updateProgress, getPdfMarkups, addPdfMarkup, deletePdfMarkup } from '../api'
 import { pdfjsLib, encodePdfCfi, decodePdfCfi, estimatePageHeight, type PdfProgressCfi } from '../utils/pdfReader'
 import { cropAndSharpenRegion, recognizeRegion, terminateOcrWorker } from '../utils/pdfImageOcr'
 import { normalizeSelectedText } from '../utils/selectedText'
@@ -330,22 +347,54 @@ function redrawMarkupLayer(pageNum: number) {
   }
 }
 
+function buildProxyDocParams(token: string | null) {
+  return {
+    url: getBookFileUrl(props.bookId),
+    httpHeaders: token ? { Authorization: `Bearer ${token}` } : {},
+  }
+}
+
+async function openPdfDocument(docParams: Record<string, unknown>) {
+  const loadingTask = pdfjsLib.getDocument({
+    ...docParams,
+    disableAutoFetch: false,
+    disableStream: false,
+    rangeChunkSize: 1024 * 1024,
+  })
+  return loadingTask.promise
+}
+
 async function loadDocument() {
   emit('loading', true)
-  const fileUrl = getBookFileUrl(props.bookId)
   try {
     const token = localStorage.getItem('token')
-    const response = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 120000,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!response.data || response.data.byteLength === 0) {
-      throw new Error('下载的 PDF 文件为空')
+    let usedCos = false
+
+    // 1) 优先 COS 预签名直链（大文件更快）；CORS 未配好时回退后端代理
+    try {
+      const urlRes = await getBookPresignedFileUrl(props.bookId)
+      const signedUrl = urlRes.data?.data?.url
+      if (signedUrl) {
+        console.log('[PdfReader] 使用 COS 预签名直链加载')
+        usedCos = true
+        pdfDoc = await openPdfDocument({ url: signedUrl })
+      }
+    } catch (e) {
+      console.warn(
+        usedCos
+          ? '[PdfReader] COS 直链加载失败（多为 CORS），回退后端 /file'
+          : '[PdfReader] 预签名失败，回退后端 /file',
+        e,
+      )
+      pdfDoc = null
     }
 
-    const loadingTask = pdfjsLib.getDocument({ data: response.data })
-    pdfDoc = await loadingTask.promise
+    // 2) 回退：PDF.js 请求同源 /file（带 Token）
+    if (!pdfDoc) {
+      console.log('[PdfReader] 使用后端 /file 流式加载')
+      pdfDoc = await openPdfDocument(buildProxyDocParams(token))
+    }
+
     if (destroyed) {
       pdfDoc.destroy()
       pdfDoc = null
@@ -1017,7 +1066,12 @@ async function onSelectEnd() {
     saveProgress()
   } catch (err: any) {
     console.error('[PdfReader] OCR 失败:', err)
-    MessagePlugin.error('文字识别失败，请重试')
+    const msg = String(err?.message || err || '')
+    if (/wasm|fetch|404|Failed to load|network/i.test(msg)) {
+      MessagePlugin.error('识别引擎加载失败，请检查 /tesseract 静态资源或刷新重试')
+    } else {
+      MessagePlugin.error('文字识别失败，请重试')
+    }
   } finally {
     ocrLoading.value = false
     // 短暂保留选框提示，随后清除
@@ -1138,19 +1192,6 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.pdf-page-count {
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 10px;
-  margin-left: 6px;
-  line-height: 1;
-}
-
-.pdf-ocr-status {
-  color: #ffd666;
-  font-size: 10px;
-  margin-left: 6px;
-}
-
 /* 右侧批注：透明悬浮 */
 .pdf-toolbar {
   position: absolute;
@@ -1171,6 +1212,11 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
   pointer-events: auto;
+}
+
+.pdf-tool-guide-anchor {
+  display: inline-flex;
+  line-height: 0;
 }
 
 .pdf-toolbar :deep(.t-button) {
@@ -1251,7 +1297,7 @@ onBeforeUnmount(() => {
 .pdf-select-rect {
   position: absolute;
   border: 2px solid #4da3ff;
-  background: rgba(77, 163, 255, 0.18);
+  background: rgba(77, 163, 255, 0.12);
   pointer-events: none;
   z-index: 5;
   box-sizing: border-box;
@@ -1285,15 +1331,5 @@ onBeforeUnmount(() => {
 .pdf-inline-note:focus {
   border-color: rgba(229, 57, 53, 0.75);
   background: rgba(255, 255, 255, 0.32);
-}
-
-.pdf-ocr-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.25);
-  z-index: 6;
 }
 </style>

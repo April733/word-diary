@@ -5,6 +5,7 @@ import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.LearnStatus;
 import spring.nexusfuture.word_diary.common.StudyAlgorithm;
+import spring.nexusfuture.word_diary.common.StudyDay;
 import spring.nexusfuture.word_diary.common.StudyFeedback;
 import spring.nexusfuture.word_diary.dto.*;
 import spring.nexusfuture.word_diary.entity.*;
@@ -50,14 +51,37 @@ public class StudySessionServiceImpl implements StudySessionService {
     }
 
     @Override
+    public LocalDate currentStudyDate(Long userId) {
+        return StudyDay.current(getUnlockHour(userId));
+    }
+
+    @Override
+    public LocalDateTime currentStudyDayStart(Long userId) {
+        return StudyDay.startOf(currentStudyDate(userId), getUnlockHour(userId));
+    }
+
+    @Override
+    public LocalDateTime currentStudyDayEnd(Long userId) {
+        return StudyDay.endOf(currentStudyDate(userId), getUnlockHour(userId));
+    }
+
+    private LocalDateTime windowStart(Long userId, LocalDate studyDate) {
+        return StudyDay.startOf(studyDate, getUnlockHour(userId));
+    }
+
+    private LocalDateTime windowEnd(Long userId, LocalDate studyDate) {
+        return StudyDay.endOf(studyDate, getUnlockHour(userId));
+    }
+
+    @Override
     @Transactional
     public StudyTodayVO getToday(Long userId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = currentStudyDate(userId);
         planMapper.migrateForgottenToNotLearned(userId);
         pruneStaleQueue(userId, today);
         WdStudyDaily daily = dailyMapper.selectByUserAndDate(userId, today);
         if (daily == null) {
-            int reviewCount = dedupByWordId(planMapper.selectReviewTasks(userId, getUnlockHour(userId))).size();
+            int reviewCount = dedupByWordId(planMapper.selectReviewTasks(userId, today)).size();
             allocateNewWords(userId, today);
             int newCount = Math.min(getDailyNewLimit(userId),
                     dedupByWordId(planMapper.selectTodayNewWords(userId, today)).size());
@@ -73,7 +97,7 @@ public class StudySessionServiceImpl implements StudySessionService {
     @Override
     @Transactional
     public StudySessionVO openSession(Long userId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = currentStudyDate(userId);
         planMapper.migrateForgottenToNotLearned(userId);
         pruneStaleQueue(userId, today);
 
@@ -93,9 +117,9 @@ public class StudySessionServiceImpl implements StudySessionService {
         if (queueCount == 0) {
             allocateNewWords(userId, today);
             List<Long> completedToday = queueMapper.selectWordIdsWithMinDonePasses(
-                    userId, today, REQUIRED_DAILY_PASSES);
+                    userId, windowStart(userId, today), windowEnd(userId, today), REQUIRED_DAILY_PASSES);
             List<WdLearnPlan> reviewPlans = filterStudiedToday(
-                    dedupByWordId(planMapper.selectReviewTasks(userId, getUnlockHour(userId))), completedToday);
+                    dedupByWordId(planMapper.selectReviewTasks(userId, today)), completedToday);
             List<WdLearnPlan> newPlans = filterStudiedToday(
                     dedupByWordId(planMapper.selectTodayNewWords(userId, today)), completedToday);
             int newLimit = getDailyNewLimit(userId);
@@ -155,7 +179,7 @@ public class StudySessionServiceImpl implements StudySessionService {
             throw new BizException("无效的反馈类型");
         }
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = currentStudyDate(userId);
         WdStudyQueue queueItem = queueMapper.selectById(req.getQueueItemId());
         if (queueItem == null || !queueItem.getUserId().equals(userId)
                 || !queueItem.getStudyDate().equals(today)) {
@@ -199,7 +223,8 @@ public class StudySessionServiceImpl implements StudySessionService {
 
         queueMapper.updateState(queueItem.getId(), WdStudyQueue.STATE_DONE);
 
-        int donePasses = queueMapper.countDoneByPlan(userId, today, plan.getId());
+        int donePasses = queueMapper.countDoneByPlan(
+                userId, plan.getId(), windowStart(userId, today), windowEnd(userId, today));
         if (feedback == StudyFeedback.FUZZY || feedback == StudyFeedback.FORGET) {
             insertIntraday(userId, today, plan, phase, feedback, queueItem.getSortOrder());
         } else if (donePasses < REQUIRED_DAILY_PASSES) {
@@ -263,25 +288,50 @@ public class StudySessionServiceImpl implements StudySessionService {
     private void allocateNewWords(Long userId, LocalDate today) {
         WdUserStudyPref pref = ensurePref(userId);
         int limit = pref.getDailyNewLimit();
+        List<WdLearnPlan> alreadyDue = dedupByWordId(planMapper.selectTodayNewWords(userId, today));
+        int room = Math.max(0, limit - alreadyDue.size());
+        int nextSeq = alreadyDue.stream()
+                .map(WdLearnPlan::getNewAllocSeq)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .max()
+                .orElse(-1) + 1;
+
+        // 1) 未排期 → 今日（填满上限为止）
         List<WdLearnPlan> unscheduled = dedupByWordId(planMapper.selectUnscheduledNew(userId));
+        int take = Math.min(room, unscheduled.size());
+        for (int i = 0; i < take; i++) {
+            WdLearnPlan plan = unscheduled.get(i);
+            plan.setScheduledNewDate(today);
+            plan.setNewAllocSeq(nextSeq++);
+            planMapper.updateSchedule(plan);
+        }
+        room -= take;
+
+        // 2) 上限上调后：把原先排到未来的词提前到今日
+        if (room > 0) {
+            List<WdLearnPlan> future = dedupByWordId(planMapper.selectFutureScheduledNew(userId, today));
+            int pull = Math.min(room, future.size());
+            for (int i = 0; i < pull; i++) {
+                WdLearnPlan plan = future.get(i);
+                plan.setScheduledNewDate(today);
+                plan.setNewAllocSeq(nextSeq++);
+                planMapper.updateSchedule(plan);
+            }
+        }
+
+        // 3) 自动均摊：剩余未排期摊到后续学习日
+        boolean autoSpread = pref.getAutoSpreadNew() == null || pref.getAutoSpreadNew() == 1;
+        if (!autoSpread) {
+            return;
+        }
+        unscheduled = dedupByWordId(planMapper.selectUnscheduledNew(userId));
         if (unscheduled.isEmpty()) {
             return;
         }
-
-        boolean autoSpread = pref.getAutoSpreadNew() == null || pref.getAutoSpreadNew() == 1;
-        if (!autoSpread) {
-            for (int i = 0; i < Math.min(limit, unscheduled.size()); i++) {
-                WdLearnPlan plan = unscheduled.get(i);
-                plan.setScheduledNewDate(today);
-                plan.setNewAllocSeq(i);
-                planMapper.updateSchedule(plan);
-            }
-            return;
-        }
-
         for (int i = 0; i < unscheduled.size(); i++) {
             WdLearnPlan plan = unscheduled.get(i);
-            int dayOffset = i / limit;
+            int dayOffset = 1 + i / limit;
             plan.setScheduledNewDate(today.plusDays(dayOffset));
             plan.setNewAllocSeq(i);
             planMapper.updateSchedule(plan);
@@ -294,9 +344,9 @@ public class StudySessionServiceImpl implements StudySessionService {
     private void supplementTodayWork(Long userId, LocalDate today, WdStudyDaily daily) {
         allocateNewWords(userId, today);
         List<Long> completedToday = queueMapper.selectWordIdsWithMinDonePasses(
-                userId, today, REQUIRED_DAILY_PASSES);
+                userId, windowStart(userId, today), windowEnd(userId, today), REQUIRED_DAILY_PASSES);
         List<WdLearnPlan> reviewPlans = filterStudiedToday(
-                dedupByWordId(planMapper.selectReviewTasks(userId, getUnlockHour(userId))), completedToday);
+                dedupByWordId(planMapper.selectReviewTasks(userId, today)), completedToday);
         List<WdLearnPlan> newPlans = filterStudiedToday(
                 dedupByWordId(planMapper.selectTodayNewWords(userId, today)), completedToday);
 
@@ -310,10 +360,9 @@ public class StudySessionServiceImpl implements StudySessionService {
                 .collect(Collectors.toList());
 
         int newLimit = getDailyNewLimit(userId);
-        long existingNewCount = existing.stream()
-                .filter(q -> WdStudyQueue.TYPE_NEW.equals(q.getQueueType()))
-                .count();
-        int room = Math.max(0, newLimit - (int) existingNewCount);
+        // 只按「待学」新词占名额，已完成遍次不占今日新词上限
+        int existingNewPending = queueMapper.countPendingByPhase(userId, today, PHASE_NEW);
+        int room = Math.max(0, newLimit - existingNewPending);
         List<WdLearnPlan> missingNew = newPlans.stream()
                 .filter(p -> !alreadyQueued.contains(p.getId()))
                 .limit(room)
@@ -375,6 +424,11 @@ public class StudySessionServiceImpl implements StudySessionService {
                     && pendingCount.getOrDefault(planId, 0L) == 0) {
                 WdLearnPlan plan = planMapper.selectById(planId);
                 if (plan == null) continue;
+                WdWordBook notebook = bookMapper.selectById(plan.getNotebookId());
+                // 已关闭背诵的单词本不再补第二遍
+                if (notebook == null || (notebook.getStatus() != null && notebook.getStatus() == 0)) {
+                    continue;
+                }
                 String phase = phaseByPlan.getOrDefault(planId, PHASE_NEW);
                 int sortOrder = queueMapper.maxSortOrder(userId, today) + 1;
                 insertQueueItem(userId, today, planId, WdStudyQueue.TYPE_INTRADAY, phase, sortOrder,
@@ -434,10 +488,11 @@ public class StudySessionServiceImpl implements StudySessionService {
                 REASON_CONFIRM_PASS);
     }
 
-    /** 删除单词本/单词后，清掉仍挂在今日队列里的幽灵任务 */
+    /** 删除单词本/单词后，清掉仍挂在今日队列里的幽灵任务；关闭背诵的本也一并清掉 */
     private void pruneStaleQueue(Long userId, LocalDate today) {
+        int removedDisabled = queueMapper.deletePendingFromDisabledNotebooks(userId, today);
         List<WdStudyQueue> items = queueMapper.selectByUserAndDate(userId, today);
-        boolean changed = false;
+        boolean changed = removedDisabled > 0;
         for (WdStudyQueue item : items) {
             if (item.getState() == null || item.getState() != WdStudyQueue.STATE_PENDING) {
                 continue;
@@ -450,7 +505,11 @@ public class StudySessionServiceImpl implements StudySessionService {
             }
             WdWord word = wordMapper.selectById(plan.getWordId());
             WdWordBook notebook = bookMapper.selectById(plan.getNotebookId());
-            if (word == null || notebook == null) {
+            // 单词本关闭参与学习后，清掉仍挂在今日队列的待学项（status=0；null 视为开启）
+            boolean studyDisabled = notebook != null
+                    && notebook.getStatus() != null
+                    && notebook.getStatus() == 0;
+            if (word == null || notebook == null || studyDisabled) {
                 queueMapper.deleteById(item.getId());
                 changed = true;
             }
@@ -490,11 +549,11 @@ public class StudySessionServiceImpl implements StudySessionService {
     private void refreshDailyProgress(WdStudyDaily daily, Long userId, LocalDate today) {
         int reviewPending = queueMapper.countPendingByPhase(userId, today, PHASE_REVIEW);
         int newPending = queueMapper.countPendingByPhase(userId, today, PHASE_NEW);
-        // 按「词」计完成：至少背完 REQUIRED_DAILY_PASSES 遍
+        // 按「词」计完成：学习日时间窗内至少背完 REQUIRED_DAILY_PASSES 遍
         int reviewDone = queueMapper.countWordsWithMinDonePassesByPhase(
-                userId, today, PHASE_REVIEW, REQUIRED_DAILY_PASSES);
+                userId, PHASE_REVIEW, windowStart(userId, today), windowEnd(userId, today), REQUIRED_DAILY_PASSES);
         int newDone = queueMapper.countWordsWithMinDonePassesByPhase(
-                userId, today, PHASE_NEW, REQUIRED_DAILY_PASSES);
+                userId, PHASE_NEW, windowStart(userId, today), windowEnd(userId, today), REQUIRED_DAILY_PASSES);
 
         if (reviewPending == 0 && daily.getReviewTotal() != null && daily.getReviewTotal() > 0) {
             daily.setReviewPhaseDone(1);
@@ -666,7 +725,7 @@ public class StudySessionServiceImpl implements StudySessionService {
     public List<StudyTaskVO> listTodayQueue(Long userId, String phase) {
         // 确保今日队列已生成
         openSession(userId);
-        LocalDate today = LocalDate.now();
+        LocalDate today = currentStudyDate(userId);
         String normalized = phase == null ? "" : phase.trim().toLowerCase();
         List<WdStudyQueue> items;
         if (PHASE_REVIEW.equals(normalized) || PHASE_NEW.equals(normalized)) {

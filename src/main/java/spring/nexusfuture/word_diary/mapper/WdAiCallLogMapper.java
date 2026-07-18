@@ -131,7 +131,10 @@ public interface WdAiCallLogMapper {
     @Select("""
             SELECT model_name AS name, COUNT(*) AS calls,
                    COALESCE(SUM(total_tokens),0) AS total_tokens,
-                   COALESCE(SUM(estimated_cost),0) AS estimated_cost
+                   COALESCE(SUM(estimated_cost),0) AS estimated_cost,
+                   ROUND(AVG(duration_ms)) AS avg_duration_ms,
+                   MIN(duration_ms) AS min_duration_ms,
+                   MAX(duration_ms) AS max_duration_ms
             FROM wd_ai_call_log
             WHERE is_deleted = 0
             GROUP BY model_name

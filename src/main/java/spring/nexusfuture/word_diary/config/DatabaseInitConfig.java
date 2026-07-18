@@ -57,10 +57,14 @@ public class DatabaseInitConfig implements ApplicationRunner {
             ensureScenePromptTable(conn, stmt);
             seedScenePromptsIfEmpty(stmt);
             migrateScenePromptLanguagePlaceholder(stmt);
+            migrateWordParsePromptSchema(conn);
             ensureWordFeaturePhonetics(conn, stmt);
             migrateWordFeatureConciseGloss(conn, stmt);
             migrateSplitAiModelAndScene(conn, stmt);
             ensureAiProviderTable(conn, stmt);
+            // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
+            ensureColumn(conn, stmt, "wd_user", "preferred_locale",
+                    "ALTER TABLE wd_user ADD COLUMN preferred_locale varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言' AFTER role");
             ensureColumn(conn, stmt, "wd_user", "preferred_ai_region",
                     "ALTER TABLE wd_user ADD COLUMN preferred_ai_region varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global' AFTER preferred_locale");
 
@@ -442,8 +446,27 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 (`scene_key`, `locale`, `scene_name`, `system_prompt`, `remark`, `status`, `sort_num`) VALUES
                 ('word_parse', 'zh-CN', '单词解析',
                 '{global_constraint}
-                你是一个专业的英语词典助手。用户会给你一个英文单词/短语列表（JSON数组），请为每个词条补全信息，并以严格的 JSON 数组格式返回。必须返回完整的 JSON 数组，不要有任何额外的解释文字。',
-                '占位符 {global_constraint}=按语言注入回复规则；未配置其它语言时回退代码内置模板', 1, 1),
+你是一个专业的英语词典助手。用户会给你一个英文单词/短语列表（JSON数组），请为每个词条补全以下信息，并以严格的 JSON 数组格式返回。
+
+返回格式要求：
+[
+  {
+    "wordProto": "原词",
+    "usPhonetic": "美式音标，如 /ˈeksəmpəl/",
+    "ukPhonetic": "英式音标，如 /ɪɡˈzɑːmpəl/",
+    "partSpeechMean": "词性+中文释义，如 n. 例子；v. 举例",
+    "sentenceExample": "为每个词性各提供一个例句，格式：词性标记. 英文例句 中文翻译。多个词性用换行符\\n分隔",
+    "rootAffix": "词根词缀解析；短语可写「短语，无词根词缀」"
+  }
+]
+
+要求：
+1. 必须返回完整的 JSON 数组，不要有任何额外的解释文字
+2. 字段名必须严格使用上述 camelCase（wordProto/usPhonetic/ukPhonetic/partSpeechMean/sentenceExample/rootAffix），禁止使用 word、phonetic、cn_definition 等其它字段名
+3. 字段不能为空，如果确实没有信息，写\"暂无\"
+4. 音标使用 IPA 国际音标
+5. 对于短语，partSpeechMean 标注为「短语」',
+                '占位符 {global_constraint}=按语言注入回复规则；字段必须与前端 AiParseResult 一致', 1, 1),
                 ('reading_chat', 'zh-CN', '阅读对话',
                 '{global_constraint}
                 你是一个专业的英语阅读助手。用户正在阅读英文原著，请用{language}回答用户的问题。
@@ -482,6 +505,49 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("迁移 sys_ai_scene_prompt 语言占位符失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 旧 word_parse 种子未写死 JSON 字段名，模型会返回 word/cn_definition 等导致前端表格空白。
+     */
+    private void migrateWordParsePromptSchema(Connection conn) {
+        try {
+            String prompt = """
+                    {global_constraint}
+                    你是一个专业的英语词典助手。用户会给你一个英文单词/短语列表（JSON数组），请为每个词条补全以下信息，并以严格的 JSON 数组格式返回。
+
+                    返回格式要求：
+                    [
+                      {
+                        "wordProto": "原词",
+                        "usPhonetic": "美式音标，如 /ˈeksəmpəl/",
+                        "ukPhonetic": "英式音标，如 /ɪɡˈzɑːmpəl/",
+                        "partSpeechMean": "词性+中文释义，如 n. 例子；v. 举例",
+                        "sentenceExample": "为每个词性各提供一个例句，格式：词性标记. 英文例句 中文翻译。多个词性用换行符\\\\n分隔",
+                        "rootAffix": "词根词缀解析；短语可写「短语，无词根词缀」"
+                      }
+                    ]
+
+                    要求：
+                    1. 必须返回完整的 JSON 数组，不要有任何额外的解释文字
+                    2. 字段名必须严格使用上述 camelCase（wordProto/usPhonetic/ukPhonetic/partSpeechMean/sentenceExample/rootAffix），禁止使用 word、phonetic、cn_definition 等其它字段名
+                    3. 字段不能为空，如果确实没有信息，写\\"暂无\\"
+                    4. 音标使用 IPA 国际音标
+                    5. 对于短语，partSpeechMean 标注为「短语」
+                    """;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_scene_prompt SET system_prompt = ?, remark = ?, update_time = NOW() " +
+                            "WHERE scene_key = 'word_parse' AND is_deleted = 0 AND system_prompt NOT LIKE '%wordProto%'")) {
+                ps.setString(1, prompt);
+                ps.setString(2, "字段必须与前端 AiParseResult 一致；占位符 {global_constraint}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: word_parse 提示词已补全 JSON 字段 schema，共 {} 行", n);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("迁移 word_parse 提示词 schema 失败: {}", e.getMessage());
         }
     }
 

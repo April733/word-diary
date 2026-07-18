@@ -2,10 +2,14 @@ package spring.nexusfuture.word_diary.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.CollectJsonSupport;
 import spring.nexusfuture.word_diary.common.R;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
@@ -41,6 +45,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -108,11 +114,16 @@ public class BookController {
         return R.ok();
     }
 
-    /** 获取书籍文件（后端代理 COS 下载，返回文件流给前端 epub.js） */
+    /** 获取书籍文件（后端代理 COS 下载，返回文件流给前端） */
     @GetMapping("/{bookId}/file")
-    public void getFile(@PathVariable Long bookId,
+    public void getFile(@RequestAttribute Long userId,
+                        @PathVariable Long bookId,
                         jakarta.servlet.http.HttpServletResponse response) throws IOException {
         WdBook book = bookService.getBook(bookId);
+        if (!userId.equals(book.getUserId())) {
+            response.sendError(403, "无权访问");
+            return;
+        }
         String cosKey = book.getFilePath();
         log.info("getFile: bookId={}, cosKey={}", bookId, cosKey);
 
@@ -130,7 +141,9 @@ public class BookController {
             if (fileSize > 0) {
                 response.setContentLengthLong(fileSize);
             }
-            byte[] buffer = new byte[8192];
+            // 大文件流式转发，避免 nginx/客户端过早断开
+            response.setHeader("Cache-Control", "private, max-age=60");
+            byte[] buffer = new byte[64 * 1024];
             int bytesRead;
             long total = 0;
             while ((bytesRead = in.read(buffer)) != -1) {
@@ -141,7 +154,33 @@ public class BookController {
             log.info("getFile: 文件传输完成, bookId={}, 共 {} bytes", bookId, total);
         } catch (Exception e) {
             log.error("getFile: 下载失败, bookId={}", bookId, e);
-            response.sendError(500, "无法获取文件");
+            if (!response.isCommitted()) {
+                response.sendError(500, "无法获取文件");
+            }
+        }
+    }
+
+    /** 大文件直链：返回 COS 预签名 URL，浏览器/PDF.js 直连拉取，避免经后端中转超时 */
+    @GetMapping("/{bookId}/file-url")
+    public R<Map<String, String>> getFileUrl(@RequestAttribute Long userId, @PathVariable Long bookId) {
+        try {
+            WdBook book = bookService.getBook(bookId);
+            if (!userId.equals(book.getUserId())) {
+                throw new BizException(403, "无权访问");
+            }
+            if (book.getFilePath() == null || book.getFilePath().isBlank()) {
+                throw new BizException("书籍文件路径为空");
+            }
+            String url = cosService.generatePresignedUrl(book.getFilePath());
+            Map<String, String> body = new java.util.HashMap<>();
+            body.put("url", url);
+            body.put("fileType", book.getFileType() != null ? book.getFileType() : "");
+            return R.ok(body);
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("getFileUrl 失败 bookId={}", bookId, e);
+            throw new BizException("获取文件链接失败: " + e.getMessage());
         }
     }
 
@@ -266,7 +305,16 @@ public class BookController {
         return R.ok(readerSettingsService.saveSettings(userId, settings));
     }
 
-    /** AI 流式对话（支持会话记忆） */
+    /** 问答注入模型的最近消息条数：3 轮 ≈ 解析1+2+3（每轮 user+assistant） */
+    private static final int AI_CHAT_HISTORY_LIMIT = 6;
+
+    /**
+     * AI 流式对话。
+     * <ul>
+     *   <li>解析：写入 session 便于回查；调用模型时不带历史（每次独立）</li>
+     *   <li>问答：写入 session，并把最近若干条（含解析）注入模型</li>
+     * </ul>
+     */
     @PostMapping(value = "/ai-chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter aiChat(@RequestAttribute Long userId,
                              @RequestBody Map<String, Object> body) {
@@ -285,42 +333,53 @@ public class BookController {
 
         final boolean isAnalyze = (featureKeys != null && !featureKeys.isEmpty())
                 || (featureKey != null && !featureKey.isBlank());
+        final boolean freeChat = !isAnalyze;
         final String requestKind = isAnalyze ? "解析" : "问答";
 
-        // ★ 关键指标①：后台收到请求
+        // ★ 重要指标①：后台收到请求
         log.info("========== [耗时] ①收到{}请求 userId={} bookId={} features={} contextLen={} targets={} ==========",
                 requestKind, userId, bookId,
                 featureKeys != null && !featureKeys.isEmpty() ? featureKeys : featureKey,
                 context != null ? context.length() : 0,
                 targetWords);
 
-        // 获取或创建会话
+        List<Message> historyMessages = Collections.emptyList();
+        Long parentMessageId = null;
+        String savedFeatureKey = featureKeys != null && !featureKeys.isEmpty()
+                ? String.join(",", featureKeys) : featureKey;
+
+        // 解析与问答都写入同一 session（便于回查）；仅问答把历史塞给模型
         long tSession = System.currentTimeMillis();
         if (sessionId == null) {
             WdAiSession session = aiSessionService.getOrCreateSession(userId, bookId);
             sessionId = session.getId();
         }
-        log.info("[ai-chat] 会话就绪 sessionId={}, 耗时={}ms", sessionId, System.currentTimeMillis() - tSession);
+        log.info("[ai-chat] 会话就绪 sessionId={}, kind={}, 耗时={}ms",
+                sessionId, requestKind, System.currentTimeMillis() - tSession);
 
-        // 判断用户输入
+        if (freeChat) {
+            long tHistory = System.currentTimeMillis();
+            historyMessages = buildChatHistory(sessionId, AI_CHAT_HISTORY_LIMIT);
+            log.info("[ai-chat] 问答加载历史 historyMsgs={}, 耗时={}ms",
+                    historyMessages.size(), System.currentTimeMillis() - tHistory);
+        } else {
+            log.info("[ai-chat] 解析模式：落库但不注入历史");
+        }
+
         String userMessageContent;
         if (featureKeys != null && !featureKeys.isEmpty()) {
             userMessageContent = "【多选功能】" + context;
-        } else if (featureKey != null && !featureKey.isEmpty()) {
-            userMessageContent = question;
+        } else if (isAnalyze) {
+            userMessageContent = question != null ? question : ("【" + featureKey + "】" + context);
         } else {
             userMessageContent = question;
         }
-
-        // 保存用户消息
         long tSaveUser = System.currentTimeMillis();
-        String savedFeatureKey = featureKeys != null && !featureKeys.isEmpty()
-                ? String.join(",", featureKeys) : featureKey;
-        WdAiMessage savedUserMsg = aiSessionService.saveMessage(sessionId, null, "user", userMessageContent, savedFeatureKey);
-        final Long parentMessageId = savedUserMsg.getId();
+        WdAiMessage savedUserMsg = aiSessionService.saveMessage(
+                sessionId, null, "user", userMessageContent, savedFeatureKey);
+        parentMessageId = savedUserMsg.getId();
         log.info("[ai-chat] 保存用户消息 msgId={}, 耗时={}ms", parentMessageId, System.currentTimeMillis() - tSaveUser);
 
-        // 如果是会话第一条消息，更新标题
         long tTitle = System.currentTimeMillis();
         List<WdAiMessage> allMessages = aiSessionService.getMessages(sessionId);
         if (allMessages.size() == 1) {
@@ -337,15 +396,15 @@ public class BookController {
         String userPrompt;
 
         if (featureKeys != null && !featureKeys.isEmpty()) {
-            // 多选功能模式
+            // 多选功能模式（解析）
             systemPrompt = promptBuilder.buildMultiFeaturePrompt(locale, featureKeys, context);
             userPrompt = promptBuilder.buildMultiFeatureUserPrompt(locale, featureKeys, context);
         } else if (featureKey != null && !featureKey.isEmpty()) {
-            // 单功能模式
+            // 单功能模式（解析）
             systemPrompt = promptBuilder.buildFeaturePrompt(locale, featureKey, context);
             userPrompt = promptBuilder.buildFeatureUserPrompt(locale, featureKey, context);
         } else {
-            // 普通对话模式
+            // 普通对话模式（问答，带记忆）
             systemPrompt = promptBuilder.buildReadingAssistantPrompt(locale, context);
             userPrompt = promptBuilder.buildReadingAssistantUserPrompt(locale, question);
         }
@@ -369,32 +428,33 @@ public class BookController {
             systemPrompt = systemPrompt + CollectJsonSupport.collectInstruction(locale);
         }
         // 范围约束仅用于自由问答；解析选中文本本身即语言学习任务，不必重复长段约束
-        final boolean freeChat = (featureKeys == null || featureKeys.isEmpty())
-                && (featureKey == null || featureKey.isBlank());
         if (freeChat) {
             systemPrompt = systemPrompt + promptBuilder.languageLearningScopeInstruction(locale);
         }
-        log.info("[ai-chat] 拼装提示词完成 sysChars={}, userChars={}, collect={}, phonetic={}, 耗时={}ms",
+        log.info("[ai-chat] 拼装提示词完成 sysChars={}, userChars={}, collect={}, phonetic={}, history={}, 耗时={}ms",
                 systemPrompt != null ? systemPrompt.length() : 0,
                 userPrompt != null ? userPrompt.length() : 0,
-                collectEnabled, phoneticEnabled, System.currentTimeMillis() - tPrompt);
+                collectEnabled, phoneticEnabled, historyMessages.size(),
+                System.currentTimeMillis() - tPrompt);
 
         final String finalSystemPrompt = systemPrompt;
         final String finalUserPrompt = userPrompt;
+        final List<Message> finalHistory = historyMessages;
 
         final Long finalSessionId = sessionId;
+        final Long finalParentMessageId = parentMessageId;
         final String finalFeatureKey = savedFeatureKey;
+        final boolean persistSession = true;
         final StringBuilder fullResponseText = new StringBuilder();
 
         // 原始输入：优先选中上下文，否则用提问（用于成本字数统计）
         final String rawInput = (context != null && !context.isBlank()) ? context
                 : (question != null ? question : "");
-        final String callScene = (featureKeys != null && !featureKeys.isEmpty()) || (featureKey != null && !featureKey.isEmpty())
-                ? "feature"
-                : "reading_chat";
+        final String callScene = isAnalyze ? "feature" : "reading_chat";
 
         final long prepMs = System.currentTimeMillis() - t0;
-        log.info("[ai-chat] 同步准备完成（即将异步调模型）prepMs={}, scene={}", prepMs, callScene);
+        log.info("[ai-chat] 同步准备完成（即将异步调模型）prepMs={}, scene={}, persistSession={}",
+                prepMs, callScene, persistSession);
 
         // 与单词流式解析一致：异步订阅，避免阻塞 MVC 线程导致 SSE 缓冲
         final long asyncSubmitAt = System.currentTimeMillis();
@@ -405,12 +465,13 @@ public class BookController {
             final int[] chunkCount = {0};
             try {
                 long tSubscribe = System.currentTimeMillis();
-                aiService.chatStream(userId, callScene, rawInput, finalSystemPrompt, finalUserPrompt)
+                aiService.chatStream(userId, callScene, rawInput,
+                                finalSystemPrompt, finalUserPrompt, finalHistory)
                         .subscribe(
                                 content -> {
                                     if (firstChunkAt[0] == 0L && content != null && !content.isEmpty()) {
                                         firstChunkAt[0] = System.currentTimeMillis();
-                                        // ★ 关键指标②：AI 流式首字到达（相对①收到请求）
+                                        // ★ 重要指标②：AI 流式首字到达（相对①收到请求）
                                         log.info("========== [耗时] ②AI流式首字到达 kind={} 距收到请求={}ms prepMs={} queueWaitMs={} 首字预览={} ==========",
                                                 requestKind,
                                                 firstChunkAt[0] - t0,
@@ -445,9 +506,10 @@ public class BookController {
                                     log.error("[ai-chat] 流式失败 totalMs={}, chunks={}, err={}",
                                             System.currentTimeMillis() - t0, chunkCount[0], error.getMessage(), error);
                                     String partialResponse = fullResponseText.toString();
-                                    if (!partialResponse.isEmpty()) {
+                                    if (persistSession && finalSessionId != null && !partialResponse.isEmpty()) {
                                         try {
-                                            aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", partialResponse, finalFeatureKey);
+                                            aiSessionService.saveMessage(finalSessionId, finalParentMessageId,
+                                                    "assistant", partialResponse, finalFeatureKey);
                                         } catch (Exception ignored) {}
                                     }
                                     synchronized (emitter) {
@@ -468,12 +530,13 @@ public class BookController {
                                             streamMs, ttfb, genAfterFirst, chunkCount[0], fullResponseText.length());
                                     synchronized (emitter) {
                                         try {
-                                            long tPersist = System.currentTimeMillis();
                                             String fullResponse = fullResponseText.toString();
-                                            if (!fullResponse.isEmpty()) {
-                                                aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", fullResponse, finalFeatureKey);
+                                            if (persistSession && finalSessionId != null && !fullResponse.isEmpty()) {
+                                                long tPersist = System.currentTimeMillis();
+                                                aiSessionService.saveMessage(finalSessionId, finalParentMessageId,
+                                                        "assistant", fullResponse, finalFeatureKey);
+                                                log.info("[ai-chat] 保存助手消息 耗时={}ms", System.currentTimeMillis() - tPersist);
                                             }
-                                            log.info("[ai-chat] 保存助手消息 耗时={}ms", System.currentTimeMillis() - tPersist);
                                             if (collectEnabled) {
                                                 long tCollect = System.currentTimeMillis();
                                                 List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(fullResponse, objectMapper);
@@ -485,9 +548,12 @@ public class BookController {
                                                             .data(objectMapper.writeValueAsString(Map.of("entries", entries)), MediaType.APPLICATION_JSON));
                                                 }
                                             }
+                                            String donePayload = persistSession && finalSessionId != null
+                                                    ? "{\"sessionId\":" + finalSessionId + "}"
+                                                    : "{\"sessionId\":null}";
                                             emitter.send(SseEmitter.event()
                                                     .name("done")
-                                                    .data("{\"sessionId\":" + finalSessionId + "}", MediaType.APPLICATION_JSON));
+                                                    .data(donePayload, MediaType.APPLICATION_JSON));
                                             log.info("[ai-chat] 全链路完成 totalMs={}, prepMs={}, streamMs={}, TTFB={}ms",
                                                     System.currentTimeMillis() - t0, prepMs, streamMs, ttfb);
                                         } catch (IOException e) { /* ignore */ }
@@ -511,6 +577,34 @@ public class BookController {
 
         log.info("[ai-chat] 已提交异步任务并返回 SSE emitter, syncReturnMs={}", System.currentTimeMillis() - t0);
         return emitter;
+    }
+
+    /**
+     * 将会话最近消息转为模型历史（时间正序）。
+     * 含解析记录（问答需要解析1+2+3作上下文）；assistant 去掉 COLLECT_JSON。
+     */
+    private List<Message> buildChatHistory(Long sessionId, int limit) {
+        List<WdAiMessage> recent = aiSessionService.getRecentMessages(sessionId, limit);
+        if (recent == null || recent.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Collections.reverse(recent);
+        List<Message> out = new ArrayList<>(recent.size());
+        for (WdAiMessage msg : recent) {
+            if (msg == null || msg.getContent() == null || msg.getContent().isBlank()) {
+                continue;
+            }
+            String role = msg.getRole() != null ? msg.getRole().trim().toLowerCase() : "";
+            if ("user".equals(role)) {
+                out.add(new UserMessage(msg.getContent()));
+            } else if ("assistant".equals(role)) {
+                String content = CollectJsonSupport.stripForDisplay(msg.getContent());
+                if (!content.isBlank()) {
+                    out.add(new AssistantMessage(content));
+                }
+            }
+        }
+        return out;
     }
 
     @GetMapping("/{bookId}/notebook-links")
