@@ -270,6 +270,7 @@ public class BookController {
     @PostMapping(value = "/ai-chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter aiChat(@RequestAttribute Long userId,
                              @RequestBody Map<String, Object> body) {
+        final long t0 = System.currentTimeMillis();
         String question = (String) body.get("question");
         String context = (String) body.getOrDefault("context", "");
         String locale = (String) body.getOrDefault("locale", "zh-CN");
@@ -278,14 +279,28 @@ public class BookController {
         String featureKey = (String) body.get("featureKey");
         @SuppressWarnings("unchecked")
         List<String> featureKeys = (List<String>) body.get("featureKeys");
+        List<String> targetWords = CollectJsonSupport.normalizeTargetWords(body.get("targetWords"));
         Long sessionId = body.get("sessionId") != null
                 ? Long.valueOf(body.get("sessionId").toString()) : null;
 
+        final boolean isAnalyze = (featureKeys != null && !featureKeys.isEmpty())
+                || (featureKey != null && !featureKey.isBlank());
+        final String requestKind = isAnalyze ? "解析" : "问答";
+
+        // ★ 关键指标①：后台收到请求
+        log.info("========== [耗时] ①收到{}请求 userId={} bookId={} features={} contextLen={} targets={} ==========",
+                requestKind, userId, bookId,
+                featureKeys != null && !featureKeys.isEmpty() ? featureKeys : featureKey,
+                context != null ? context.length() : 0,
+                targetWords);
+
         // 获取或创建会话
+        long tSession = System.currentTimeMillis();
         if (sessionId == null) {
             WdAiSession session = aiSessionService.getOrCreateSession(userId, bookId);
             sessionId = session.getId();
         }
+        log.info("[ai-chat] 会话就绪 sessionId={}, 耗时={}ms", sessionId, System.currentTimeMillis() - tSession);
 
         // 判断用户输入
         String userMessageContent;
@@ -298,46 +313,72 @@ public class BookController {
         }
 
         // 保存用户消息
+        long tSaveUser = System.currentTimeMillis();
         String savedFeatureKey = featureKeys != null && !featureKeys.isEmpty()
                 ? String.join(",", featureKeys) : featureKey;
         WdAiMessage savedUserMsg = aiSessionService.saveMessage(sessionId, null, "user", userMessageContent, savedFeatureKey);
         final Long parentMessageId = savedUserMsg.getId();
+        log.info("[ai-chat] 保存用户消息 msgId={}, 耗时={}ms", parentMessageId, System.currentTimeMillis() - tSaveUser);
 
         // 如果是会话第一条消息，更新标题
+        long tTitle = System.currentTimeMillis();
         List<WdAiMessage> allMessages = aiSessionService.getMessages(sessionId);
         if (allMessages.size() == 1) {
             aiSessionService.updateSessionTitle(sessionId,
                     question != null ? question : (context != null ? context : ""));
+            log.info("[ai-chat] 更新会话标题, 耗时={}ms", System.currentTimeMillis() - tTitle);
         }
-
-        // 获取最近历史消息拼入 system prompt
-        List<WdAiMessage> historyMessages = aiSessionService.getRecentMessages(sessionId, 5);
-        String historyContext = buildHistoryContext(historyMessages);
 
         // 延长超时到 5 分钟，避免长回复被截断
         SseEmitter emitter = new SseEmitter(300_000L);
 
+        long tPrompt = System.currentTimeMillis();
         String systemPrompt;
         String userPrompt;
 
         if (featureKeys != null && !featureKeys.isEmpty()) {
             // 多选功能模式
-            systemPrompt = promptBuilder.buildMultiFeaturePrompt(locale, featureKeys, context) + historyContext;
+            systemPrompt = promptBuilder.buildMultiFeaturePrompt(locale, featureKeys, context);
             userPrompt = promptBuilder.buildMultiFeatureUserPrompt(locale, featureKeys, context);
         } else if (featureKey != null && !featureKey.isEmpty()) {
             // 单功能模式
-            systemPrompt = promptBuilder.buildFeaturePrompt(locale, featureKey, context) + historyContext;
+            systemPrompt = promptBuilder.buildFeaturePrompt(locale, featureKey, context);
             userPrompt = promptBuilder.buildFeatureUserPrompt(locale, featureKey, context);
         } else {
             // 普通对话模式
-            systemPrompt = promptBuilder.buildReadingAssistantPrompt(locale, context) + historyContext;
+            systemPrompt = promptBuilder.buildReadingAssistantPrompt(locale, context);
             userPrompt = promptBuilder.buildReadingAssistantUserPrompt(locale, question);
         }
 
         final boolean collectEnabled = CollectJsonSupport.shouldCollect(featureKeys, featureKey);
-        if (collectEnabled) {
-            systemPrompt = systemPrompt + CollectJsonSupport.collectInstruction();
+        final boolean phoneticEnabled = CollectJsonSupport.shouldRequireWordPhonetics(featureKeys, featureKey);
+        if (featureKeys != null && !featureKeys.isEmpty() || (featureKey != null && !featureKey.isBlank())) {
+            systemPrompt = systemPrompt + CollectJsonSupport.featureScopeInstruction(locale, featureKeys, featureKey);
         }
+        if (phoneticEnabled) {
+            if (!targetWords.isEmpty()) {
+                systemPrompt = systemPrompt + CollectJsonSupport.phoneticFormatInstruction(locale);
+            } else {
+                systemPrompt = systemPrompt + CollectJsonSupport.phoneticDisplayInstruction(locale);
+            }
+        }
+        if (!targetWords.isEmpty()) {
+            systemPrompt = systemPrompt + CollectJsonSupport.targetWordsInstruction(locale, targetWords);
+        }
+        if (collectEnabled) {
+            systemPrompt = systemPrompt + CollectJsonSupport.collectInstruction(locale);
+        }
+        // 范围约束仅用于自由问答；解析选中文本本身即语言学习任务，不必重复长段约束
+        final boolean freeChat = (featureKeys == null || featureKeys.isEmpty())
+                && (featureKey == null || featureKey.isBlank());
+        if (freeChat) {
+            systemPrompt = systemPrompt + promptBuilder.languageLearningScopeInstruction(locale);
+        }
+        log.info("[ai-chat] 拼装提示词完成 sysChars={}, userChars={}, collect={}, phonetic={}, 耗时={}ms",
+                systemPrompt != null ? systemPrompt.length() : 0,
+                userPrompt != null ? userPrompt.length() : 0,
+                collectEnabled, phoneticEnabled, System.currentTimeMillis() - tPrompt);
+
         final String finalSystemPrompt = systemPrompt;
         final String finalUserPrompt = userPrompt;
 
@@ -352,12 +393,32 @@ public class BookController {
                 ? "feature"
                 : "reading_chat";
 
+        final long prepMs = System.currentTimeMillis() - t0;
+        log.info("[ai-chat] 同步准备完成（即将异步调模型）prepMs={}, scene={}", prepMs, callScene);
+
         // 与单词流式解析一致：异步订阅，避免阻塞 MVC 线程导致 SSE 缓冲
+        final long asyncSubmitAt = System.currentTimeMillis();
         sseExecutor.execute(() -> {
+            final long tAsyncStart = System.currentTimeMillis();
+            log.info("[ai-chat] 异步线程开始 queueWaitMs={}", tAsyncStart - asyncSubmitAt);
+            final long[] firstChunkAt = {0L};
+            final int[] chunkCount = {0};
             try {
+                long tSubscribe = System.currentTimeMillis();
                 aiService.chatStream(userId, callScene, rawInput, finalSystemPrompt, finalUserPrompt)
                         .subscribe(
                                 content -> {
+                                    if (firstChunkAt[0] == 0L && content != null && !content.isEmpty()) {
+                                        firstChunkAt[0] = System.currentTimeMillis();
+                                        // ★ 关键指标②：AI 流式首字到达（相对①收到请求）
+                                        log.info("========== [耗时] ②AI流式首字到达 kind={} 距收到请求={}ms prepMs={} queueWaitMs={} 首字预览={} ==========",
+                                                requestKind,
+                                                firstChunkAt[0] - t0,
+                                                prepMs,
+                                                tAsyncStart - asyncSubmitAt,
+                                                content.length() > 20 ? content.substring(0, 20) + "…" : content);
+                                    }
+                                    chunkCount[0]++;
                                     synchronized (emitter) {
                                         try {
                                             String prevFull = fullResponseText.toString();
@@ -381,7 +442,8 @@ public class BookController {
                                     }
                                 },
                                 error -> {
-                                    log.error("AI chat error", error);
+                                    log.error("[ai-chat] 流式失败 totalMs={}, chunks={}, err={}",
+                                            System.currentTimeMillis() - t0, chunkCount[0], error.getMessage(), error);
                                     String partialResponse = fullResponseText.toString();
                                     if (!partialResponse.isEmpty()) {
                                         try {
@@ -398,14 +460,25 @@ public class BookController {
                                     }
                                 },
                                 () -> {
+                                    long tDone = System.currentTimeMillis();
+                                    long streamMs = tDone - tAsyncStart;
+                                    long ttfb = firstChunkAt[0] > 0 ? firstChunkAt[0] - tAsyncStart : -1;
+                                    long genAfterFirst = firstChunkAt[0] > 0 ? tDone - firstChunkAt[0] : streamMs;
+                                    log.info("[ai-chat] 模型流结束 streamMs={}, TTFB={}ms, afterFirstChunk={}ms, chunks={}, respChars={}",
+                                            streamMs, ttfb, genAfterFirst, chunkCount[0], fullResponseText.length());
                                     synchronized (emitter) {
                                         try {
+                                            long tPersist = System.currentTimeMillis();
                                             String fullResponse = fullResponseText.toString();
                                             if (!fullResponse.isEmpty()) {
                                                 aiSessionService.saveMessage(finalSessionId, parentMessageId, "assistant", fullResponse, finalFeatureKey);
                                             }
+                                            log.info("[ai-chat] 保存助手消息 耗时={}ms", System.currentTimeMillis() - tPersist);
                                             if (collectEnabled) {
-                                                List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(fullResponse, objectMapper);
+                                                long tCollect = System.currentTimeMillis();
+                                                List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(fullResponse, objectMapper);
+                                                log.info("[ai-chat] 解析 COLLECT_JSON entries={}, 耗时={}ms",
+                                                        entries.size(), System.currentTimeMillis() - tCollect);
                                                 if (!entries.isEmpty()) {
                                                     emitter.send(SseEmitter.event()
                                                             .name("collect-entries")
@@ -415,13 +488,16 @@ public class BookController {
                                             emitter.send(SseEmitter.event()
                                                     .name("done")
                                                     .data("{\"sessionId\":" + finalSessionId + "}", MediaType.APPLICATION_JSON));
+                                            log.info("[ai-chat] 全链路完成 totalMs={}, prepMs={}, streamMs={}, TTFB={}ms",
+                                                    System.currentTimeMillis() - t0, prepMs, streamMs, ttfb);
                                         } catch (IOException e) { /* ignore */ }
                                         emitter.complete();
                                     }
                                 }
                         );
+                log.info("[ai-chat] subscribe 已挂上 耗时={}ms (不含流式等待)", System.currentTimeMillis() - tSubscribe);
             } catch (Exception e) {
-                log.error("AI chat subscribe failed", e);
+                log.error("[ai-chat] subscribe 失败 totalMs={}", System.currentTimeMillis() - t0, e);
                 synchronized (emitter) {
                     try {
                         emitter.send(SseEmitter.event()
@@ -433,6 +509,7 @@ public class BookController {
             }
         });
 
+        log.info("[ai-chat] 已提交异步任务并返回 SSE emitter, syncReturnMs={}", System.currentTimeMillis() - t0);
         return emitter;
     }
 
@@ -445,24 +522,6 @@ public class BookController {
     public R<BookCollectResultVO> collectWords(@RequestAttribute Long userId, @PathVariable Long bookId,
                                                @RequestBody BookCollectReq req) {
         return R.ok(bookCollectService.collect(userId, bookId, req));
-    }
-
-    /** 拼接历史消息为 AI 上下文 */
-    private String buildHistoryContext(List<WdAiMessage> historyMessages) {
-        if (historyMessages == null || historyMessages.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n\n--- 对话历史 ---\n");
-        for (WdAiMessage msg : historyMessages) {
-            String roleLabel = "user".equals(msg.getRole()) ? "用户" : "AI";
-            // 历史拼进 prompt 时去掉收录 JSON，避免污染上下文
-            sb.append(roleLabel).append(": ")
-                    .append(CollectJsonSupport.stripForDisplay(msg.getContent())).append("\n");
-        }
-        sb.append("--- 对话历史结束 ---\n");
-        sb.append("请基于以上对话历史，结合用户最新的问题给出回答。");
-        return sb.toString();
     }
 
     /** 获取或创建会话 */
@@ -505,6 +564,17 @@ public class BookController {
         return R.ok(result);
     }
 
+    /** 重命名会话 */
+    @PutMapping("/ai-sessions/{sessionId}")
+    public R<Void> renameSession(@RequestAttribute Long userId,
+                                  @PathVariable Long sessionId,
+                                  @RequestBody Map<String, Object> body) {
+        Object titleObj = body != null ? body.get("title") : null;
+        String title = titleObj != null ? titleObj.toString() : null;
+        aiSessionService.renameSession(sessionId, userId, title);
+        return R.ok();
+    }
+
     /** 删除会话 */
     @DeleteMapping("/ai-sessions/{sessionId}")
     public R<Void> deleteSession(@RequestAttribute Long userId,
@@ -515,14 +585,17 @@ public class BookController {
 
     /** 获取 AI 阅读功能列表（含用户偏好） */
     @GetMapping("/ai-features")
-    public R<List<SysAiFeature>> listAiFeatures() {
-        return R.ok(aiFeatureService.listActiveFeatures());
+    public R<List<SysAiFeature>> listAiFeatures(
+            @RequestParam(value = "locale", required = false, defaultValue = "zh-CN") String locale) {
+        return R.ok(aiFeatureService.listActiveFeatures(locale));
     }
 
     /** 获取用户 AI 功能偏好（全量功能 + 用户勾选的功能key） */
     @GetMapping("/ai-features/preferences")
-    public R<AiFeaturePreferenceVO> getAiFeaturePreferences(@RequestAttribute Long userId) {
-        return R.ok(aiFeatureService.getPreferences(userId));
+    public R<AiFeaturePreferenceVO> getAiFeaturePreferences(
+            @RequestAttribute Long userId,
+            @RequestParam(value = "locale", required = false, defaultValue = "zh-CN") String locale) {
+        return R.ok(aiFeatureService.getPreferences(userId, locale));
     }
 
     /** 保存用户 AI 功能偏好（含排序） */

@@ -45,6 +45,12 @@ public class StudyController {
         return R.ok(sessionService.openSession(userId));
     }
 
+    @GetMapping("/session/queue")
+    public R<List<StudyTaskVO>> sessionQueue(@RequestAttribute Long userId,
+                                             @RequestParam(required = false) String phase) {
+        return R.ok(sessionService.listTodayQueue(userId, phase));
+    }
+
     @PostMapping("/answer")
     public R<StudyAnswerVO> submitAnswer(@RequestAttribute Long userId, @RequestBody StudyAnswerReq req) {
         return R.ok(sessionService.submitAnswer(userId, req));

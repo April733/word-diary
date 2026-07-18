@@ -42,13 +42,20 @@ public class LogAspect {
 
         // 获取请求 URL
         String url = "";
+        String uri = "";
         try {
             ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();
-                url = request.getMethod() + " " + request.getRequestURI();
+                uri = request.getRequestURI();
+                url = request.getMethod() + " " + uri;
             }
         } catch (Exception ignored) {
+        }
+
+        // 健康检查高频且无业务价值，跳过日志（含拦截器）
+        if (uri != null && uri.contains("/api/health")) {
+            return joinPoint.proceed();
         }
 
         // 入参（过滤掉 HttpServletRequest/HttpServletResponse 等）

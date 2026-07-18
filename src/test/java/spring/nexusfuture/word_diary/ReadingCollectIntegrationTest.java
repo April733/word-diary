@@ -203,8 +203,8 @@ public class ReadingCollectIntegrationTest {
         Assertions.assertEquals(HttpStatus.OK, collectAgainResp.getStatusCode());
         Map againData = (Map) collectAgainResp.getBody().get("data");
         Assertions.assertEquals(0, ((Number) againData.get("added")).intValue());
-        Assertions.assertEquals(1, ((Number) againData.get("updated")).intValue());
-        Assertions.assertEquals(1, ((Number) againData.get("skipped")).intValue());
+        Assertions.assertEquals(0, ((Number) againData.get("updated")).intValue());
+        Assertions.assertEquals(2, ((Number) againData.get("skipped")).intValue());
 
         List wordsAfter = (List) restTemplate.exchange(
                 baseUrl() + "/api/notebooks/" + notebookId + "/words",

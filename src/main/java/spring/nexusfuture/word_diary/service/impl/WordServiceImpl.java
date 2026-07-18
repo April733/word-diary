@@ -16,12 +16,16 @@ import spring.nexusfuture.word_diary.mapper.WdWordBookMapper;
 import spring.nexusfuture.word_diary.mapper.WdWordMapper;
 import spring.nexusfuture.word_diary.service.AiService;
 import spring.nexusfuture.word_diary.service.WordService;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 public class WordServiceImpl implements WordService {
+
+    private static final int TRASH_RETAIN_DAYS = 7;
 
     private final WdWordMapper wordMapper;
     private final WdWordBookMapper bookMapper;
@@ -69,7 +73,6 @@ public class WordServiceImpl implements WordService {
                 .build();
         wordMapper.insert(word);
 
-        // Auto-create study plan for the new word
         WdLearnPlan plan = WdLearnPlan.builder()
                 .userId(userId)
                 .notebookId(notebookId)
@@ -88,21 +91,23 @@ public class WordServiceImpl implements WordService {
             throw new BizException("单词本不存在");
         }
         List<WdWord> words = wordMapper.selectByNotebookId(notebookId);
-        return words.stream().map(word -> {
-            WdLearnPlan plan = planMapper.selectByUserIdAndWordId(userId, word.getId());
-            return WordVO.builder()
-                    .id(word.getId())
-                    .notebookId(word.getNotebookId())
-                    .wordProto(word.getWordProto())
-                    .usPhonetic(word.getUsPhonetic())
-                    .ukPhonetic(word.getUkPhonetic())
-                    .partSpeechMean(word.getPartSpeechMean())
-                    .sentenceExample(word.getSentenceExample())
-                    .rootAffix(word.getRootAffix())
-                    .learnStatus(plan != null ? plan.getLearnStatus() : LearnStatus.NOT_LEARNED)
-                    .currentLevel(plan != null ? plan.getCurrentLevel() : 0)
-                    .build();
-        }).collect(Collectors.toList());
+        return words.stream().map(word -> toVo(userId, word, false)).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<WordVO> listTrash(Long userId, Long notebookId) {
+        WdWordBook book = bookMapper.selectById(notebookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("单词本不存在");
+        }
+        // 打开时顺带清理过期项（避免自调用导致事务失效）
+        int purged = wordMapper.hardDeleteExpiredTrash();
+        if (purged > 0) {
+            planMapper.hardDeleteOrphanPlans();
+        }
+        return wordMapper.selectTrashByNotebookId(notebookId).stream()
+                .map(word -> toVo(userId, word, true))
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -113,9 +118,55 @@ public class WordServiceImpl implements WordService {
             throw new BizException("单词不存在");
         }
         wordMapper.deleteById(wordId);
-        // Also mark the associated learn plan as deleted
         planMapper.deleteByWordId(wordId);
         queueMapper.deletePendingByWordId(wordId);
+    }
+
+    @Override
+    @Transactional
+    public void restore(Long userId, Long notebookId, Long wordId) {
+        WdWordBook book = bookMapper.selectById(notebookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("单词本不存在");
+        }
+        WdWord word = wordMapper.selectByIdAny(wordId);
+        if (word == null || !word.getUserId().equals(userId) || !notebookId.equals(word.getNotebookId())) {
+            throw new BizException("单词不存在");
+        }
+        if (word.getIsDeleted() == null || word.getIsDeleted() != 1) {
+            throw new BizException("该词条不在垃圾桶中");
+        }
+        if (word.getDeletedAt() != null
+                && word.getDeletedAt().isBefore(LocalDateTime.now().minusDays(TRASH_RETAIN_DAYS))) {
+            throw new BizException("已超过保留期限，无法恢复");
+        }
+        WdWord conflict = wordMapper.selectByNotebookAndWordProto(notebookId, word.getWordProto());
+        if (conflict != null) {
+            throw new BizException("单词本中已存在「" + word.getWordProto() + "」，无法恢复");
+        }
+        wordMapper.restoreById(wordId);
+        int restored = planMapper.restoreByWordId(wordId);
+        if (restored == 0) {
+            WdLearnPlan plan = WdLearnPlan.builder()
+                    .userId(userId)
+                    .notebookId(notebookId)
+                    .wordId(wordId)
+                    .learnStatus(LearnStatus.NOT_LEARNED)
+                    .currentLevel(0)
+                    .reviewTimes(0)
+                    .build();
+            planMapper.insert(plan);
+        }
+    }
+
+    @Override
+    @Transactional
+    public int purgeExpiredTrash() {
+        int deleted = wordMapper.hardDeleteExpiredTrash();
+        if (deleted > 0) {
+            planMapper.hardDeleteOrphanPlans();
+        }
+        return deleted;
     }
 
     @Override
@@ -133,7 +184,6 @@ public class WordServiceImpl implements WordService {
                     continue;
                 }
                 String proto = r.getWordProto().trim();
-                // 同一单词本内不允许重复：已存在则跳过，不计入失败
                 if (wordMapper.selectByNotebookAndWordProto(notebookId, proto) != null) {
                     continue;
                 }
@@ -216,6 +266,28 @@ public class WordServiceImpl implements WordService {
             }
         }
         return updated;
+    }
+
+    private WordVO toVo(Long userId, WdWord word, boolean trash) {
+        WdLearnPlan plan = trash ? null : planMapper.selectByUserIdAndWordId(userId, word.getId());
+        WordVO.WordVOBuilder b = WordVO.builder()
+                .id(word.getId())
+                .notebookId(word.getNotebookId())
+                .wordProto(word.getWordProto())
+                .usPhonetic(word.getUsPhonetic())
+                .ukPhonetic(word.getUkPhonetic())
+                .partSpeechMean(word.getPartSpeechMean())
+                .sentenceExample(word.getSentenceExample())
+                .rootAffix(word.getRootAffix())
+                .entryType(word.getEntryType())
+                .learnStatus(plan != null ? plan.getLearnStatus() : LearnStatus.NOT_LEARNED)
+                .currentLevel(plan != null ? plan.getCurrentLevel() : 0);
+        if (trash && word.getDeletedAt() != null) {
+            long daysLeft = ChronoUnit.DAYS.between(LocalDateTime.now(), word.getDeletedAt().plusDays(TRASH_RETAIN_DAYS));
+            b.deletedAt(word.getDeletedAt())
+                    .retainDaysLeft((int) Math.max(0, daysLeft));
+        }
+        return b.build();
     }
 
     private boolean hasGap(WdWord w) {

@@ -22,6 +22,9 @@ public interface WdWordMapper {
     @Select("SELECT * FROM wd_word WHERE id = #{id} AND is_deleted = 0")
     WdWord selectById(Long id);
 
+    @Select("SELECT * FROM wd_word WHERE id = #{id}")
+    WdWord selectByIdAny(Long id);
+
     @Update("UPDATE wd_word SET word_proto = #{wordProto}, us_phonetic = #{usPhonetic}, " +
             "uk_phonetic = #{ukPhonetic}, part_speech_mean = #{partSpeechMean}, " +
             "sentence_example = #{sentenceExample}, root_affix = #{rootAffix}, " +
@@ -32,9 +35,28 @@ public interface WdWordMapper {
     @Select("SELECT * FROM wd_word WHERE notebook_id = #{notebookId} AND LOWER(word_proto) = LOWER(#{wordProto}) AND is_deleted = 0 LIMIT 1")
     WdWord selectByNotebookAndWordProto(@Param("notebookId") Long notebookId, @Param("wordProto") String wordProto);
 
-    @Delete("UPDATE wd_word SET is_deleted = 1, update_time = NOW() WHERE id = #{id}")
+    /** 移入垃圾桶（软删，保留 7 天） */
+    @Update("UPDATE wd_word SET is_deleted = 1, deleted_at = NOW(), update_time = NOW() WHERE id = #{id} AND is_deleted = 0")
     int deleteById(Long id);
 
-    @Update("UPDATE wd_word SET is_deleted = 1, update_time = NOW() WHERE notebook_id = #{notebookId} AND is_deleted = 0")
+    @Update("UPDATE wd_word SET is_deleted = 1, deleted_at = NOW(), update_time = NOW() WHERE notebook_id = #{notebookId} AND is_deleted = 0")
     int softDeleteByNotebookId(Long notebookId);
+
+    @Select("SELECT * FROM wd_word WHERE notebook_id = #{notebookId} AND is_deleted = 1 " +
+            "AND deleted_at IS NOT NULL AND deleted_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) " +
+            "ORDER BY deleted_at DESC")
+    List<WdWord> selectTrashByNotebookId(Long notebookId);
+
+    @Update("UPDATE wd_word SET is_deleted = 0, deleted_at = NULL, update_time = NOW() " +
+            "WHERE id = #{id} AND is_deleted = 1")
+    int restoreById(Long id);
+
+    /** 物理删除已过期的垃圾桶词条 */
+    @Delete("DELETE FROM wd_word WHERE is_deleted = 1 AND deleted_at IS NOT NULL " +
+            "AND deleted_at < DATE_SUB(NOW(), INTERVAL 7 DAY)")
+    int hardDeleteExpiredTrash();
+
+    @Select("SELECT COUNT(*) FROM wd_word WHERE notebook_id = #{notebookId} AND is_deleted = 1 " +
+            "AND deleted_at IS NOT NULL AND deleted_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)")
+    int countTrashByNotebookId(Long notebookId);
 }

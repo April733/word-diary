@@ -22,9 +22,16 @@ public interface WdWordBookMapper {
     @Select("SELECT * FROM wd_word_book WHERE id = #{id} AND is_deleted = 0")
     WdWordBook selectById(Long id);
 
+    @Select("SELECT * FROM wd_word_book WHERE id = #{id}")
+    WdWordBook selectByIdAny(Long id);
+
     @Update("UPDATE wd_word_book SET book_name = #{bookName}, book_desc = #{bookDesc}, " +
             "sort_num = #{sortNum}, update_time = NOW() WHERE id = #{id}")
     int update(WdWordBook book);
+
+    /** status: 1参与每日学习 0不参与 */
+    @Update("UPDATE wd_word_book SET status = #{status}, update_time = NOW() WHERE id = #{id}")
+    int updateStatus(@Param("id") Long id, @Param("status") Integer status);
 
     @Update("UPDATE wd_word_book SET is_deleted = 1, update_time = NOW() WHERE id = #{id}")
     int deleteById(Long id);

@@ -2,26 +2,26 @@
   <div class="reader-layout">
     <!-- 顶部栏 -->
     <header class="reader-header">
-      <t-button variant="text" type="button" @click="goBack">
-        <template #icon><t-icon name="chevron-left" /></template>
-      </t-button>
-      <span class="book-title-header">{{ book?.title }}</span>
+      <div class="header-left">
+        <t-button variant="text" type="button" @click="goBack">
+          <template #icon><t-icon name="chevron-left" /></template>
+        </t-button>
+        <span class="book-title-header">{{ book?.title }}</span>
+      </div>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('reader.aiAssistant') }}</span>
+      </div>
       <div class="header-right">
         <div class="header-notebooks">
-          <t-badge
+          <t-button
             v-if="activeNotebook"
-            :count="basketCounts[activeNotebook.notebookId] || 0"
-            :show-zero="false"
+            variant="outline"
+            size="small"
+            :title="activeNotebook.notebookName"
+            @click="openNotebookWords(activeNotebook.notebookId)"
           >
-            <t-button
-              variant="outline"
-              size="small"
-              :title="activeNotebook.notebookName"
-              @click="openNotebookBasket(activeNotebook.notebookId)"
-            >
-              {{ truncate(activeNotebook.notebookName, 14) }}
-            </t-button>
-          </t-badge>
+            {{ truncate(activeNotebook.notebookName, 14) }}
+          </t-button>
           <t-button variant="outline" size="small" @click="showNotebookLinkDialog = true">
             <template #icon><t-icon name="book" /></template>
             {{ linkedNotebooks.length ? $t('reader.notebookLinkManage') : $t('reader.notebookLinkTitle') }}
@@ -45,11 +45,13 @@
               v-for="(item, i) in toc"
               :key="i"
               class="toc-item"
-              :class="{ active: currentChapter === i }"
+              :class="{ active: currentChapter === i, 'has-note': tocItemHasNote(i) }"
               :style="item.level !== undefined ? { paddingLeft: (item.level * 12 + 8) + 'px' } : {}"
+              :title="tocItemHasNote(i) ? $t('reader.tocHasNote') : undefined"
               @click="goToChapter(i, item.href)"
             >
-              {{ item.label }}
+              <span class="toc-item-label">{{ item.label }}</span>
+              <span v-if="tocItemHasNote(i)" class="toc-note-dot" aria-hidden="true" />
             </div>
           </div>
           <div v-else class="toc-loading">
@@ -81,6 +83,7 @@
             @ready="onPdfReady"
             @toc="onPdfToc"
             @chapter-highlight="onPdfChapterHighlight"
+            @noted-pages="onPdfNotedPages"
             @select-text="onPdfSelectText"
             @loading="(v) => loading = v"
             @error="onPdfError"
@@ -105,53 +108,8 @@
 
       <!-- 右侧：AI 对话框 -->
       <aside class="sidebar-ai" :style="{ width: aiWidth + 'px' }">
-        <div class="ai-header">
-          <span>{{ $t('reader.aiAssistant') }}</span>
-          <div class="ai-header-actions">
-            <t-button
-              v-if="aiSessions.length > 0"
-              variant="text"
-              size="small"
-              @click="showSessionList = !showSessionList"
-            >
-              <template #icon><t-icon name="chat" size="14px" /></template>
-              {{ currentSessionId ? truncate(aiSessions.find(s => s.id === currentSessionId)?.title || '', 8) : $t('reader.newSession') }}
-              <t-icon :name="showSessionList ? 'chevron-up' : 'chevron-down'" size="12px" />
-            </t-button>
-            <t-button
-              v-if="currentSessionId && aiMessages.length > 0"
-              variant="text"
-              size="small"
-              @click="newSession"
-            >
-              <template #icon><t-icon name="add" size="14px" /></template>
-            </t-button>
-          </div>
-        </div>
-
-        <!-- 会话列表下拉 -->
-        <div v-if="showSessionList && aiSessions.length > 0" class="ai-session-list">
-          <div
-            v-for="session in aiSessions"
-            :key="session.id"
-            class="ai-session-item"
-            :class="{ 'ai-session-item--active': session.id === currentSessionId }"
-            @click="switchSession(session.id)"
-          >
-            <span class="ai-session-title">{{ session.title }}</span>
-            <t-button
-              variant="text"
-              size="small"
-              shape="square"
-              @click="(e: Event) => handleDeleteSession(session.id, e)"
-            >
-              <t-icon name="delete" size="12px" />
-            </t-button>
-          </div>
-        </div>
-
         <!-- 未选文字时的引导状态 -->
-        <div v-if="!selectedContext && aiMessages.length === 0 && !currentSessionId" class="ai-empty-state">
+        <div v-if="!selectedContext && aiMessages.length === 0" class="ai-empty-state">
           <div class="ai-empty-icon">
             <t-icon name="chat" size="32px" />
           </div>
@@ -166,6 +124,7 @@
             <div class="ai-context-label">
               <t-icon name="quote" size="14px" />
               <span>{{ $t('reader.selectedText') }}</span>
+              <span class="ai-context-hint">{{ $t('reader.targetWordsHint') }}</span>
               <div class="ai-context-actions">
                 <t-button
                   variant="text"
@@ -181,7 +140,21 @@
                 </t-button>
               </div>
             </div>
-            <div class="ai-context-text" v-if="!contextCollapsed" style="width:100%;box-sizing:border-box;white-space:normal;word-break:break-word;">{{ selectedContext }}</div>
+            <div
+              v-if="!contextCollapsed"
+              class="ai-context-text"
+              style="width:100%;box-sizing:border-box;white-space:normal;word-break:break-word;"
+            >
+              <template v-for="(seg, i) in contextSegments" :key="i">
+                <span
+                  v-if="seg.type === 'word'"
+                  class="ai-context-word"
+                  :class="{ 'ai-context-word--active': isTargetSegmentSelected(i) }"
+                  @dblclick.prevent.stop="onContextWordDblClick(i)"
+                >{{ seg.value }}</span>
+                <template v-else>{{ seg.value }}</template>
+              </template>
+            </div>
             <div class="ai-context-text ai-context-preview" v-else style="width:100%;box-sizing:border-box;white-space:normal;word-break:break-word;">
               {{ selectedContext.substring(0, 80) }}...
             </div>
@@ -189,46 +162,44 @@
 
           <!-- AI 功能标签 -->
           <div v-if="selectedContext" class="ai-feature-panel">
-            <div class="ai-feature-header">
-              <span class="ai-feature-label">{{ $t('reader.aiFeatures') }}</span>
-              <div class="ai-feature-header-actions">
-                <t-button
-                  size="small"
-                  variant="text"
-                  theme="primary"
-                  @click="openAiPrefDialog"
+            <div class="ai-feature-tags-row">
+              <div class="ai-feature-tags">
+                <span
+                  v-for="feature in preferredAiFeatures"
+                  :key="feature.featureKey"
+                  class="ai-feature-tag"
+                  :class="{ 'ai-feature-tag--active': selectedFeatureKeysForQuery.includes(feature.featureKey) }"
+                  @click="toggleFeatureKeyForQuery(feature.featureKey)"
                 >
-                  <template #icon><t-icon name="setting" size="12px" /></template>
-                  {{ $t('reader.aiPrefTitle') }}
-                </t-button>
+                  {{ featureLabel(feature) }}
+                </span>
               </div>
-            </div>
-            <div class="ai-feature-tags">
-              <span
-                v-for="feature in preferredAiFeatures"
-                :key="feature.featureKey"
-                class="ai-feature-tag"
-                :class="{ 'ai-feature-tag--active': selectedFeatureKeysForQuery.includes(feature.featureKey) }"
-                @click="toggleFeatureKeyForQuery(feature.featureKey)"
+              <t-button
+                class="ai-feature-pref-btn"
+                size="small"
+                variant="text"
+                theme="primary"
+                shape="square"
+                :title="$t('reader.aiPrefTitle')"
+                @click="openAiPrefDialog"
               >
-                {{ $t('reader.aiFeature_' + feature.featureKey) }}
-              </span>
+                <t-icon name="setting" size="16px" />
+              </t-button>
             </div>
             <t-button
               size="small"
               variant="outline"
               class="ai-feature-send"
-              :loading="aiLoading"
-              :disabled="!selectedContext || selectedFeatureKeysForQuery.length === 0"
+              :loading="aiLoading && activeFeatureKey === 'multi'"
+              :disabled="!selectedContext || selectedFeatureKeysForQuery.length === 0 || (aiLoading && activeFeatureKey !== 'multi')"
               @click="sendAiFeatures"
             >
-              <template v-if="!aiLoading">{{ $t('reader.aiSend') }}</template>
+              <template v-if="!(aiLoading && activeFeatureKey === 'multi')">{{ $t('reader.aiAnalyze') }}</template>
             </t-button>
           </div>
 
           <!-- AI 消息区 -->
           <div class="ai-messages" ref="aiMessagesRef" @scroll="onAiMessagesScroll">
-            <!-- 加载更多历史记录 -->
             <div v-if="messagesLoadingMore" class="ai-loading-more">
               <t-loading size="small" />
             </div>
@@ -241,7 +212,7 @@
             <div v-for="(msg, i) in aiMessages" :key="i" class="ai-msg" :class="msg.role">
               <div class="ai-msg-content" v-html="renderMarkdown(msg.content)"></div>
               <div
-                v-if="msg.role === 'assistant' && msg.collectEntries && msg.collectEntries.length > 0"
+                v-if="msg.role === 'assistant' && msg.content"
                 class="ai-msg-actions"
               >
                 <t-button
@@ -253,7 +224,10 @@
                 >
                   <template #icon><t-icon name="bookmark-add" size="12px" /></template>
                   {{ $t('reader.collectFromReply') }}
-                  <span class="ai-msg-collect-count">{{ msg.collectEntries.length }}</span>
+                  <span
+                    v-if="collectableCount(msg) > 0"
+                    class="ai-msg-collect-count"
+                  >{{ collectableCount(msg) }}</span>
                 </t-button>
               </div>
             </div>
@@ -263,20 +237,25 @@
           </div>
         </template>
 
-        <div class="ai-input">
+        <div class="ai-composer">
           <t-textarea
+            class="ai-composer-input"
             v-model="aiInput"
             :placeholder="$t('reader.aiInputPlaceholder')"
-            :autosize="{ minRows: 2, maxRows: 4 }"
+            :autosize="{ minRows: 2, maxRows: 2 }"
+            @keydown.enter.exact.prevent="sendAiMessage"
             @keydown.enter.ctrl="sendAiMessage"
           />
           <t-button
-            class="ai-send-btn"
+            class="ai-composer-send"
             size="small"
             :disabled="!aiInput.trim() || aiLoading"
             @click="sendAiMessage"
           >
-            <template v-if="!aiLoading">{{ $t('reader.aiSend') }}</template>
+            <template v-if="!(aiLoading && !activeFeatureKey)">
+              <t-icon name="send" size="14px" />
+              <span>{{ $t('reader.aiSend') }}</span>
+            </template>
             <t-loading v-else size="small" />
           </t-button>
         </div>
@@ -390,7 +369,7 @@
               :checked="selectedFeatureKeys.includes(f.featureKey)"
               @change="(checked: boolean) => toggleFeatureKey(f.featureKey, checked)"
             />
-            <span class="ai-pref-name">{{ $t('reader.aiFeature_' + f.featureKey) }}</span>
+            <span class="ai-pref-name">{{ featureLabel(f) }}</span>
             <span class="ai-pref-desc">{{ f.description }}</span>
           </div>
         </div>
@@ -426,7 +405,6 @@
       :source-location="collectSourceLocation"
       :preferred-view-mode="collectDrawerPreferredMode"
       :target-notebook-id="collectTargetNotebookId"
-      @basket-changed="refreshBasketCounts"
       @open-link-dialog="showNotebookLinkDialog = true"
     />
     <ReaderNotebookLinkDialog
@@ -449,24 +427,24 @@ import type { Book, Rendition, Location } from 'epubjs'
 import axios from 'axios'
 import {
   getBookDetail, getBookFileUrl, updateProgress,
-  getChapterAnnotations, addAnnotation, updateAnnotation, deleteAnnotation,
+  getChapterAnnotations, addAnnotation, updateAnnotation, deleteAnnotation, getAnnotations,
   getReaderSettings, saveReaderSettings,
   getAiFeatures, getAiFeaturePreferences, saveAiFeaturePreferences,
-  getAiSessions, getAiMessages, getAiMessagesPaged, createAiSession, deleteAiSession,
+  getAiSessions, getAiMessagesPaged,
   getBookNotebookLinks
 } from '../api'
 import ReaderCollectDrawer from '../components/ReaderCollectDrawer.vue'
 import ReaderNotebookLinkDialog from '../components/ReaderNotebookLinkDialog.vue'
 import {
   hydrateStoredAiMessage,
-  loadBasketCounts,
   makeBasketKey,
-  migrateLegacyBasketIfNeeded,
   resolveActiveNotebookId,
   saveActiveNotebookId,
   stripCollectMarker,
   type CollectEntry
 } from '../utils/collectBasket'
+import { normalizeSelectedText, tokenizeContextSegments } from '../utils/selectedText'
+import { aiRegionHeaders } from '../utils/aiRegion'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
 
@@ -478,6 +456,9 @@ const bookId = Number(route.params.id)
 const book = ref<any>(null)
 const toc = ref<any[]>([])
 const currentChapter = ref(0)
+/** PDF：有批注的页码；EPUB：有划线笔记的目录下标 */
+const notedPages = ref<number[]>([])
+const notedChapterIndexes = ref<Set<number>>(new Set())
 const showToc = ref(true)
 
 // 三栏宽度与拖拽调整
@@ -577,6 +558,63 @@ const renderedHighlights = ref<any[]>([])
 
 // 右侧 AI 助手：当前选中的文本（实时同步显示）
 const selectedContext = ref('')
+/** 双击选中的目标词：按片段下标（同一词多次出现互不影响） */
+const targetWordIndexes = ref<number[]>([])
+
+const contextSegments = computed(() => tokenizeContextSegments(selectedContext.value || ''))
+
+/** 发给后端的去重词形（保留首次点击时的写法） */
+const targetWords = computed(() => {
+  const segs = contextSegments.value
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const i of targetWordIndexes.value) {
+    const seg = segs[i]
+    if (!seg || seg.type !== 'word') continue
+    const cleaned = normalizeWordToken(seg.value)
+    if (!cleaned) continue
+    const key = cleaned.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(cleaned)
+  }
+  return out
+})
+
+const WORD_TARGET_FEATURES = new Set(['word', 'collocation', 'root_affix', 'root'])
+
+const needsTargetWords = computed(() =>
+  selectedFeatureKeysForQuery.value.some((k) => WORD_TARGET_FEATURES.has(k))
+)
+
+watch(selectedContext, () => {
+  const segs = tokenizeContextSegments(selectedContext.value || '')
+  const wordIndexes = segs
+    .map((seg, i) => (seg.type === 'word' ? i : -1))
+    .filter((i) => i >= 0)
+  // 选区只有一个词时自动选中该位置
+  targetWordIndexes.value = wordIndexes.length === 1 ? [wordIndexes[0]] : []
+})
+
+function normalizeWordToken(w: string) {
+  return (w || '').replace(/^[’']+|[’'\-]+$/g, '')
+}
+
+function isTargetSegmentSelected(i: number) {
+  return targetWordIndexes.value.includes(i)
+}
+
+function onContextWordDblClick(i: number) {
+  const seg = contextSegments.value[i]
+  if (!seg || seg.type !== 'word') return
+  const idx = targetWordIndexes.value.indexOf(i)
+  if (idx >= 0) {
+    targetWordIndexes.value = targetWordIndexes.value.filter((x) => x !== i)
+  } else {
+    targetWordIndexes.value = [...targetWordIndexes.value, i]
+  }
+  window.getSelection()?.removeAllRanges()
+}
 
 // AI 功能列表（从数据库动态加载）
 const aiFeatures = ref<{ featureKey: string; featureName: string; description?: string }[]>([])
@@ -597,16 +635,15 @@ const reportDescription = ref('')
 const reportSending = ref(false)
 const lastErrorDetail = ref('')
 
-// 阅读收录：一词本一篮
+// 阅读收录
 const showCollectDrawer = ref(false)
 const showNotebookLinkDialog = ref(false)
 const linkedNotebooks = ref<{ notebookId: number; notebookName: string }[]>([])
 const currentCollectEntries = ref<CollectEntry[]>([])
 const collectSourceSnippet = ref('')
 const collectSourceLocation = ref('')
-const collectDrawerPreferredMode = ref<'current' | 'basket'>('current')
+const collectDrawerPreferredMode = ref<'current' | 'notebook'>('current')
 const collectTargetNotebookId = ref<number | undefined>()
-const basketCounts = ref<Record<number, number>>({})
 const activeNotebookId = ref<number | undefined>()
 
 const activeNotebook = computed(() =>
@@ -621,35 +658,43 @@ type AiMessage = {
   collectSourceLocation?: string
 }
 
-function refreshBasketCounts() {
-  const ids = linkedNotebooks.value.map(n => n.notebookId)
-  migrateLegacyBasketIfNeeded(bookId, ids)
-  basketCounts.value = loadBasketCounts(bookId, ids)
-}
-
 watch(activeNotebookId, (id) => {
   if (id != null) saveActiveNotebookId(bookId, id)
 })
 
-/** 顶栏：点当前单词本 → 打开该本收录篮 */
-function openNotebookBasket(notebookId: number) {
+/** 顶栏：点当前单词本 → 查看该本词表 */
+function openNotebookWords(notebookId: number) {
   currentCollectEntries.value = []
   collectSourceSnippet.value = ''
   collectSourceLocation.value = ''
   collectTargetNotebookId.value = notebookId
-  collectDrawerPreferredMode.value = 'basket'
+  collectDrawerPreferredMode.value = 'notebook'
   showCollectDrawer.value = true
 }
 
-/** 某条 AI 回复旁的收录：打开列表供勾选，确认后弹成功提示（不跳到未收录篮） */
+/** 仅单词 / 固定搭配（短语）可加入单词本 */
+function collectableEntriesOf(msg: AiMessage): CollectEntry[] {
+  const list = msg.collectEntries || []
+  return list.filter(e => e.entryType === 'word' || e.entryType === 'phrase')
+}
+
+function collectableCount(msg: AiMessage): number {
+  return collectableEntriesOf(msg).length
+}
+
+/** 某条 AI 回复旁：加入单词本（仅单词/短语） */
 function openCollectForMessage(msg: AiMessage) {
-  if (!msg.collectEntries?.length) return
+  const entries = collectableEntriesOf(msg)
+  if (!entries.length) {
+    MessagePlugin.info(t('reader.collectNothing'))
+    return
+  }
   if (linkedNotebooks.value.length === 0) {
     MessagePlugin.warning(t('reader.collectNeedLink'))
     showNotebookLinkDialog.value = true
     return
   }
-  currentCollectEntries.value = msg.collectEntries
+  currentCollectEntries.value = entries
   collectSourceSnippet.value = msg.collectSourceSnippet || ''
   collectSourceLocation.value = msg.collectSourceLocation || ''
   collectTargetNotebookId.value = activeNotebookId.value || linkedNotebooks.value[0]?.notebookId
@@ -663,10 +708,8 @@ async function loadNotebookLinks() {
     linkedNotebooks.value = res.data.data || []
     const ids = linkedNotebooks.value.map(n => n.notebookId)
     activeNotebookId.value = resolveActiveNotebookId(bookId, ids, activeNotebookId.value)
-    refreshBasketCounts()
   } catch {
     linkedNotebooks.value = []
-    basketCounts.value = {}
     activeNotebookId.value = undefined
   }
 }
@@ -685,10 +728,11 @@ function normalizeCollectEntries(rawEntries: any[], snippet: string): CollectEnt
       partSpeechMean: String(e.partSpeechMean).trim(),
       usPhonetic: e.usPhonetic,
       ukPhonetic: e.ukPhonetic,
-      sentenceExample: snippet || e.sentenceExample,
+      sentenceExample: snippet || undefined,
       rootAffix: e.rootAffix,
       sourceSnippet: snippet
     }))
+    .filter(e => e.entryType === 'word' || e.entryType === 'phrase')
 }
 
 function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[]) {
@@ -806,7 +850,7 @@ let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
 async function loadAiFeatures() {
   aiFeaturesLoading.value = true
   try {
-    const prefRes = await getAiFeaturePreferences()
+    const prefRes = await getAiFeaturePreferences(locale.value)
     console.log('[Reader] getAiFeaturePreferences 响应:', prefRes.data)
     const data = prefRes.data.data
     console.log('[Reader] 偏好数据:', { allFeaturesCount: data.allFeatures?.length, preferredKeys: data.preferredKeys, featureOrder: data.featureOrder })
@@ -819,7 +863,7 @@ async function loadAiFeatures() {
     console.error('[Reader] 加载AI功能偏好失败，降级加载全部功能:', e)
     // 降级：加载全部功能
     try {
-      const res = await getAiFeatures()
+      const res = await getAiFeatures(locale.value)
       aiFeatures.value = res.data.data || []
       allAiFeatures.value = aiFeatures.value
       preferredFeatureKeys.value = allAiFeatures.value.map(f => f.featureKey)
@@ -838,34 +882,40 @@ async function loadAiFeatures() {
   }
 }
 
-/** 加载会话列表并自动恢复最近会话 */
+watch(locale, () => {
+  void loadAiFeatures()
+})
+
+/** 功能标签：接口已按 locale 解析 featureName；缺省再回退 i18n */
+function featureLabel(f: { featureKey: string; featureName?: string }) {
+  const name = f.featureName?.trim()
+  if (name) return name
+  const key = `reader.aiFeature_${f.featureKey}`
+  const translated = t(key)
+  return translated === key ? f.featureKey : translated
+}
+
+/** 进入阅读器时恢复该书最近会话历史（无会话列表 / 新对话入口） */
 async function loadAiSessions() {
-  sessionsLoading.value = true
   try {
     const res = await getAiSessions(bookId)
-    aiSessions.value = res.data.data || []
-    // 自动选中最近会话
-    if (aiSessions.value.length > 0 && currentSessionId.value === null) {
-      const latest = aiSessions.value[0]
+    const sessions = res.data.data || []
+    if (sessions.length > 0 && currentSessionId.value === null) {
+      const latest = sessions[0]
       currentSessionId.value = latest.id
       await loadSessionMessages(latest.id)
     }
   } catch (e) {
-    console.warn('[Reader] 加载AI会话列表失败:', e)
-  } finally {
-    sessionsLoading.value = false
+    console.warn('[Reader] 加载AI会话失败:', e)
   }
 }
 
-/** 加载指定会话的最近消息（最新10条），支持向上滚动加载更多 */
 async function loadSessionMessages(sessionId: number) {
   try {
     const res = await getAiMessagesPaged(sessionId, 0, MESSAGE_PAGE_SIZE)
     const data = res.data.data
-    // messages 是倒序返回的（最新在前），需要反转为正序显示
     const list: any[] = data.messages || []
     aiMessages.value = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
-    messagesTotal.value = data.total || 0
     messagesHasMore.value = data.hasMore || false
     await nextTick()
     scrollAiBottom()
@@ -874,22 +924,18 @@ async function loadSessionMessages(sessionId: number) {
   }
 }
 
-/** 向上滚动加载更早的历史消息 */
 async function loadMoreMessages() {
   if (messagesLoadingMore.value || !messagesHasMore.value || !currentSessionId.value) return
   messagesLoadingMore.value = true
   const prevScrollHeight = aiMessagesRef.value?.scrollHeight || 0
   try {
-    const currentCount = aiMessages.value.length
-    const res = await getAiMessagesPaged(currentSessionId.value, currentCount, MESSAGE_PAGE_SIZE)
+    const res = await getAiMessagesPaged(currentSessionId.value, aiMessages.value.length, MESSAGE_PAGE_SIZE)
     const data = res.data.data
     const list: any[] = data.messages || []
-    const olderMessages = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
-    aiMessages.value = [...olderMessages, ...aiMessages.value]
-    messagesTotal.value = data.total || 0
+    const older = list.reverse().map((m: any) => hydrateStoredAiMessage(m.role, m.content))
+    aiMessages.value = [...older, ...aiMessages.value]
     messagesHasMore.value = data.hasMore || false
     await nextTick()
-    // 保持滚动位置
     if (aiMessagesRef.value) {
       aiMessagesRef.value.scrollTop = aiMessagesRef.value.scrollHeight - prevScrollHeight
     }
@@ -900,45 +946,10 @@ async function loadMoreMessages() {
   }
 }
 
-/** 监听消息区滚动，滚动到顶部时加载更多 */
 function onAiMessagesScroll() {
   const el = aiMessagesRef.value
   if (!el || messagesLoadingMore.value || !messagesHasMore.value) return
-  if (el.scrollTop <= 50) {
-    loadMoreMessages()
-  }
-}
-
-/** 切换会话 */
-async function switchSession(sessionId: number) {
-  if (sessionId === currentSessionId.value) return
-  currentSessionId.value = sessionId
-  await loadSessionMessages(sessionId)
-  showSessionList.value = false
-}
-
-/** 新建会话 */
-async function newSession() {
-  currentSessionId.value = null
-  aiMessages.value = []
-  messagesTotal.value = 0
-  messagesHasMore.value = false
-  showSessionList.value = false
-}
-
-/** 删除会话 */
-async function handleDeleteSession(sessionId: number, event: Event) {
-  event.stopPropagation()
-  try {
-    await deleteAiSession(sessionId)
-    if (currentSessionId.value === sessionId) {
-      currentSessionId.value = null
-      aiMessages.value = []
-    }
-    await loadAiSessions()
-  } catch (e) {
-    MessagePlugin.error(t('common.error'))
-  }
+  if (el.scrollTop <= 50) loadMoreMessages()
 }
 
 /** 打开偏好设置对话框 */
@@ -1107,17 +1118,11 @@ const aiLoading = ref(false)
 const aiMessagesRef = ref<HTMLElement | null>(null)
 const activeFeatureKey = ref<string>('')
 
-// AI 会话管理
-const aiSessions = ref<any[]>([])
+// AI 会话：进入阅读器恢复最近历史，不提供会话列表 / 新对话入口
 const currentSessionId = ref<number | null>(null)
-const showSessionList = ref(false)
-const sessionsLoading = ref(false)
-
-// 消息分页加载
 const MESSAGE_PAGE_SIZE = 10
 const messagesLoadingMore = ref(false)
 const messagesHasMore = ref(false)
-const messagesTotal = ref(0)
 
 // 选中文本折叠
 const contextCollapsed = ref(false)
@@ -1180,16 +1185,12 @@ function clearAllHighlights() {
 
 onMounted(async () => {
   console.log('[Reader] onMounted 开始, bookId:', bookId)
-  await loadNotebookLinks()
-  await loadAiFeatures()
-  await loadAiSessions()
-  await loadReaderSettings()
+  // 优先加载书籍，避免 AI 会话/设置请求拖死正文
   await loadBook()
   console.log('[Reader] loadBook 完成, book:', !!book.value, 'fileType:', book.value?.fileType)
   if (book.value) {
     if (book.value.fileType === 'pdf') {
       console.log('[Reader] 检测到 PDF，由 PdfReader 组件初始化')
-      // PdfReader 通过 v-if 挂载后自行加载
     } else {
       console.log('[Reader] 调用 initEpub...')
       initEpub()
@@ -1197,6 +1198,13 @@ onMounted(async () => {
   } else {
     console.error('[Reader] book 为空，无法初始化阅读器')
   }
+  // 侧栏数据并行加载，互不影响
+  void Promise.allSettled([
+    loadNotebookLinks(),
+    loadAiFeatures(),
+    loadAiSessions(),
+    loadReaderSettings()
+  ])
 })
 
 onBeforeUnmount(() => {
@@ -1320,6 +1328,44 @@ function onPdfToc(items: Array<{ label: string; href: string; level: number }>) 
   console.log('[Reader] PDF 目录加载完成, 共', items.length, '条')
 }
 
+function onPdfNotedPages(pages: number[]) {
+  notedPages.value = pages || []
+}
+
+/** 目录项是否有笔记：PDF 按页区间；EPUB 按章节下标 */
+function tocItemHasNote(index: number): boolean {
+  if (book.value?.fileType === 'pdf') {
+    if (!notedPages.value.length) return false
+    const start = parseInt(toc.value[index]?.href, 10)
+    if (!Number.isFinite(start) || start <= 0) return false
+    let end = Number.POSITIVE_INFINITY
+    for (let j = index + 1; j < toc.value.length; j++) {
+      const p = parseInt(toc.value[j].href, 10)
+      if (Number.isFinite(p) && p > start) {
+        end = p
+        break
+      }
+    }
+    return notedPages.value.some((page) => page >= start && page < end)
+  }
+  return notedChapterIndexes.value.has(index)
+}
+
+async function loadEpubNotedChapters() {
+  if (book.value?.fileType === 'pdf') return
+  try {
+    const res = await getAnnotations(bookId)
+    const list = (res.data?.data || []) as Array<{ chapterIndex?: number }>
+    const set = new Set<number>()
+    for (const a of list) {
+      if (a.chapterIndex != null && a.chapterIndex >= 0) set.add(a.chapterIndex)
+    }
+    notedChapterIndexes.value = set
+  } catch (e) {
+    console.warn('[Reader] 加载笔记章节标记失败:', e)
+  }
+}
+
 /** PDF 滚动页码 → 目录高亮（与旧逻辑一致：取最后一个页码 ≤ 当前页的目录项） */
 function onPdfChapterHighlight(pageNum: number) {
   let targetIndex = -1
@@ -1333,8 +1379,9 @@ function onPdfChapterHighlight(pageNum: number) {
 }
 
 function onPdfSelectText(text: string) {
-  selectedText = text
-  selectedContext.value = text
+  const normalized = normalizeSelectedText(text)
+  selectedText = normalized
+  selectedContext.value = normalized
   contextCollapsed.value = false
 }
 
@@ -1505,6 +1552,7 @@ function mountRendition(initialCfi?: string) {
   epubBook.loaded.navigation.then((nav: any) => {
     console.log('[Reader] 目录加载完成, 条目数:', nav.toc?.length || 0)
     toc.value = nav.toc || []
+    void loadEpubNotedChapters()
   })
 
   // 恢复到上次阅读位置
@@ -1582,8 +1630,8 @@ function mountRendition(initialCfi?: string) {
       selectedContext.value = ''
       return
     }
-    // 规范化文本：去除首尾空白，合并内部换行/多余空白为单个空格
-    const text = selection.toString().replace(/\s+/g, ' ').trim()
+    // 规范化：尽量保留多句边界（换行 / 粘连的大写开句），再压空白
+    const text = normalizeSelectedText(selection.toString())
     if (!text) {
       selectedText = ''
       selectedContext.value = ''
@@ -1855,6 +1903,7 @@ function applyFlow() {
 /** 清除 AI 提示词上下文 */
 function clearSelectedContext() {
   selectedContext.value = ''
+  targetWordIndexes.value = []
 }
 
 async function saveNoteDialog() {
@@ -1880,6 +1929,7 @@ async function saveNoteDialog() {
     noteDialog.value.visible = false
     // 刷新笔记数据和高亮
     await loadChapterNotes(currentChapter.value)
+    void loadEpubNotedChapters()
   } catch (e: any) {
     MessagePlugin.error(t('reader.noteSaveError'))
   } finally {
@@ -1903,6 +1953,7 @@ async function handleDeleteNote(id: number) {
     await deleteAnnotation(bookId, id)
     MessagePlugin.success(t('reader.noteDeleteSuccess'))
     await loadChapterNotes(currentChapter.value)
+    void loadEpubNotedChapters()
   } catch (e: any) {
     MessagePlugin.error(t('reader.noteDeleteError'))
   }
@@ -1967,7 +2018,8 @@ async function sendAiMessage() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...aiRegionHeaders()
       },
       body: JSON.stringify({
         bookId,
@@ -2005,7 +2057,6 @@ async function sendAiMessage() {
       onDone: (doneData) => {
         if (doneData.sessionId && isFirstMessage) {
           currentSessionId.value = doneData.sessionId
-          loadAiSessions()
         }
       },
       onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
@@ -2043,6 +2094,10 @@ async function sendAiFeatures() {
     console.warn('[Reader] sendAiFeatures 被阻止，selectedContext为空:', !selectedContext.value, '或没有选中功能:', selectedFeatureKeysForQuery.value.length === 0)
     return
   }
+  if (needsTargetWords.value && targetWords.value.length === 0) {
+    MessagePlugin.warning(t('reader.targetWordsRequired'))
+    return
+  }
   // 如果 aiLoading 卡住，强制重置
   if (aiLoading.value) {
     console.warn('[Reader] aiLoading 为 true，强制重置为 false')
@@ -2050,9 +2105,13 @@ async function sendAiFeatures() {
   }
 
   const selectedFeatures = preferredAiFeatures.value.filter(f => selectedFeatureKeysForQuery.value.includes(f.featureKey))
-  const featureNames = selectedFeatures.map(f => t('reader.aiFeature_' + f.featureKey)).join(' + ')
+  const featureNames = selectedFeatures.map(f => featureLabel(f)).join(' + ')
+  // 传给后端的顺序 = 界面展示顺序（偏好排序），不是点击先后
+  const orderedFeatureKeys = selectedFeatures.map(f => f.featureKey)
+  const targets = targetWords.value.length ? [...targetWords.value] : []
 
-  aiMessages.value.push({ role: 'user', content: `【${featureNames}】${selectedContext.value}` })
+  const targetSuffix = targets.length ? ` · ${targets.join(', ')}` : ''
+  aiMessages.value.push({ role: 'user', content: `【${featureNames}】${selectedContext.value}${targetSuffix}` })
   aiLoading.value = true
   activeFeatureKey.value = 'multi'
 
@@ -2067,12 +2126,14 @@ async function sendAiFeatures() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...aiRegionHeaders()
       },
       body: JSON.stringify({
         bookId,
-        featureKeys: selectedFeatureKeysForQuery.value,
+        featureKeys: orderedFeatureKeys,
         context: selectedContext.value || '',
+        targetWords: targets,
         locale: locale.value,
         sessionId: currentSessionId.value
       })
@@ -2105,7 +2166,6 @@ async function sendAiFeatures() {
       onDone: (doneData) => {
         if (doneData.sessionId && isFirstMessage) {
           currentSessionId.value = doneData.sessionId
-          loadAiSessions()
         }
       },
       onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries)
@@ -2149,21 +2209,75 @@ function truncate(text: string, len: number) {
   return text.length > len ? text.substring(0, len) + '...' : text
 }
 
-/** 简单 markdown 渲染（加粗、代码块、换行） */
+/** 简单 markdown 渲染：对齐阅读器历史样式（蓝标题 / 蓝词条 / 黑正文） */
 function renderMarkdown(text: string): string {
   if (!text) return ''
+  const sectionNames =
+    '翻译|释义|整体释义|单词|单词讲解|固搭|固定搭配|语法|语法结构|句式|词根词缀|例句|连读音标|音标|Phonetic|Translation|Collocation|Grammar|Word'
+
+  // 统一换行，避免 \r\n 导致「单词：」等小节标题匹配失败
   let html = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+
   // 代码块
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
   // 行内代码
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  // 粗体
+  // ## 标题 → 小节（去掉井号，避免露出 ##）
+  html = html.replace(/(^|\n)#{1,6}\s+([^\n]+)/g, '$1<strong class="ai-section">$2</strong>')
+  // 先把 **翻译：** / **单词** 提成小节（冒号常在粗体内，需单独处理）
+  html = html.replace(
+    new RegExp(`\\*\\*[ \\t]*(${sectionNames})([：:])?[ \\t]*\\*\\*`, 'g'),
+    '<strong class="ai-section">$1$2</strong>'
+  )
+  // 粗体 **text**
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  // 换行
+  // 斜体 *text*
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+
+  // 已变成 <strong>翻译：</strong> 的小节（兜底）
+  html = html.replace(
+    new RegExp(`<strong>[ \\t]*(${sectionNames})([：:])?[ \\t]*<\\/strong>`, 'g'),
+    '<strong class="ai-section">$1$2</strong>'
+  )
+  // 纯文本小节行：翻译： / 单词（允许行首尾空白）
+  html = html.replace(
+    new RegExp(`(^|\\n)[ \\t]*(${sectionNames})([：:])?[ \\t]*(?=\\n|$)`, 'g'),
+    '$1<strong class="ai-section">$2$3</strong>'
+  )
+  // 其它短行「XXX：」也当小节
+  html = html.replace(/(^|\n)[ \t]*([^\n<>]{1,16}?[：:])[ \t]*(?=\n|$)/g, (full, lead, title) => {
+    if (/[。.!?]/.test(title)) return full
+    if (title.includes('ai-section') || title.includes('<strong')) return full
+    return `${lead}<strong class="ai-section">${title}</strong>`
+  })
+
+  // 列表：- **词条**：释义  /  - 词条：释义  → 蓝词条
+  html = html.replace(
+    /(^|\n)(\s*)([-•])(\s*)<strong(?:\s+class="[^"]*")?>([^<]+)<\/strong>(\s*[：:])/g,
+    '$1$2<span class="ai-bullet">$3</span>$4<strong class="ai-term">$5</strong>$6'
+  )
+  html = html.replace(
+    /(^|\n)(\s*)([-•])(\s*)(?!<)([A-Za-z][^\n：:<]{0,47}?)(\s*[：:])/g,
+    '$1$2<span class="ai-bullet">$3</span>$4<strong class="ai-term">$5</strong>$6'
+  )
+  // 无列表符的词条行：possible /ˈpɒsəbl/ adj. 可能的
+  html = html.replace(
+    /(^|\n)(?!<)([A-Za-z][A-Za-z'\-]{0,40})\s+(\/[^/\n]{1,40}\/)\s+([^\n]+)/g,
+    '$1<span class="ai-word-line"><strong class="ai-term">$2</strong> <em>$3</em> $4</span>'
+  )
+
+  // 标题后多余空行压成一行，避免「翻译」和正文隔太远
+  html = html.replace(/(<strong class="ai-section">[^<]*<\/strong>)\n+/g, '$1\n')
+  html = html.replace(/\n{3,}/g, '\n\n')
   html = html.replace(/\n/g, '<br>')
+  // block 标题后再跟 <br> 会多出一截空白
+  html = html.replace(/(<strong class="ai-section">[^<]*<\/strong>)<br>/g, '$1')
+  html = html.replace(/(<span class="ai-word-line">[\s\S]*?<\/span>)<br>/g, '$1')
   return html
 }
 
@@ -2178,7 +2292,8 @@ function renderMarkdown(text: string): string {
 }
 
 .reader-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
@@ -2187,10 +2302,36 @@ function renderMarkdown(text: string): string {
   flex-shrink: 0;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  justify-self: start;
+}
+
 .book-title-header {
   font-size: 16px;
   font-weight: 600;
-  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.header-center {
+  justify-self: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.header-brand {
+  font-size: 22px;
+  font-weight: 800;
+  color: #315C34;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .header-right {
@@ -2199,6 +2340,7 @@ function renderMarkdown(text: string): string {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  justify-self: end;
 }
 
 .header-notebooks {
@@ -2309,14 +2451,30 @@ function renderMarkdown(text: string): string {
 }
 
 .toc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 8px;
   font-size: 13px;
   color: #4b5563;
   cursor: pointer;
   border-radius: 4px;
+}
+
+.toc-item-label {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.toc-note-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #E5484D;
 }
 
 .toc-item:hover {
@@ -2327,6 +2485,10 @@ function renderMarkdown(text: string): string {
   background: #eef2ff;
   color: #6366f1;
   font-weight: 500;
+}
+
+.toc-item.has-note:not(.active) .toc-item-label {
+  color: #4b5563;
 }
 
 .toc-loading {
@@ -2392,6 +2554,8 @@ function renderMarkdown(text: string): string {
 /* 右侧 AI */
 .sidebar-ai {
   flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
   background: #fff;
   border-left: 1px solid #eee;
   display: flex;
@@ -2399,66 +2563,26 @@ function renderMarkdown(text: string): string {
   box-shadow: -2px 0 12px rgba(0, 0, 0, 0.04);
 }
 
-.ai-header {
-  padding: 8px 12px;
-  font-size: 14px;
-  font-weight: 600;
-  border-bottom: 1px solid #eee;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.ai-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-/* 会话列表 */
-.ai-session-list {
-  max-height: 160px;
-  overflow-y: auto;
-  border-bottom: 1px solid #eee;
-  background: #fafafa;
-}
-
-.ai-session-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  color: #555;
-  transition: background 0.15s;
-}
-
-.ai-session-item:hover {
-  background: #f0f0f5;
-}
-
-.ai-session-item--active {
-  background: #eae8f5;
-  color: #5e57b5;
-  font-weight: 500;
-}
-
-.ai-session-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ai-messages {
   flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.ai-loading-more {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+.ai-loading-more--hint {
+  font-size: 11px;
+  color: #a8a29e;
 }
 
 .ai-empty {
@@ -2474,24 +2598,33 @@ function renderMarkdown(text: string): string {
   font-size: 12px;
   line-height: 1.7;
   position: relative;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-msg.user {
   background: #f0eef7;
   color: #4a3f8a;
-  margin-left: 20px;
+  margin-left: 12px;
   border-bottom-right-radius: 4px;
 }
 
 .ai-msg.assistant {
   background: #f7f8fa;
   color: #2d2d3a;
-  margin-right: 20px;
+  margin-right: 0;
   border-bottom-left-radius: 4px;
 }
 
 .ai-msg-content {
   word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  color: #2d2d3a;
+  max-width: 100%;
 }
 
 .ai-msg-content :deep(code) {
@@ -2518,9 +2651,51 @@ function renderMarkdown(text: string): string {
   color: inherit;
 }
 
+/* 正文里的普通加粗保持深色；小节标题与词条用主题蓝 */
 .ai-msg-content :deep(strong) {
+  color: #2d2d3a;
+  font-weight: 600;
+}
+
+.ai-msg-content :deep(strong.ai-section) {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #5e57b5;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1.4;
+  font-size: 12px;
+}
+
+.ai-msg-content :deep(strong.ai-section:first-child) {
+  margin-top: 0;
+}
+
+.ai-msg-content :deep(strong.ai-term) {
   color: #5e57b5;
   font-weight: 600;
+}
+
+.ai-msg-content :deep(.ai-bullet) {
+  color: #5e57b5;
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.ai-msg-content :deep(.ai-word-line) {
+  display: block;
+  margin: 2px 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-msg-content :deep(em) {
+  font-style: italic;
+  color: #555;
 }
 
 .ai-msg-actions {
@@ -2572,9 +2747,12 @@ function renderMarkdown(text: string): string {
 .ai-context {
   display: block;
   width: 100%;
+  max-width: 100%;
   align-self: stretch;
   box-sizing: border-box;
-  padding: 6px 8px 6px 6px;
+  min-width: 0;
+  overflow-x: hidden;
+  padding: 4px 8px 4px 6px;
   background: #fffbeb;
   border-bottom: 1px solid #fde68a;
   flex-shrink: 0;
@@ -2588,31 +2766,45 @@ function renderMarkdown(text: string): string {
 .ai-context-label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 11px;
   font-weight: 600;
   color: #a16207;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
+  min-height: 22px;
+  line-height: 1.2;
 }
 
 .ai-context-actions {
   display: flex;
   align-items: center;
   margin-left: auto;
-  gap: 2px;
+  gap: 0;
+}
+
+.ai-context-actions :deep(.t-button) {
+  height: 22px;
+  width: 22px;
+  padding: 0;
 }
 
 .ai-context-text {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 500;
   color: #78716c;
-  line-height: 1.7;
-  max-height: 120px;
+  line-height: 1.5;
+  max-height: 96px;
+  overflow-x: hidden;
   overflow-y: auto;
   white-space: normal;
   word-break: break-word;
+  overflow-wrap: anywhere;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 8px 8px 8px 8px;
+  padding: 2px 6px 2px 8px;
+  margin: 0;
   background: #fffbeb;
   border-left: 3px solid #fcd34d;
   border-radius: 0 6px 6px 0;
@@ -2624,37 +2816,66 @@ function renderMarkdown(text: string): string {
   border-left-color: #e5e0d0;
 }
 
+.ai-context-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #9ca3af;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-context-word {
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ai-context-word:hover {
+  background: rgba(168, 181, 159, 0.25);
+}
+
+.ai-context-word--active {
+  background: rgba(49, 92, 52, 0.18);
+  color: #315C34;
+  font-weight: 600;
+}
+
 /* AI 功能多选框区域 */
 .ai-feature-panel {
   padding: 6px 10px;
   border-bottom: 1px solid #eee;
   flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
-.ai-feature-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.ai-feature-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #4b5563;
-}
-
-.ai-feature-header-actions {
+.ai-feature-tags-row {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-bottom: 6px;
+}
+
+.ai-feature-pref-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: auto;
 }
 
 .ai-feature-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-bottom: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .ai-feature-tag {
@@ -2807,37 +3028,94 @@ function renderMarkdown(text: string): string {
   line-height: 1.6;
 }
 
-.ai-input {
-  padding: 6px 10px 8px;
-  border-top: 1px solid #eee;
+.ai-composer {
+  margin: 8px 10px 10px;
+  padding: 6px 8px 6px 10px;
   display: flex;
-  gap: 8px;
+  flex-direction: row;
   align-items: flex-end;
-}
-
-.ai-input :deep(.t-textarea__inner) {
-  font-size: 13px;
-}
-
-.ai-send-btn {
+  gap: 8px;
+  background: #f6f0e6;
+  border: 1px solid #e4ddd0;
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
   flex-shrink: 0;
-  background: #5e57b5 !important;
-  border-color: #5e57b5 !important;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ai-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-composer-input :deep(.t-textarea) {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.ai-composer-input :deep(.t-textarea__inner),
+.ai-composer-input :deep(textarea) {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #315c34;
+  padding: 2px 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  resize: none;
+  height: 38px !important;
+  max-height: 38px !important;
+  min-height: 38px !important;
+  overflow-y: auto !important;
+}
+
+.ai-composer-input :deep(.t-textarea__inner::placeholder),
+.ai-composer-input :deep(textarea::placeholder) {
+  color: #9ca38f;
+}
+
+.ai-composer-input :deep(.t-textarea__inner:focus),
+.ai-composer-input :deep(textarea:focus) {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.ai-composer-send {
+  flex-shrink: 0;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  height: 32px !important;
+  padding: 0 10px !important;
+  margin-bottom: 1px;
+  background: #315c34 !important;
+  border-color: #315c34 !important;
   color: #fff !important;
+  font-size: 12px !important;
   font-weight: 600;
-  border-radius: 8px;
-  transition: all 0.2s ease;
+  border-radius: 999px !important;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 
-.ai-send-btn:hover:not(:disabled) {
-  background: #4f479e !important;
-  border-color: #4f479e !important;
+.ai-composer-send :deep(.t-button__text) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.ai-send-btn:disabled {
-  background: #f0f0f5 !important;
-  border-color: #e0dfe8 !important;
-  color: #c4c1d8 !important;
+.ai-composer-send:hover:not(:disabled) {
+  background: #274a29 !important;
+  border-color: #274a29 !important;
+}
+
+.ai-composer-send:disabled {
+  background: #d5d8cc !important;
+  border-color: #d5d8cc !important;
+  color: #8a9080 !important;
   opacity: 1;
 }
 

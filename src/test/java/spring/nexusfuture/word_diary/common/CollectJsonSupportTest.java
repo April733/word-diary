@@ -13,14 +13,30 @@ class CollectJsonSupportTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void shouldCollect_whenAnyFeaturePresent() {
+    void shouldCollect_onlyVocabFeatures() {
         assertTrue(CollectJsonSupport.shouldCollect(List.of("meaning", "word"), null));
-        assertTrue(CollectJsonSupport.shouldCollect(List.of("root", "example"), null));
+        assertTrue(CollectJsonSupport.shouldCollect(List.of("collocation"), null));
         assertTrue(CollectJsonSupport.shouldCollect(null, "word"));
-        assertTrue(CollectJsonSupport.shouldCollect(null, "meaning"));
+        assertFalse(CollectJsonSupport.shouldCollect(List.of("meaning"), null));
+        assertFalse(CollectJsonSupport.shouldCollect(null, "meaning"));
+        assertFalse(CollectJsonSupport.shouldCollect(List.of("sentence_pattern"), null));
         assertFalse(CollectJsonSupport.shouldCollect(List.of(), null));
         assertFalse(CollectJsonSupport.shouldCollect(null, null));
         assertFalse(CollectJsonSupport.shouldCollect(null, ""));
+    }
+
+    @Test
+    void shouldRequireWordPhonetics_forWordNotMeaning() {
+        assertTrue(CollectJsonSupport.shouldRequireWordPhonetics(List.of("word"), null));
+        assertFalse(CollectJsonSupport.shouldRequireWordPhonetics(List.of("meaning"), null));
+        assertFalse(CollectJsonSupport.shouldRequireWordPhonetics(List.of("collocation"), null));
+    }
+
+    @Test
+    void featureScopeInstruction_listsSelectedOnly() {
+        String zh = CollectJsonSupport.featureScopeInstruction("zh-CN", List.of("meaning"), null);
+        assertTrue(zh.contains("meaning"));
+        assertTrue(zh.contains("严禁") || zh.contains("只"));
     }
 
     @Test
@@ -63,21 +79,64 @@ class CollectJsonSupportTest {
         assertTrue(instruction.contains("entryType"));
         assertTrue(instruction.contains("wordProto"));
         assertTrue(instruction.contains("rootAffix"));
-        assertTrue(instruction.contains("sentenceExample"));
+        assertFalse(instruction.contains("\"sentenceExample\""));
         assertTrue(instruction.contains("固定搭配") || instruction.contains("phrase"));
     }
 
     @Test
-    void parseEntries_keepsRootAffixAndExample() throws Exception {
+    void parseEntries_keepsRootAffix() throws Exception {
         String raw = """
                 讲解。
                 %s
-                {"entries":[{"entryType":"word","wordProto":"require","partSpeechMean":"v. 需要","rootAffix":"re- + quire","sentenceExample":"This task requires care."}]}
+                {"entries":[{"entryType":"word","wordProto":"require","partSpeechMean":"v. 需要","rootAffix":"re- + quire"}]}
                 """.formatted(CollectJsonSupport.MARKER);
         List<CollectEntryDTO> entries = CollectJsonSupport.parseEntries(raw, mapper);
         assertEquals(1, entries.size());
         assertEquals("re- + quire", entries.get(0).getRootAffix());
-        assertEquals("This task requires care.", entries.get(0).getSentenceExample());
+    }
+
+    @Test
+    void parseEntriesEnriched_mergesPhrasesFromCollocationSection() {
+        String raw = """
+                ## 翻译释义
+                所选路线不需要拆除许多建筑物。
+
+                ## 固定搭配
+                - **require ... to be done**：需要某事被完成
+                - **pull down**：拆除（建筑物）
+
+                ## 语法结构
+                被动结构说明。
+
+                %s
+                {"entries":[{"entryType":"word","wordProto":"require","partSpeechMean":"v. 需要"},{"entryType":"word","wordProto":"pull down","partSpeechMean":"拆除"}]}
+                """.formatted(CollectJsonSupport.MARKER);
+
+        List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(raw, mapper);
+        assertTrue(entries.stream().anyMatch(e ->
+                "phrase".equals(e.getEntryType()) && "pull down".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(entries.stream().anyMatch(e ->
+                "phrase".equals(e.getEntryType()) && e.getWordProto() != null
+                        && e.getWordProto().toLowerCase().contains("require")));
+        // JSON 里误标为 word 的短语应纠正为 phrase
+        assertEquals("phrase", entries.stream()
+                .filter(e -> "pull down".equalsIgnoreCase(e.getWordProto()))
+                .findFirst().orElseThrow().getEntryType());
+    }
+
+    @Test
+    void extractPhrasesFromProse_readsBulletsWithoutJson() {
+        String prose = """
+                ## 固定搭配
+                - **pull down**：拆除
+                - require sb to do sth: 要求某人做某事
+                """;
+        List<CollectEntryDTO> phrases = CollectJsonSupport.extractPhrasesFromProse(prose);
+        assertEquals(2, phrases.size());
+        assertEquals("phrase", phrases.get(0).getEntryType());
+        assertEquals("pull down", phrases.get(0).getWordProto());
+        assertTrue(phrases.get(0).getPartSpeechMean().contains("拆除"));
+        assertEquals("require sb to do sth", phrases.get(1).getWordProto());
     }
 
     @Test
@@ -85,5 +144,24 @@ class CollectJsonSupportTest {
         String raw = "讲解\n" + CollectJsonSupport.MARKER + "\n{\"entries\":[{\"entryType\":\"word\",\"wordProto\":\"a\",\"partSpeechMean\":\"甲\"}]}";
         assertEquals("讲解", CollectJsonSupport.stripForDisplay(raw));
         assertEquals(1, CollectJsonSupport.parseEntries(raw, mapper).size());
+    }
+
+    @Test
+    void phoneticDisplayInstruction_requiresUsAndUk() {
+        String zh = CollectJsonSupport.phoneticDisplayInstruction("zh-CN");
+        assertTrue(zh.contains("美"));
+        assertTrue(zh.contains("英"));
+        assertTrue(zh.contains("IPA") || zh.contains("/"));
+        String en = CollectJsonSupport.phoneticDisplayInstruction("en");
+        assertTrue(en.contains("US") || en.toLowerCase().contains("american"));
+        assertTrue(en.contains("UK") || en.toLowerCase().contains("british"));
+    }
+
+    @Test
+    void collectInstruction_requiresPhonetics() {
+        String instruction = CollectJsonSupport.collectInstruction("zh-CN");
+        assertTrue(instruction.contains("usPhonetic"));
+        assertTrue(instruction.contains("ukPhonetic"));
+        assertTrue(instruction.contains("IPA") || instruction.contains("美英"));
     }
 }

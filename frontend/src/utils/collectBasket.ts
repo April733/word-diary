@@ -147,6 +147,17 @@ export function migrateLegacyBasketIfNeeded(bookId: number, notebookIds: number[
 
 export const COLLECT_JSON_MARKER = '---COLLECT_JSON---'
 
+const COLLOCATION_HEADING =
+  /^(?:#{0,6}\s*)?(?:\*\*)?(固定搭配|固搭|短语(?:用法)?|常用搭配|词组|collocations?|fixed\s+phrases?|phrasal\s+verbs?)(?:\*\*)?\s*[:：]?\s*$/i
+
+const OTHER_HEADING = /^#{1,6}\s+\S/
+
+/** 避免嵌套量词 ReDoS：先宽抓，再校验英文短语形态 */
+const COLLOCATION_BULLET =
+  /^\s*(?:[-*•]|\d+[.)])\s*(?:\*\*)?([^:*：—–\n]{1,120}?)(?:\*\*)?\s*[:：—–\-]\s*(.{1,300})$/
+
+const MAX_PROSE_LINE_LEN = 400
+
 /** 去掉收录标记及其后的 JSON；流式拆包时也去掉末尾不完整前缀 */
 export function stripCollectMarker(text: string): string {
   if (!text) return ''
@@ -165,42 +176,119 @@ export function stripCollectMarker(text: string): string {
   return text
 }
 
-/** 从入库的完整 AI 回复中解析可收录词条（历史会话恢复用） */
-export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): CollectEntry[] {
-  if (!text || !text.includes(COLLECT_JSON_MARKER)) return []
-  const jsonPart = text.substring(text.indexOf(COLLECT_JSON_MARKER) + COLLECT_JSON_MARKER.length).trim()
-  const start = jsonPart.indexOf('{')
-  const end = jsonPart.lastIndexOf('}')
-  if (start < 0 || end <= start) return []
-  try {
-    const root = JSON.parse(jsonPart.substring(start, end + 1))
-    const entries = Array.isArray(root?.entries) ? root.entries : []
-    return entries
-      .filter((e: any) => e?.wordProto && e?.partSpeechMean)
-      .map((e: any) => ({
-        basketKey: makeBasketKey(e),
-        entryType: e.entryType === 'phrase' ? 'phrase' as const : 'word' as const,
-        wordProto: String(e.wordProto).trim(),
-        partSpeechMean: String(e.partSpeechMean).trim(),
-        usPhonetic: e.usPhonetic,
-        ukPhonetic: e.ukPhonetic,
-        sentenceExample: sourceSnippet || e.sentenceExample || undefined,
-        rootAffix: e.rootAffix,
-        sourceSnippet: sourceSnippet || undefined
-      }))
-  } catch {
-    return []
+function looksLikeEnglishPhrase(proto: string): boolean {
+  const p = proto.trim()
+  if (!/^[a-z][a-z0-9'’./…\-]*(?:\s+(?:\.\.\.|…|[a-z][a-z0-9'’./…\-]*))*$/i.test(p)) return false
+  if (p.includes(' ') || p.includes('...') || p.includes('…')) return true
+  return /^(?:[a-z]+(?:-[a-z]+)+)$/i.test(p)
+}
+
+function cleanProto(raw: string): string {
+  return raw.replace(/\*+/g, '').replace(/\u00A0/g, ' ').trim().replace(/\s+/g, ' ')
+}
+
+/** 从讲解正文「固定搭配」等小节提取短语 */
+export function extractPhrasesFromProse(displayText: string): Omit<CollectEntry, 'basketKey'>[] {
+  if (!displayText?.trim()) return []
+  const out: Omit<CollectEntry, 'basketKey'>[] = []
+  let inSection = false
+  for (const rawLine of displayText.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.length > MAX_PROSE_LINE_LEN) continue
+    if (COLLOCATION_HEADING.test(line)) {
+      inSection = true
+      continue
+    }
+    if (inSection && OTHER_HEADING.test(line) && !COLLOCATION_HEADING.test(line)) {
+      inSection = false
+      continue
+    }
+    if (!inSection) continue
+    const m = line.match(COLLOCATION_BULLET)
+    if (!m) continue
+    const wordProto = cleanProto(m[1])
+    let partSpeechMean = m[2].replace(/\*+/g, '').trim()
+    if (!wordProto || !partSpeechMean || !looksLikeEnglishPhrase(wordProto)) continue
+    if (!partSpeechMean.startsWith('短语') && !/^phrase/i.test(partSpeechMean)) {
+      partSpeechMean = `短语. ${partSpeechMean}`
+    }
+    out.push({
+      entryType: 'phrase',
+      wordProto,
+      partSpeechMean
+    })
   }
+  return out
+}
+
+function normalizeRawEntry(e: any, sourceSnippet = ''): CollectEntry | null {
+  if (!e?.wordProto || !e?.partSpeechMean) return null
+  const wordProto = cleanProto(String(e.wordProto))
+  if (!wordProto) return null
+  let entryType: 'word' | 'phrase' = e.entryType === 'phrase' ? 'phrase' : 'word'
+  if (looksLikeEnglishPhrase(wordProto)) entryType = 'phrase'
+  return {
+    basketKey: makeBasketKey({ entryType, wordProto }),
+    entryType,
+    wordProto,
+    partSpeechMean: String(e.partSpeechMean).trim(),
+    usPhonetic: e.usPhonetic,
+    ukPhonetic: e.ukPhonetic,
+    sentenceExample: sourceSnippet || undefined,
+    rootAffix: e.rootAffix,
+    sourceSnippet: sourceSnippet || undefined
+  }
+}
+
+/** 从入库的完整 AI 回复中解析可收录词条（含固定搭配正文兜底） */
+export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): CollectEntry[] {
+  if (!text) return []
+  const map = new Map<string, CollectEntry>()
+
+  if (text.includes(COLLECT_JSON_MARKER)) {
+    const jsonPart = text.substring(text.indexOf(COLLECT_JSON_MARKER) + COLLECT_JSON_MARKER.length).trim()
+    const start = jsonPart.indexOf('{')
+    const end = jsonPart.lastIndexOf('}')
+    if (start >= 0 && end > start) {
+      try {
+        const root = JSON.parse(jsonPart.substring(start, end + 1))
+        const entries = Array.isArray(root?.entries) ? root.entries : []
+        for (const e of entries) {
+          const normalized = normalizeRawEntry(e, sourceSnippet)
+          if (normalized) map.set(normalized.basketKey, normalized)
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  for (const phrase of extractPhrasesFromProse(stripCollectMarker(text))) {
+    const normalized = normalizeRawEntry(phrase, sourceSnippet)
+    if (normalized && !map.has(normalized.basketKey)) {
+      map.set(normalized.basketKey, normalized)
+    }
+  }
+
+  return [...map.values()]
 }
 
 /** 历史消息 → 展示正文 + 可选收录条目 */
 export function hydrateStoredAiMessage(role: string, content: string, sourceSnippet = '') {
   const raw = content || ''
-  const entries = role === 'assistant' ? parseCollectEntriesFromText(raw, sourceSnippet) : []
-  return {
-    role,
-    content: stripCollectMarker(raw),
-    collectEntries: entries.length > 0 ? entries : undefined,
-    collectSourceSnippet: entries.length > 0 ? sourceSnippet : undefined
+  try {
+    const entries = role === 'assistant' ? parseCollectEntriesFromText(raw, sourceSnippet) : []
+    return {
+      role,
+      content: stripCollectMarker(raw),
+      collectEntries: entries.length > 0 ? entries : undefined,
+      collectSourceSnippet: entries.length > 0 ? sourceSnippet : undefined
+    }
+  } catch (e) {
+    console.warn('[collect] hydrateStoredAiMessage failed', e)
+    return {
+      role,
+      content: stripCollectMarker(raw)
+    }
   }
 }

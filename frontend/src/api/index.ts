@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { aiRegionHeaders } from '../utils/aiRegion'
 
 const api = axios.create({
   baseURL: '/api',
@@ -10,6 +11,8 @@ api.interceptors.request.use(config => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  const regionHdrs = aiRegionHeaders()
+  Object.assign(config.headers, regionHdrs)
   return config
 })
 
@@ -30,6 +33,11 @@ api.interceptors.response.use(
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       window.location.href = '/login'
+    } else {
+      // 延迟导入，避免与工具模块循环依赖
+      import('../utils/serviceStatus').then(({ noteApiTransportFailure }) => {
+        noteApiTransportFailure(err)
+      }).catch(() => { /* ignore */ })
     }
     return Promise.reject(err)
   }
@@ -39,6 +47,7 @@ api.interceptors.response.use(
 export const register = (data: any) => api.post('/user/register', data)
 export const login = (data: any) => api.post('/user/login', data)
 export const updateUserLocale = (locale: string) => api.put('/user/locale', { locale })
+export const updateUserAiRegion = (region: string) => api.put('/user/ai-region', { region })
 export const checkPhone = (phone: string) => api.get('/user/check-phone', { params: { phone } })
 export const checkEmail = (email: string) => api.get('/user/check-email', { params: { email } })
 export const checkInviteCode = (code: string) => api.get('/user/check-invite-code', { params: { code } })
@@ -63,8 +72,11 @@ export const deleteNotebook = (id: number) => api.delete(`/notebooks/${id}`)
 // Words
 export const addWord = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words`, data)
 export const getWords = (notebookId: number) => api.get(`/notebooks/${notebookId}/words`)
+export const getWordTrash = (notebookId: number) => api.get(`/notebooks/${notebookId}/words/trash`)
 export const updateWord = (notebookId: number, wordId: number, data: any) => api.put(`/notebooks/${notebookId}/words/${wordId}`, data)
 export const deleteWord = (notebookId: number, wordId: number) => api.delete(`/notebooks/${notebookId}/words/${wordId}`)
+export const restoreWord = (notebookId: number, wordId: number) =>
+  api.post(`/notebooks/${notebookId}/words/${wordId}/restore`)
 export const aiParseWords = (notebookId: number, data: any) =>
   api.post(`/notebooks/${notebookId}/words/ai-parse`, data, { timeout: 120000 })
 
@@ -75,7 +87,8 @@ export const aiParseWordsStream = (notebookId: number, data: any): Promise<Respo
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...aiRegionHeaders()
     },
     body: JSON.stringify(data)
   })
@@ -88,6 +101,8 @@ export const fillWordGaps = (notebookId: number, data?: { wordIds?: number[] }) 
 // Study
 export const getStudyToday = () => api.get('/study/today')
 export const openStudySession = () => api.post('/study/session/open')
+export const getStudySessionQueue = (params?: { phase?: string }) =>
+  api.get('/study/session/queue', { params })
 export const submitStudyAnswer = (data: { planId: number; queueItemId: number; feedback: number; phase: string }) =>
   api.post('/study/answer', data)
 export const getStudySettings = () => api.get('/study/settings')
@@ -108,8 +123,10 @@ export const getStats = () => api.get('/study/stats')
 export default api
 
 // ========== 阅读器 ==========
-export const getAiFeatures = () => api.get('/books/ai-features')
-export const getAiFeaturePreferences = () => api.get('/books/ai-features/preferences')
+export const getAiFeatures = (locale?: string) =>
+  api.get('/books/ai-features', { params: { locale: locale || 'zh-CN' } })
+export const getAiFeaturePreferences = (locale?: string) =>
+  api.get('/books/ai-features/preferences', { params: { locale: locale || 'zh-CN' } })
 export const saveAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
   api.put('/books/ai-features/preferences', data)
 
@@ -170,6 +187,8 @@ export const saveReaderSettings = (data: any) => api.put('/books/reader-settings
 export const getAiSessions = (bookId?: number) =>
   api.get('/books/ai-sessions', { params: bookId != null ? { bookId } : {} })
 export const createAiSession = (data: { bookId?: number }) => api.post('/books/ai-sessions', data)
+export const renameAiSession = (sessionId: number, title: string) =>
+  api.put(`/books/ai-sessions/${sessionId}`, { title })
 export const getAiMessages = (sessionId: number) => api.get(`/books/ai-sessions/${sessionId}/messages`)
 export const getAiMessagesPaged = (sessionId: number, offset: number, limit: number) =>
   api.get(`/books/ai-sessions/${sessionId}/messages/paged`, { params: { offset, limit } })

@@ -16,6 +16,28 @@
     "copied": "Đã sao chép",
     "copyFailed": "Sao chép thất bại"
   },
+  "aiRegion": {
+    "auto": "Tuyến AI · Tự động",
+    "cn": "Tuyến AI · Trung Quốc",
+    "global": "Tuyến AI · Quốc tế"
+  },
+  "service": {
+    "title": "Đang nâng cấp dịch vụ",
+    "waitHint": "Hệ thống đang khởi động hoặc phát hành bản cập nhật. Vui lòng đợi khoảng 5 phút rồi thử lại.",
+    "feedbackHint": "Nếu sau khi chờ vẫn không dùng được, hãy gửi phản hồi cho quản trị viên. Phản hồi tạm lưu sẽ được gửi tự động khi dịch vụ hồi phục.",
+    "retry": "Thử lại",
+    "checking": "Đang kiểm tra…",
+    "stillDown": "Chưa khôi phục. Vui lòng đợi thêm hoặc gửi phản hồi.",
+    "openFeedback": "Gửi phản hồi",
+    "emailOptional": "Email liên hệ (tuỳ chọn)",
+    "emailPlaceholder": "Để chúng tôi phản hồi",
+    "description": "Mô tả",
+    "descriptionPlaceholder": "Mô tả tình huống của bạn…",
+    "submitFeedback": "Gửi phản hồi",
+    "feedbackSubject": "Phản hồi khi dịch vụ tạm ngưng",
+    "feedbackSent": "Đã gửi phản hồi — cảm ơn bạn",
+    "feedbackQueued": "Không kết nối được. Phản hồi đã được lưu và sẽ gửi khi dịch vụ hồi phục"
+  },
   "nav": {
     "dashboard": "Tổng quan Học tập",
     "study": "Bắt đầu Học",
@@ -130,6 +152,10 @@
     "aiAssistant": "Trợ lý AI",
     "selectedText": "Văn bản Đã chọn",
     "selectedTextHint": "Văn bản được chọn sẽ hiển thị tại đây theo thời gian thực",
+    "targetWordsHint": "Nhấp đúp vào từ để chọn",
+    "targetWordsRequired": "Hãy nhấp đúp từ trong văn bản đã chọn trước",
+    "targetWordsAll": "Tất cả",
+    "targetWordsClear": "Xóa",
     "aiHint1": "Đặt câu hỏi, AI sẽ trả lời với ngữ cảnh văn bản đã chọn",
     "aiHint2": "Chọn văn bản, sau đó hỏi AI để phân tích",
     "aiInputPlaceholder": "Nhập câu hỏi của bạn...",

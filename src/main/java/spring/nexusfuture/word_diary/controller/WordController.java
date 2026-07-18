@@ -43,9 +43,21 @@ public class WordController {
         return R.ok(wordService.listByNotebook(userId, notebookId));
     }
 
+    /** 垃圾桶（软删后保留 7 天） */
+    @GetMapping("/trash")
+    public R<List<WordVO>> trash(@RequestAttribute Long userId, @PathVariable Long notebookId) {
+        return R.ok(wordService.listTrash(userId, notebookId));
+    }
+
     @DeleteMapping("/{wordId}")
     public R<Void> delete(@RequestAttribute Long userId, @PathVariable Long notebookId, @PathVariable Long wordId) {
         wordService.delete(userId, wordId);
+        return R.ok();
+    }
+
+    @PostMapping("/{wordId}/restore")
+    public R<Void> restore(@RequestAttribute Long userId, @PathVariable Long notebookId, @PathVariable Long wordId) {
+        wordService.restore(userId, notebookId, wordId);
         return R.ok();
     }
 

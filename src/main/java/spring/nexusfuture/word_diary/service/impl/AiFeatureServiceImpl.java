@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
 import spring.nexusfuture.word_diary.dto.AiFeaturePreferenceVO;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.WdUserAiPreference;
@@ -28,12 +29,14 @@ public class AiFeatureServiceImpl implements AiFeatureService {
     private final ObjectMapper objectMapper;
 
     @Override
-    public List<SysAiFeature> listActiveFeatures() {
-        return featureMapper.selectActiveList();
+    public List<SysAiFeature> listActiveFeatures(String locale) {
+        List<SysAiFeature> list = featureMapper.selectActiveList();
+        AiFeatureI18nSupport.resolveAllInPlace(list, locale);
+        return list;
     }
 
     @Override
-    public AiFeaturePreferenceVO getPreferences(Long userId) {
+    public AiFeaturePreferenceVO getPreferences(Long userId, String locale) {
         List<SysAiFeature> allFeatures = featureMapper.selectActiveList();
         List<String> preferredKeys = new ArrayList<>();
         List<String> featureOrder = new ArrayList<>();
@@ -82,6 +85,8 @@ public class AiFeatureServiceImpl implements AiFeatureService {
                 orderedFeatures.add(f);
             }
         }
+
+        AiFeatureI18nSupport.resolveAllInPlace(orderedFeatures, locale);
 
         return AiFeaturePreferenceVO.builder()
                 .allFeatures(orderedFeatures)

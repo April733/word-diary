@@ -8,6 +8,8 @@ public interface UserService {
     void register(RegisterReq req);
     UserVO login(LoginReq req);
     void updateLocale(Long userId, String locale);
+
+    void updateAiRegion(Long userId, String region);
     boolean isPhoneExists(String phone);
     boolean isEmailExists(String email);
     void resetPasswordByPhone(String phone, String newPassword);

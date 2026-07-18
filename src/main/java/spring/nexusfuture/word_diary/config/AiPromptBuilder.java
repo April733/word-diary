@@ -1,9 +1,12 @@
 package spring.nexusfuture.word_diary.config;
 
 import org.springframework.stereotype.Component;
+import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
+import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
 import spring.nexusfuture.word_diary.entity.WdUser;
 import spring.nexusfuture.word_diary.mapper.SysAiFeatureMapper;
+import spring.nexusfuture.word_diary.mapper.SysAiScenePromptMapper;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
 
 import java.util.List;
@@ -11,23 +14,24 @@ import java.util.Map;
 
 /**
  * 全局 AI 提示词构建器。
- * 所有 AI 调用统一通过此类构建 system prompt，确保语言等全局约束一致。
- * 为避免模型被 system prompt 本身的语种带偏，所有指令均使用用户目标语言撰写。
+ * 优先使用 sys_ai_scene_prompt 中启用的配置；未配置时回退代码内置多语言模板。
+ * 功能分析细节来自 sys_ai_feature.prompt。
  */
 @Component
 public class AiPromptBuilder {
 
     private final WdUserMapper userMapper;
     private final SysAiFeatureMapper featureMapper;
+    private final SysAiScenePromptMapper scenePromptMapper;
 
-    public AiPromptBuilder(WdUserMapper userMapper, SysAiFeatureMapper featureMapper) {
+    public AiPromptBuilder(WdUserMapper userMapper,
+                           SysAiFeatureMapper featureMapper,
+                           SysAiScenePromptMapper scenePromptMapper) {
         this.userMapper = userMapper;
         this.featureMapper = featureMapper;
+        this.scenePromptMapper = scenePromptMapper;
     }
 
-    /**
-     * 每个语言对应一套完整提示词模板。使用目标语言撰写指令，可最大限度让模型按目标语言输出。
-     */
     private record PromptTemplate(
             String localeName,
             String globalConstraint,
@@ -35,7 +39,12 @@ public class AiPromptBuilder {
             String readingAssistantContext,
             String readingAssistantUserPrefix,
             String wordParseSystem,
-            String wordParseUserPrefix
+            String wordParseUserPrefix,
+            String featureAssistantIntro,
+            String multiFeatureIntro,
+            String featureDirectInstruction,
+            String featureUserFormat,
+            String multiFeatureUserFormat
     ) {}
 
     private static final Map<String, PromptTemplate> TEMPLATES = Map.of(
@@ -50,7 +59,7 @@ public class AiPromptBuilder {
 
     private static PromptTemplate buildZhCnTemplate() {
         String globalConstraint = "【重要全局规则】请始终使用中文回复用户。无论用户输入何种语言，所有释义、例句翻译、解析说明都必须用中文。英文原文和音标除外。";
-        String readingAssistantSystem = "你是一个专业的英语阅读助手。用户正在阅读英文原著，请用中文回答用户的问题。";
+        String readingAssistantSystem = "你是一个专业的英语阅读与语言学习助手。用户正在阅读英文材料，请用中文回答与语言学习相关的问题。";
         String readingAssistantContext = "用户当前选中的上下文是：\"%s\"";
         String readingAssistantUserPrefix = "请用中文回答以下用户问题：\n%s";
         String wordParseSystem = globalConstraint + "\n" + """
@@ -78,14 +87,19 @@ public class AiPromptBuilder {
                 """;
         String wordParseUserPrefix = "请补全以下单词/短语的信息：\n";
         return new PromptTemplate("中文", globalConstraint, readingAssistantSystem,
-                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix);
+                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
+                "你是一个专业的英语阅读助手。",
+                "你是一个专业的英语阅读助手。用户选择了以下分析功能，请**仅**针对这些功能给出结果，不要擅自增加未选功能：\n",
+                "请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。只覆盖用户勾选的功能。各小节标题用 Markdown 加粗，如 **固定搭配**、**语法结构**；列表中的词条也加粗，如 - **proposed**: …。",
+                "请对以下选中的文本进行「%s」分析：\n%s",
+                "请对以下选中的文本进行「%s」分析：\n%s");
     }
 
     // ==================== English ====================
 
     private static PromptTemplate buildEnTemplate() {
         String globalConstraint = "[Important Global Rule] Always respond to the user in English. Regardless of what language the user inputs, all explanations, translations, and analyses must be in English. Original English text and phonetic transcriptions are exceptions.";
-        String readingAssistantSystem = "You are a professional English reading assistant. The user is reading an English original book. Please answer the user's questions in English.";
+        String readingAssistantSystem = "You are a professional English reading and language-learning assistant. The user is reading English material. Answer language-learning questions in English.";
         String readingAssistantContext = "The user's currently selected context is: \"%s\"";
         String readingAssistantUserPrefix = "Please answer the following user question in English:\n%s";
         String wordParseSystem = globalConstraint + "\n" + """
@@ -113,14 +127,19 @@ public class AiPromptBuilder {
                 """;
         String wordParseUserPrefix = "Please complete the information for the following words/phrases:\n";
         return new PromptTemplate("English", globalConstraint, readingAssistantSystem,
-                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix);
+                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
+                "You are a professional English reading assistant. ",
+                "You are a professional English reading assistant. The user selected these analysis features; cover **only** them and do not add unselected ones:\n",
+                "Give the analysis directly, without openings, explanations, or summaries. Keep it concise. Only cover the selected features. Use Markdown bold for section titles (e.g. **Collocations**) and for lemma terms in lists (e.g. - **proposed**: …).",
+                "Please analyze the selected text with 「%s」:\n%s",
+                "Please analyze the selected text with 「%s」:\n%s");
     }
 
     // ==================== Bahasa Indonesia ====================
 
     private static PromptTemplate buildIdTemplate() {
         String globalConstraint = "[Aturan Global Penting] Selalu balas pengguna dalam Bahasa Indonesia. Meskipun pengguna menulis dalam bahasa Inggris atau bahasa lain, semua penjelasan, terjemahan contoh kalimat, dan analisis harus dalam Bahasa Indonesia. Kecuali teks asli bahasa Inggris dan transkripsi fonetik.";
-        String readingAssistantSystem = "Anda adalah asisten membaca bahasa Inggris profesional. Pengguna sedang membaca buku asli bahasa Inggris. Harap jawab pertanyaan pengguna dalam Bahasa Indonesia.";
+        String readingAssistantSystem = "Anda adalah asisten belajar bahasa & membaca bahasa Inggris. Jawab hanya pertanyaan terkait pembelajaran bahasa dalam Bahasa Indonesia.";
         String readingAssistantContext = "Konteks yang sedang dipilih pengguna adalah: \"%s\"";
         String readingAssistantUserPrefix = "Harap jawab pertanyaan pengguna berikut dalam Bahasa Indonesia:\n%s";
         String wordParseSystem = globalConstraint + "\n" + """
@@ -148,14 +167,19 @@ public class AiPromptBuilder {
                 """;
         String wordParseUserPrefix = "Harap lengkapi informasi untuk kata/frasa berikut:\n";
         return new PromptTemplate("Bahasa Indonesia", globalConstraint, readingAssistantSystem,
-                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix);
+                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
+                "Anda adalah asisten membaca bahasa Inggris profesional. ",
+                "Anda adalah asisten membaca bahasa Inggris profesional. Pengguna memilih beberapa fitur analisis berikut; berikan analisis gabungan:\n",
+                "Berikan hasil analisis secara langsung, tanpa pembuka, penjelasan, atau ringkasan. Tetap ringkas.",
+                "Harap analisis teks terpilih dengan 「%s」:\n%s",
+                "Harap analisis teks terpilih dengan 「%s」:\n%s");
     }
 
     // ==================== Tiếng Việt ====================
 
     private static PromptTemplate buildViTemplate() {
         String globalConstraint = "[Quy Tắc Toàn Cầu Quan Trọng] Luôn trả lời người dùng bằng Tiếng Việt. Dù người dùng nhập bằng tiếng Anh hay bất kỳ ngôn ngữ nào, tất cả giải thích, bản dịch câu ví dụ và phân tích phải bằng Tiếng Việt. Trừ văn bản gốc tiếng Anh và phiên âm.";
-        String readingAssistantSystem = "Bạn là trợ lý đọc tiếng Anh chuyên nghiệp. Người dùng đang đọc sách gốc tiếng Anh. Vui lòng trả lời câu hỏi của người dùng bằng Tiếng Việt.";
+        String readingAssistantSystem = "Bạn là trợ lý học ngôn ngữ & đọc tiếng Anh. Chỉ trả lời câu hỏi liên quan đến học ngôn ngữ bằng Tiếng Việt.";
         String readingAssistantContext = "Ngữ cảnh hiện tại người dùng đã chọn là: \"%s\"";
         String readingAssistantUserPrefix = "Vui lòng trả lời câu hỏi của người dùng sau bằng Tiếng Việt:\n%s";
         String wordParseSystem = globalConstraint + "\n" + """
@@ -183,14 +207,19 @@ public class AiPromptBuilder {
                 """;
         String wordParseUserPrefix = "Vui lòng bổ sung thông tin cho các từ/cụm từ sau:\n";
         return new PromptTemplate("Tiếng Việt", globalConstraint, readingAssistantSystem,
-                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix);
+                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
+                "Bạn là trợ lý đọc tiếng Anh chuyên nghiệp. ",
+                "Bạn là trợ lý đọc tiếng Anh chuyên nghiệp. Người dùng đã chọn nhiều chức năng phân tích sau; hãy đưa ra phân tích tổng hợp:\n",
+                "Đưa ra kết quả phân tích trực tiếp, không thêm lời mở đầu, giải thích hoặc tóm tắt. Giữ ngắn gọn.",
+                "Vui lòng phân tích đoạn văn đã chọn với 「%s」:\n%s",
+                "Vui lòng phân tích đoạn văn đã chọn với 「%s」:\n%s");
     }
 
     // ==================== ภาษาไทย ====================
 
     private static PromptTemplate buildThTemplate() {
         String globalConstraint = "[กฎระดับโลกที่สำคัญ] ตอบผู้ใช้เสมอด้วยภาษาไทย ไม่ว่าผู้ใช้จะพิมพ์เป็นภาษาอังกฤษหรือภาษาใดก็ตาม คำอธิบาย การแปลประโยคตัวอย่าง และการวิเคราะห์ทั้งหมดต้องเป็นภาษาไทย ยกเว้นข้อความต้นฉบับภาษาอังกฤษและสัญลักษณ์เสียง";
-        String readingAssistantSystem = "คุณคือผู้ช่วยการอ่านภาษาอังกฤษมืออาชีพ ผู้ใช้กำลังอ่านหนังสือต้นฉบับภาษาอังกฤษ กรุณาตอบคำถามของผู้ใช้เป็นภาษาไทย";
+        String readingAssistantSystem = "คุณคือผู้ช่วยเรียนภาษาและการอ่านภาษาอังกฤษ ตอบเฉพาะคำถามที่เกี่ยวกับการเรียนภาษาเป็นภาษาไทย";
         String readingAssistantContext = "บริบทที่ผู้ใช้เลือกในปัจจุบันคือ: \"%s\"";
         String readingAssistantUserPrefix = "กรุณาตอบคำถามของผู้ใช้ต่อไปนี้เป็นภาษาไทย:\n%s";
         String wordParseSystem = globalConstraint + "\n" + """
@@ -218,7 +247,12 @@ public class AiPromptBuilder {
                 """;
         String wordParseUserPrefix = "กรุณาเติมข้อมูลให้ครบถ้วนสำหรับคำ/วลีต่อไปนี้:\n";
         return new PromptTemplate("ภาษาไทย", globalConstraint, readingAssistantSystem,
-                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix);
+                readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
+                "คุณคือผู้ช่วยการอ่านภาษาอังกฤษมืออาชีพ ",
+                "คุณคือผู้ช่วยการอ่านภาษาอังกฤษมืออาชีพ ผู้ใช้เลือกฟีเจอร์วิเคราะห์หลายรายการดังนี้ กรุณาวิเคราะห์แบบรวม:\n",
+                "ให้ผลการวิเคราะห์โดยตรง โดยไม่ต้องมีคำเปิด การอธิบาย หรือสรุป ให้สั้นกระชับ",
+                "กรุณาวิเคราะห์ข้อความที่เลือกด้วย 「%s」:\n%s",
+                "กรุณาวิเคราะห์ข้อความที่เลือกด้วย 「%s」:\n%s");
     }
 
     // ==================== 公共方法 ====================
@@ -234,7 +268,12 @@ public class AiPromptBuilder {
      * 单词解析 system prompt（使用用户目标语言）。
      */
     public String buildWordParsePrompt(Long userId) {
-        return getTemplate(userId).wordParseSystem();
+        String locale = getUserLocale(userId);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_WORD_PARSE, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, "", "", locale);
+        }
+        return getTemplateByLocale(locale).wordParseSystem();
     }
 
     /**
@@ -248,6 +287,10 @@ public class AiPromptBuilder {
      * 阅读 AI 助手 system prompt（基于 locale 字符串，不依赖用户表查询）。
      */
     public String buildReadingAssistantPrompt(String locale, String context) {
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_READING_CHAT, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, context, "", locale);
+        }
         PromptTemplate t = getTemplateByLocale(locale);
         String base = t.globalConstraint() + "\n" + t.readingAssistantSystem();
         if (context != null && !context.isEmpty()) {
@@ -280,76 +323,172 @@ public class AiPromptBuilder {
 
     /**
      * 功能预设 system prompt（基于 locale 和 featureKey）。
-     * 从数据库读取功能描述作为提示词。
+     * 场景壳来自 sys_ai_scene_prompt(feature)；功能细节来自 sys_ai_feature.prompt。
      */
     public String buildFeaturePrompt(String locale, String featureKey, String context) {
-        PromptTemplate t = getTemplateByLocale(locale);
         SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
         String featurePrompt = feature != null && feature.getPrompt() != null ? feature.getPrompt() : "";
 
-        StringBuilder prompt = new StringBuilder();
-        prompt.append(t.globalConstraint()).append("\n");
-        prompt.append("你是一个专业的英语阅读助手。").append(featurePrompt).append("\n");
-        if (context != null && !context.isEmpty()) {
-            prompt.append(String.format(t.readingAssistantContext(), context)).append("\n");
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
+        String base;
+        if (fromDb != null) {
+            base = applyPlaceholders(fromDb, context, featurePrompt, locale);
+        } else {
+            PromptTemplate t = getTemplateByLocale(locale);
+            StringBuilder prompt = new StringBuilder();
+            prompt.append(t.globalConstraint()).append("\n");
+            prompt.append(t.featureAssistantIntro()).append(featurePrompt).append("\n");
+            if (context != null && !context.isEmpty()) {
+                prompt.append(String.format(t.readingAssistantContext(), context)).append("\n");
+            }
+            prompt.append(t.featureDirectInstruction());
+            base = prompt.toString();
         }
-        prompt.append("请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。");
-
-        return prompt.toString();
+        return base + markdownFormatHint(locale);
     }
 
     /**
      * 功能预设 user prompt（基于 locale 和 featureKey）。
      */
     public String buildFeatureUserPrompt(String locale, String featureKey, String context) {
-        PromptTemplate t = getTemplateByLocale(locale);
         SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
         String featureName = feature != null ? feature.getFeatureName() : featureKey;
-
-        return String.format("请对以下选中的文本进行「%s」分析：\n%s", featureName, context);
+        PromptTemplate t = getTemplateByLocale(locale);
+        return String.format(t.featureUserFormat(), featureName, context);
     }
 
     /**
-     * 多选功能 system prompt（基于 locale 和 featureKeys 列表）。
-     * 从数据库读取多个功能描述，合并为综合提示词。
+     * 多选功能 system prompt。
+     * 严格按 featureKeys 顺序逐个查 sys_ai_feature.prompt 再拼接；该顺序即输出章节顺序。
      */
     public String buildMultiFeaturePrompt(String locale, List<String> featureKeys, String context) {
-        PromptTemplate t = getTemplateByLocale(locale);
         StringBuilder featureDescs = new StringBuilder();
+        String orderLine = compactOrderLine(locale, featureKeys);
+        featureDescs.append(orderLine).append('\n');
+        int i = 1;
         for (String key : featureKeys) {
             SysAiFeature feature = featureMapper.selectByFeatureKey(key);
-            if (feature != null && feature.getPrompt() != null) {
-                featureDescs.append(feature.getPrompt()).append("\n");
+            if (feature == null) continue;
+            String name = feature.getFeatureName() != null ? feature.getFeatureName() : key;
+            String prompt = feature.getPrompt() != null ? feature.getPrompt().trim() : "";
+            featureDescs.append(i++).append('.').append(name).append('(').append(key).append("): ");
+            if (!prompt.isEmpty()) {
+                // 压成单段，去掉过多空行
+                featureDescs.append(prompt.replaceAll("\\s*\n\\s*", " ").trim());
             }
+            featureDescs.append('\n');
         }
 
-        StringBuilder prompt = new StringBuilder();
-        prompt.append(t.globalConstraint()).append("\n");
-        prompt.append("你是一个专业的英语阅读助手。用户选择了以下多个分析功能，请综合给出分析结果：\n");
-        prompt.append(featureDescs);
-        if (context != null && !context.isEmpty()) {
-            prompt.append(String.format(t.readingAssistantContext(), context)).append("\n");
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
+        String base;
+        if (fromDb != null) {
+            base = applyPlaceholders(fromDb, context, featureDescs.toString(), locale);
+        } else {
+            PromptTemplate t = getTemplateByLocale(locale);
+            StringBuilder prompt = new StringBuilder();
+            prompt.append(t.globalConstraint()).append('\n');
+            prompt.append(t.multiFeatureIntro());
+            prompt.append(featureDescs);
+            if (context != null && !context.isEmpty()) {
+                prompt.append(String.format(t.readingAssistantContext(), context)).append('\n');
+            }
+            prompt.append(t.featureDirectInstruction());
+            base = prompt.toString();
         }
-        prompt.append("请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。");
-
-        return prompt.toString();
+        // 样式提示合并进短格式说明（不再重复整段顺序规则）
+        return base + markdownFormatHint(locale);
     }
 
     /**
      * 多选功能 user prompt（基于 locale 和 featureKeys 列表）。
      */
     public String buildMultiFeatureUserPrompt(String locale, List<String> featureKeys, String context) {
-        PromptTemplate t = getTemplateByLocale(locale);
         StringBuilder featureNames = new StringBuilder();
+        int i = 1;
         for (String key : featureKeys) {
             SysAiFeature feature = featureMapper.selectByFeatureKey(key);
-            if (feature != null && feature.getFeatureName() != null) {
-                if (featureNames.length() > 0) featureNames.append(" + ");
-                featureNames.append(feature.getFeatureName());
-            }
+            String name = feature != null && feature.getFeatureName() != null ? feature.getFeatureName() : key;
+            if (featureNames.length() > 0) featureNames.append(" → ");
+            featureNames.append(i++).append('.').append(name);
         }
+        PromptTemplate t = getTemplateByLocale(locale);
+        return String.format(t.multiFeatureUserFormat(), featureNames, context);
+    }
 
-        return String.format("请对以下选中的文本进行「%s」分析：\n%s", featureNames, context);
+    /** 强制输出章节顺序与用户勾选顺序一致 */
+    private String outputOrderInstruction(String locale, List<String> featureKeys) {
+        return "\n" + compactOrderLine(locale, featureKeys) + "\n";
+    }
+
+    private String compactOrderLine(String locale, List<String> featureKeys) {
+        if (featureKeys == null || featureKeys.isEmpty()) return "";
+        StringBuilder ordered = new StringBuilder();
+        int i = 1;
+        for (String key : featureKeys) {
+            SysAiFeature feature = featureMapper.selectByFeatureKey(key);
+            String name = feature != null && feature.getFeatureName() != null ? feature.getFeatureName() : key;
+            if (ordered.length() > 0) ordered.append(" → ");
+            ordered.append(i++).append('.').append(name);
+        }
+        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+            return "【顺序】按此输出：" + ordered + "。标题用「翻译：」「单词：」等，词条 **加粗**。";
+        }
+        return "[Order] Output sections as: " + ordered + ". Title each section; bold lemmas.";
+    }
+
+    /**
+     * 语言学习范围约束：拒答与阅读/词汇/语法等无关的问题，并给出友好提示文案。
+     */
+    public String languageLearningScopeInstruction(String locale) {
+        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+            return "\n【范围】仅回答语言学习相关问题；无关则只回复：抱歉，我是 Aiko 语言学习助手，请换个英语学习相关问题～\n";
+        }
+        return "\n[Scope] Language-learning only. If off-topic, reply briefly that Aiko only helps with language learning.\n";
+    }
+
+    /**
+     * 仅按精确 locale 加载库配置；未配置时返回 null，由调用方回退代码内置多语言模板。
+     * 不再把其它语言回退到 zh-CN 库配置（否则会把「始终用中文回复」带进英文等场景）。
+     */
+    private String loadScenePrompt(String sceneKey, String locale) {
+        try {
+            String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+            SysAiScenePrompt row = scenePromptMapper.selectEnabled(sceneKey, loc);
+            if (row != null && row.getSystemPrompt() != null && !row.getSystemPrompt().isBlank()) {
+                return row.getSystemPrompt();
+            }
+        } catch (Exception ignored) {
+            // 表未建或查询失败时回退代码模板
+        }
+        return null;
+    }
+
+    /** 阅读解析输出样式：小节与词条加粗，前端可渲染为紫色标题 */
+    private static String markdownFormatHint(String locale) {
+        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+        if (loc.regionMatches(true, 0, "zh", 0, 2)) {
+            return "\n【版式】小节标题「翻译：」「单词：」「固定搭配：」「语法：」（不用 ##）；列表词条 **加粗**。\n";
+        }
+        return "\n[Format] Section titles like Translation:/Words:/Collocations: (no ##); bold lemmas.\n";
+    }
+
+    /**
+     * 替换场景提示词占位符。
+     * 支持：{context}、{feature_prompts}、{language}（展示名）、{locale}（代码）、{global_constraint}（按请求语言注入全局规则）。
+     */
+    private String applyPlaceholders(String template, String context, String featurePrompts, String locale) {
+        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
+        PromptTemplate t = getTemplateByLocale(loc);
+        String ctx = context == null ? "" : context;
+        String feats = featurePrompts == null ? "" : featurePrompts;
+        return template
+                .replace("{context}", ctx)
+                .replace("{feature_prompts}", feats)
+                .replace("{language}", t.localeName())
+                .replace("{locale}", loc)
+                .replace("{global_constraint}", t.globalConstraint());
     }
 
     private PromptTemplate getTemplate(Long userId) {

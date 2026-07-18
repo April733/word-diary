@@ -14,6 +14,10 @@ public class UserVO {
     private Integer isMember;
     /** 会员等级 */
     private Integer memberTier;
+    /** 角色：user | admin */
+    private String role;
     /** 偏好语言，如 zh-CN / en / id / vi / th */
     private String preferredLocale;
+    /** AI 线路：auto / cn / global */
+    private String preferredAiRegion;
 }

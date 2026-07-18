@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import spring.nexusfuture.word_diary.common.JwtUtil;
 import spring.nexusfuture.word_diary.common.R;
+import spring.nexusfuture.word_diary.common.UserRoles;
 import spring.nexusfuture.word_diary.entity.WdUser;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
 
@@ -25,23 +26,21 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // Allow CORS preflight (OPTIONS) requests through without auth
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
 
         String path = request.getRequestURI();
 
-        // Skip auth for login/register and public user APIs
-        // Include email-related public endpoints so frontend can call them
-        // without being blocked by auth interceptor.
         if (path.contains("/api/user/login") || path.contains("/api/user/register")
+                || path.contains("/api/admin/login")
                 || path.contains("/api/user/check-phone") || path.contains("/api/user/check-email")
                 || path.contains("/api/user/check-invite-code")
                 || path.contains("/api/user/send-sms") || path.contains("/api/user/send-mail-code")
                 || path.contains("/api/user/send-reset-sms") || path.contains("/api/user/send-reset-mail")
                 || path.contains("/api/user/reset-password")
-                || path.contains("/api/user/report-issue-public")) {
+                || path.contains("/api/user/report-issue-public")
+                || path.contains("/api/health")) {
             return true;
         }
 
@@ -50,31 +49,46 @@ public class AuthInterceptor implements HandlerInterceptor {
             token = token.substring(7);
         }
         if (token == null || token.isEmpty()) {
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write(objectMapper.writeValueAsString(R.fail(401, "未登录或登录已过期")));
+            writeJson(response, HttpStatus.UNAUTHORIZED, R.fail(401, "未登录或登录已过期"));
             return false;
         }
 
         Long userId = jwtUtil.getUserIdFromToken(token);
         if (userId == null) {
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write(objectMapper.writeValueAsString(R.fail(401, "未登录或登录已过期")));
+            writeJson(response, HttpStatus.UNAUTHORIZED, R.fail(401, "未登录或登录已过期"));
             return false;
         }
 
         request.setAttribute("userId", userId);
 
-        // Load user info for membership check
         WdUser user = userMapper.selectById(userId);
+        String role = UserRoles.USER;
         if (user != null) {
             request.setAttribute("isMember", user.getIsMember() != null ? user.getIsMember() : 0);
             request.setAttribute("memberTier", user.getMemberTier() != null ? user.getMemberTier() : 1);
+            role = UserRoles.normalize(user.getRole());
         } else {
             request.setAttribute("isMember", 0);
             request.setAttribute("memberTier", 1);
         }
+        request.setAttribute("role", role);
+
+        if (requiresAdmin(path) && !UserRoles.isAdmin(role)) {
+            writeJson(response, HttpStatus.FORBIDDEN, R.fail(403, "需要管理员权限"));
+            return false;
+        }
         return true;
+    }
+
+    private static boolean requiresAdmin(String path) {
+        return path.contains("/api/admin/")
+                || path.contains("/api/ai-models")
+                || path.contains("/api/config");
+    }
+
+    private void writeJson(HttpServletResponse response, HttpStatus status, R<?> body) throws Exception {
+        response.setStatus(status.value());
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write(objectMapper.writeValueAsString(body));
     }
 }

@@ -34,7 +34,7 @@ public class WdWord {
     /** 词性+中文含义 */
     private String partSpeechMean;
 
-    /** 例句 */
+    /** 例句：书籍收录存「【原文】选中句」一条；手动添加可为空或用户填写 */
     private String sentenceExample;
 
     /** 词根词缀解析 */
@@ -72,4 +72,7 @@ public class WdWord {
 
     /** 是否删除 1已删除 0未删除 */
     private Integer isDeleted;
+
+    /** 移入垃圾桶时间；满 7 天后物理删除 */
+    private LocalDateTime deletedAt;
 }

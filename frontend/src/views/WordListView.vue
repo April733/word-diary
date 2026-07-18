@@ -49,8 +49,8 @@
           </t-list-item-meta>
           <template #action>
             <t-button variant="text" theme="primary" @click="openEditDialog(word)">修改</t-button>
-            <t-popconfirm content="确认删除该单词？" @confirm="handleDelete(word.id)">
-              <t-button variant="text" theme="danger">删除</t-button>
+            <t-popconfirm content="移入垃圾桶？可在一周内恢复。" @confirm="handleDelete(word.id)">
+              <t-button variant="text" theme="danger">移除</t-button>
             </t-popconfirm>
           </template>
         </t-list-item>
@@ -278,7 +278,7 @@ async function handleSubmit() {
 async function handleDelete(wordId: number) {
   try {
     await deleteWord(notebookId, wordId)
-    MessagePlugin.success('已删除')
+    MessagePlugin.success('已移入垃圾桶')
     await loadWords()
   } catch (e) {
     MessagePlugin.error('删除失败')

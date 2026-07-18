@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   `phone` varchar(20) DEFAULT '' COMMENT '手机号',
   `is_member` tinyint NOT NULL DEFAULT 0 COMMENT '是否会员 1是 0否',
   `member_tier` int NOT NULL DEFAULT 1 COMMENT '会员等级，关联 sys_member_tier.tier',
+  `role` varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin',
   `preferred_locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言',
+  `preferred_ai_region` varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
@@ -30,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `wd_word_book` (
   `book_name` varchar(64) NOT NULL COMMENT '单词本名称',
   `book_desc` varchar(255) DEFAULT '' COMMENT '单词本简介',
   `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
-  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1正常 0停用',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1参与每日学习 0不参与',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
@@ -243,15 +245,42 @@ CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='大模型调用历史记录';
 
 -- =============================================
--- AI 场景/模型/单价表（场景 key + 描述 + 模型名 + Token 进出价）
+-- AI 供应商接入点（base-url / api-key，后台可配）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_provider` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `provider_key` varchar(64) NOT NULL COMMENT '供应商标识，对齐 sys_ai_model.provider',
+  `display_name` varchar(128) NOT NULL DEFAULT '' COMMENT '展示名',
+  `base_url` varchar(512) NOT NULL DEFAULT '' COMMENT 'OpenAI 兼容根地址',
+  `api_key` varchar(512) NOT NULL DEFAULT '' COMMENT 'API Key',
+  `sort_num` int NOT NULL DEFAULT 0,
+  `is_enabled` tinyint NOT NULL DEFAULT 1,
+  `remark` varchar(512) DEFAULT '',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_provider_key` (`provider_key`),
+  KEY `idx_enabled` (`is_enabled`, `is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI供应商接入点';
+
+INSERT IGNORE INTO `sys_ai_provider`
+(`provider_key`, `display_name`, `base_url`, `api_key`, `sort_num`, `is_enabled`, `remark`)
+VALUES
+('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
+('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
+('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写');
+
+-- =============================================
+-- AI 模型目录（与场景解耦，可被多个场景复用）
 -- =============================================
 CREATE TABLE IF NOT EXISTS `sys_ai_model` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `scene_key` varchar(32) NOT NULL COMMENT '场景标识：feature/word_parse/reading_chat/default',
-  `scene_name` varchar(64) NOT NULL COMMENT '场景描述',
   `model_key` varchar(64) NOT NULL COMMENT '模型名称，对齐调用日志 model_name',
   `display_name` varchar(128) NOT NULL DEFAULT '' COMMENT '模型展示名',
-  `provider` varchar(64) NOT NULL DEFAULT '' COMMENT '供应商 deepseek/aliyun，决定 base-url',
+  `provider` varchar(64) NOT NULL DEFAULT '' COMMENT '对齐 sys_ai_provider.provider_key',
   `currency` varchar(8) NOT NULL DEFAULT 'CNY' COMMENT '公开价币种，统一 CNY',
   `input_price_per_million` decimal(14,6) NOT NULL DEFAULT 0 COMMENT '输入单价：每百万 prompt tokens',
   `output_price_per_million` decimal(14,6) NOT NULL DEFAULT 0 COMMENT '输出单价：每百万 completion tokens',
@@ -264,26 +293,41 @@ CREATE TABLE IF NOT EXISTS `sys_ai_model` (
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_deleted` tinyint NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_scene_key` (`scene_key`),
-  KEY `idx_model_key` (`model_key`),
+  UNIQUE KEY `uk_model_key` (`model_key`),
   KEY `idx_enabled` (`is_enabled`, `is_deleted`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景模型与Token单价';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI模型目录与Token单价';
 
--- 公开价来源（均为人民币）：
--- deepseek-v4-flash: https://api-docs.deepseek.com/zh-cn/quick_start/pricing （缓存未命中）
--- qwen-turbo 中国内地: https://help.aliyun.com/zh/model-studio/model-pricing （非思考）
 INSERT IGNORE INTO `sys_ai_model`
-(`scene_key`, `scene_name`, `model_key`, `display_name`, `provider`, `currency`,
+(`model_key`, `display_name`, `provider`, `currency`,
  `input_price_per_million`, `output_price_per_million`, `sort_num`, `is_enabled`, `remark`)
 VALUES
-('feature', '阅读解析（选中文字 AI 功能）', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
+('deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
  1.0, 2.0, 1, 1, '官方价：输入1元/百万(缓存未命中)、输出2元/百万'),
-('word_parse', '单词批量导入', 'qwen-turbo', 'Qwen Turbo', 'aliyun', 'CNY',
- 0.3, 0.6, 2, 1, '阿里云百炼中国内地：输入0.3元/百万、输出0.6元/百万(非思考)'),
-('reading_chat', '阅读自由问答', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
- 1.0, 2.0, 3, 1, '同 deepseek-v4-flash 公开价'),
-('default', '未匹配场景回退', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY',
- 1.0, 2.0, 99, 1, '未知 scene 时回退');
+('qwen-turbo', 'Qwen Turbo', 'aliyun', 'CNY',
+ 0.3, 0.6, 2, 1, '阿里云百炼中国内地：输入0.3元/百万、输出0.6元/百万(非思考)');
+
+-- =============================================
+-- AI 场景 → 模型绑定（多场景可共用同一模型）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_scene` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `scene_key` varchar(32) NOT NULL COMMENT '场景标识，对齐 call_scene',
+  `scene_name` varchar(64) NOT NULL COMMENT '场景描述',
+  `region` varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global',
+  `model_key` varchar(64) NOT NULL COMMENT '对应 sys_ai_model.model_key',
+  `sort_num` int NOT NULL DEFAULT 0,
+  `is_enabled` tinyint NOT NULL DEFAULT 1,
+  `remark` varchar(512) DEFAULT '',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scene_region` (`scene_key`, `region`),
+  KEY `idx_model_key` (`model_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI调用场景与模型映射（按地区）';
+
+-- 场景种子由 DatabaseInitConfig（先迁移 region/唯一键，再 INSERT）写入，
+-- 避免已有库仍为 uk_scene_key 时，schema.sql 插入 cn+global 双行失败。
 
 -- =============================================
 -- 书籍表（阅读器）
@@ -485,8 +529,10 @@ INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`
 CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `feature_key` varchar(32) NOT NULL COMMENT '功能标识，如 word, meaning, collocation',
-  `feature_name` varchar(32) NOT NULL COMMENT '功能名称，用户可见',
-  `description` varchar(255) NOT NULL COMMENT '功能描述，给用户看的简短说明',
+  `feature_name` varchar(32) NOT NULL COMMENT '功能名称，中文源文，用户可见',
+  `description` varchar(255) NOT NULL COMMENT '功能描述，中文源文',
+  `name_i18n` json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi',
+  `description_i18n` json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi',
   `prompt` text COMMENT 'AI提示词，传递给大模型的详细指令',
   `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
   `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
@@ -501,7 +547,7 @@ CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
 
 -- 种子数据：默认AI阅读功能
 INSERT IGNORE INTO `sys_ai_feature` (`feature_key`, `feature_name`, `description`, `prompt`, `sort_num`) VALUES
-('word', '单词', '讲解重难点单词的词性、含义和用法', '对句子中出现的重难点单词进行讲解，包括词性、含义、用法等。要求简洁，不要啰嗦。', 1),
+('word', '单词', '讲解重难点单词的词性、含义和用法', '只讲选段中的重难点词（如 solicitor），跳过专有名词与 make/move/people 等基础高频词；短段通常 1～5 个，宁少勿滥。含美英音标；释义用「n./v./adj. + 中文」，禁止「名词，意为…」。', 1),
 ('meaning', '释义', '翻译和释义选中的句子或段落', '对选中的句子或段落进行翻译和释义，帮助理解整体意思。要求简洁，不要啰嗦。', 2),
 ('collocation', '固搭', '分析固定搭配和短语用法', '分析句子中的固定搭配和短语用法，说明其含义和使用场景。要求简洁，不要啰嗦。', 3),
 ('sentence_pattern', '句式', '分析语法结构和句式特点', '分析句子中的语法结构和句式特点，帮助理解语法。要求简洁，不要啰嗦。', 4),
@@ -577,3 +623,24 @@ CREATE TABLE IF NOT EXISTS `wd_feedback` (
   KEY `idx_status` (`status`),
   KEY `idx_create_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈表';
+
+-- =============================================
+-- AI 场景系统提示词（按 locale 可配置，覆盖代码默认）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_scene_prompt` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `scene_key` varchar(32) NOT NULL COMMENT '场景: word_parse/reading_chat/feature',
+  `locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '语言',
+  `scene_name` varchar(64) NOT NULL DEFAULT '' COMMENT '场景展示名',
+  `system_prompt` mediumtext NOT NULL COMMENT '系统提示词，feature/reading_chat 可用 {context}；feature 可用 {feature_prompts}',
+  `remark` varchar(255) DEFAULT '' COMMENT '备注',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scene_locale` (`scene_key`, `locale`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景系统提示词';

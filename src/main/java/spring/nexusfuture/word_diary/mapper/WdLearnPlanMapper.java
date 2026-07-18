@@ -28,13 +28,13 @@ public interface WdLearnPlanMapper {
 
     @Select("SELECT p.* FROM wd_learn_plan p " +
             "INNER JOIN wd_word w ON w.id = p.word_id AND w.is_deleted = 0 " +
-            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 " +
+            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE p.user_id = #{userId} AND p.learn_status = 0 AND p.is_deleted = 0")
     List<WdLearnPlan> selectNewWords(Long userId);
 
     @Select("SELECT p.* FROM wd_learn_plan p " +
             "INNER JOIN wd_word w ON w.id = p.word_id AND w.is_deleted = 0 " +
-            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 " +
+            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE p.user_id = #{userId} AND p.learn_status IN (1, 2) " +
             "AND (DATE(p.next_review_time) < CURDATE() " +
             "OR (DATE(p.next_review_time) = CURDATE() AND HOUR(NOW()) >= #{unlockHour})) " +
@@ -43,16 +43,18 @@ public interface WdLearnPlanMapper {
 
     @Select("SELECT p.* FROM wd_learn_plan p " +
             "INNER JOIN wd_word w ON w.id = p.word_id AND w.is_deleted = 0 " +
-            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 " +
+            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE p.user_id = #{userId} AND p.learn_status = 0 " +
             "AND p.scheduled_new_date IS NULL AND p.is_deleted = 0 ORDER BY p.id ASC")
     List<WdLearnPlan> selectUnscheduledNew(Long userId);
 
+    /** 今日应学新词：含排期为今天，以及未学完的逾期（scheduled_new_date &lt; today） */
     @Select("SELECT p.* FROM wd_learn_plan p " +
             "INNER JOIN wd_word w ON w.id = p.word_id AND w.is_deleted = 0 " +
-            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 " +
+            "INNER JOIN wd_word_book b ON b.id = p.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE p.user_id = #{userId} AND p.learn_status = 0 " +
-            "AND p.scheduled_new_date = #{today} AND p.is_deleted = 0 ORDER BY p.new_alloc_seq ASC, p.id ASC")
+            "AND p.scheduled_new_date IS NOT NULL AND p.scheduled_new_date <= #{today} " +
+            "AND p.is_deleted = 0 ORDER BY p.scheduled_new_date ASC, p.new_alloc_seq ASC, p.id ASC")
     List<WdLearnPlan> selectTodayNewWords(@Param("userId") Long userId, @Param("today") LocalDate today);
 
     @Update("UPDATE wd_learn_plan SET learn_status = #{learnStatus}, current_level = #{currentLevel}, " +
@@ -100,6 +102,17 @@ public interface WdLearnPlanMapper {
     @Update("UPDATE wd_learn_plan SET is_deleted = 1, update_time = NOW() WHERE word_id = #{wordId} AND is_deleted = 0")
     int deleteByWordId(Long wordId);
 
+    @Update("UPDATE wd_learn_plan SET is_deleted = 0, update_time = NOW() WHERE word_id = #{wordId} AND is_deleted = 1")
+    int restoreByWordId(Long wordId);
+
     @Update("UPDATE wd_learn_plan SET is_deleted = 1, update_time = NOW() WHERE notebook_id = #{notebookId} AND is_deleted = 0")
     int softDeleteByNotebookId(Long notebookId);
+
+    /** 关闭单词本参与学习时，清掉未学新词的排期，重新开启后再重新分配 */
+    @Update("UPDATE wd_learn_plan SET scheduled_new_date = NULL, new_alloc_seq = NULL, update_time = NOW() " +
+            "WHERE notebook_id = #{notebookId} AND learn_status = 0 AND is_deleted = 0")
+    int clearNewScheduleByNotebookId(Long notebookId);
+
+    @Delete("DELETE p FROM wd_learn_plan p LEFT JOIN wd_word w ON w.id = p.word_id WHERE w.id IS NULL")
+    int hardDeleteOrphanPlans();
 }

@@ -1,23 +1,41 @@
 <template>
   <t-drawer
     v-model:visible="visibleModel"
-    size="420px"
+    size="720px"
     :close-btn="true"
     :footer="false"
   >
     <template #header>
       <div class="drawer-header">
-        <div class="drawer-title">{{ drawerTitle }}</div>
-        <t-tabs
-          v-if="viewMode === 'basket' && notebookId"
-          v-model="basketTab"
-          size="small"
-          class="basket-tabs"
-          @change="onBasketTabChange"
-        >
-          <t-tab-panel value="pending" :label="pendingTabLabel" />
-          <t-tab-panel value="saved" :label="savedTabLabel" />
-        </t-tabs>
+        <div class="drawer-title">
+          <span class="drawer-title-text">{{ drawerTitle }}</span>
+          <span
+            v-if="viewMode === 'notebook'"
+            class="trash-badge"
+            :title="$t('reader.collectWordCount', { n: savedWords.length })"
+          >{{ savedWords.length }}</span>
+        </div>
+        <div v-if="linkedNotebooks.length && viewMode !== 'current'" class="drawer-header-actions">
+          <t-button
+            v-if="viewMode === 'trash'"
+            variant="text"
+            size="small"
+            @click="backToNotebook"
+          >
+            {{ $t('reader.collectBackToList') }}
+          </t-button>
+          <t-button
+            v-else
+            variant="text"
+            size="small"
+            :title="$t('reader.collectTrash')"
+            @click="openTrash"
+          >
+            <t-icon name="delete" size="18px" />
+            {{ $t('reader.collectTrash') }}
+            <span v-if="trashCount > 0" class="trash-badge">{{ trashCount }}</span>
+          </t-button>
+        </div>
       </div>
     </template>
 
@@ -28,8 +46,8 @@
       </t-button>
     </div>
 
-    <template v-else>
-      <!-- 本次识别：可勾选后加入某本的收录篮，或直接保存 -->
+    <div v-else class="collect-drawer-body">
+      <!-- 本次 AI 识别：勾选后直接保存 -->
       <template v-if="viewMode === 'current'">
         <p v-if="!currentEntries.length" class="hint">{{ $t('reader.collectEmptyHint') }}</p>
         <div v-else class="entry-table-wrap">
@@ -40,7 +58,9 @@
                   <t-checkbox :checked="allChecked" :indeterminate="indeterminate" @change="toggleAll" />
                 </th>
                 <th>{{ $t('reader.collectWord') }}</th>
-                <th>{{ $t('reader.collectMeaning') }}</th>
+                <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
+                <th>{{ $t('reader.collectRootAffix') }}</th>
+                <th>{{ $t('reader.collectExample') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -52,23 +72,51 @@
                   />
                 </td>
                 <td>
-                  <div class="proto-row">
-                    <t-tag size="small" variant="light" :theme="entry.entryType === 'phrase' ? 'warning' : 'primary'">
-                      {{ entry.entryType === 'phrase' ? $t('reader.collectPhrase') : $t('reader.collectWordTag') }}
-                    </t-tag>
-                    <span class="proto">{{ entry.wordProto }}</span>
-                    <t-button
-                      variant="text"
-                      size="small"
-                      class="speak-btn"
-                      :title="$t('reader.collectPlayUs')"
-                      @click.stop="speak(entry.wordProto, 'us')"
-                    >
-                      <t-icon name="sound" size="16px" />
-                    </t-button>
+                  <div class="proto-block">
+                    <div class="proto-row">
+                      <span class="proto">{{ entry.wordProto }}</span>
+                    </div>
+                    <div class="ph-pair">
+                      <span class="ph-item">
+                        <span class="ph-label">US</span>
+                        <span class="ph-ipa">{{ entry.usPhonetic || '—' }}</span>
+                        <button
+                          type="button"
+                          class="speak-btn"
+                          :title="$t('reader.collectPlayUs')"
+                          @click.stop="speak(entry.wordProto, 'us')"
+                        >
+                          <t-icon name="sound" size="14px" />
+                        </button>
+                      </span>
+                      <span class="ph-item">
+                        <span class="ph-label">UK</span>
+                        <span class="ph-ipa">{{ entry.ukPhonetic || '—' }}</span>
+                        <button
+                          type="button"
+                          class="speak-btn"
+                          :title="$t('reader.collectPlayUk')"
+                          @click.stop="speak(entry.wordProto, 'uk')"
+                        >
+                          <t-icon name="sound" size="14px" />
+                        </button>
+                      </span>
+                    </div>
                   </div>
                 </td>
-                <td>{{ entry.partSpeechMean }}</td>
+                <td class="cell-meaning">{{ entry.partSpeechMean || '—' }}</td>
+                <td class="cell-muted">{{ entry.rootAffix || '—' }}</td>
+                <td class="cell-example">
+                  <t-tooltip
+                    v-if="exampleForEntry(entry)"
+                    :content="exampleForEntry(entry)"
+                    placement="top"
+                    :show-arrow="true"
+                  >
+                    <span class="example-ellipsis">{{ ellipsisText(exampleForEntry(entry)) }}</span>
+                  </t-tooltip>
+                  <span v-else>—</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -80,142 +128,167 @@
             <t-radio-group v-model="notebookId" variant="default-filled" size="small">
               <t-radio-button v-for="nb in linkedNotebooks" :key="nb.notebookId" :value="nb.notebookId">
                 {{ nb.notebookName }}
-                <t-badge
-                  v-if="(basketCounts[nb.notebookId] || 0) > 0"
-                  :count="basketCounts[nb.notebookId]"
-                  size="small"
-                />
               </t-radio-button>
             </t-radio-group>
           </div>
-          <div class="btn-row">
-            <t-button
-              variant="outline"
-              :disabled="!notebookId || checkedEntries.length === 0"
-              @click="addCheckedToBasket"
-            >
-              {{ $t('reader.collectAddToBasket') }}
-            </t-button>
-            <t-button
-              theme="primary"
-              :loading="saving"
-              :disabled="!notebookId || checkedEntries.length === 0"
-              @click="saveToNotebook"
-            >
-              {{ $t('reader.collectSave') }}
-            </t-button>
-          </div>
+          <t-button
+            theme="primary"
+            block
+            :loading="saving"
+            :disabled="!notebookId || checkedEntries.length === 0"
+            @click="saveToNotebook"
+          >
+            {{ $t('reader.collectSave') }}
+          </t-button>
         </div>
       </template>
 
-      <!-- 某单词本：未收录篮 / 已收录 -->
-      <template v-else>
-        <!-- 未收录（本地收录篮） -->
-        <template v-if="basketTab === 'pending'">
-          <p v-if="!basket.length" class="hint">{{ $t('reader.collectBasketEmpty') }}</p>
-          <div v-else class="entry-table-wrap">
-            <table class="entry-table">
-              <thead>
-                <tr>
-                  <th style="width: 36px">
-                    <t-checkbox :checked="allChecked" :indeterminate="indeterminate" @change="toggleAll" />
-                  </th>
-                  <th>{{ $t('reader.collectWord') }}</th>
-                  <th>{{ $t('reader.collectMeaning') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="entry in basket" :key="entry.basketKey">
-                  <td>
-                    <t-checkbox
-                      :checked="checkedKeys.has(entry.basketKey)"
-                      @change="(v: boolean) => toggleOne(entry.basketKey, v)"
-                    />
-                  </td>
-                  <td>
+      <!-- 单词本词表 -->
+      <template v-else-if="viewMode === 'notebook'">
+        <div v-if="savedLoading" class="loading-row">
+          <t-loading size="small" />
+        </div>
+        <p v-else-if="!savedWords.length" class="hint">{{ $t('reader.collectSavedEmpty') }}</p>
+        <div v-else class="entry-table-wrap">
+          <table class="entry-table">
+            <thead>
+              <tr>
+                <th>{{ $t('reader.collectWord') }}</th>
+                <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
+                <th>{{ $t('reader.collectRootAffix') }}</th>
+                <th>{{ $t('reader.collectExample') }}</th>
+                <th style="width: 64px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="word in savedWords" :key="word.id">
+                <td>
+                  <div class="proto-block">
                     <div class="proto-row">
-                      <t-tag size="small" variant="light" :theme="entry.entryType === 'phrase' ? 'warning' : 'primary'">
-                        {{ entry.entryType === 'phrase' ? $t('reader.collectPhrase') : $t('reader.collectWordTag') }}
-                      </t-tag>
-                      <span class="proto">{{ entry.wordProto }}</span>
-                      <t-button
-                        variant="text"
-                        size="small"
-                        class="speak-btn"
-                        :title="$t('reader.collectPlayUs')"
-                        @click.stop="speak(entry.wordProto, 'us')"
-                      >
-                        <t-icon name="sound" size="16px" />
-                      </t-button>
-                    </div>
-                  </td>
-                  <td>{{ entry.partSpeechMean }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div v-if="basket.length" class="collect-actions">
-            <t-button
-              theme="primary"
-              block
-              :loading="saving"
-              :disabled="!notebookId || checkedEntries.length === 0"
-              @click="saveToNotebook"
-            >
-              {{ $t('reader.collectSave') }}
-            </t-button>
-            <t-button variant="text" theme="danger" @click="clearBasketLocal">
-              {{ $t('reader.collectClearBasket') }}
-            </t-button>
-          </div>
-        </template>
-
-        <!-- 已收录（单词本内已有词） -->
-        <template v-else>
-          <div v-if="savedLoading" class="loading-row">
-            <t-loading size="small" />
-          </div>
-          <p v-else-if="!savedWords.length" class="hint">{{ $t('reader.collectSavedEmpty') }}</p>
-          <div v-else class="entry-table-wrap">
-            <table class="entry-table">
-              <thead>
-                <tr>
-                  <th>{{ $t('reader.collectWord') }}</th>
-                  <th>{{ $t('reader.collectMeaning') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="word in savedWords" :key="word.id">
-                  <td>
-                    <div class="proto-row">
-                      <t-tag
-                        size="small"
-                        variant="light"
-                        :theme="word.entryType === 'phrase' ? 'warning' : 'primary'"
-                      >
-                        {{ word.entryType === 'phrase' ? $t('reader.collectPhrase') : $t('reader.collectWordTag') }}
-                      </t-tag>
                       <span class="proto">{{ word.wordProto }}</span>
-                      <t-button
-                        variant="text"
-                        size="small"
-                        class="speak-btn"
-                        :title="$t('reader.collectPlayUs')"
-                        @click.stop="speak(word.wordProto, 'us')"
-                      >
-                        <t-icon name="sound" size="16px" />
-                      </t-button>
                     </div>
-                  </td>
-                  <td>{{ word.partSpeechMean }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </template>
+                    <div class="ph-pair">
+                      <span class="ph-item">
+                        <span class="ph-label">US</span>
+                        <span class="ph-ipa">{{ word.usPhonetic || '—' }}</span>
+                        <button
+                          type="button"
+                          class="speak-btn"
+                          :title="$t('reader.collectPlayUs')"
+                          @click.stop="speak(word.wordProto, 'us')"
+                        >
+                          <t-icon name="sound" size="14px" />
+                        </button>
+                      </span>
+                      <span class="ph-item">
+                        <span class="ph-label">UK</span>
+                        <span class="ph-ipa">{{ word.ukPhonetic || '—' }}</span>
+                        <button
+                          type="button"
+                          class="speak-btn"
+                          :title="$t('reader.collectPlayUk')"
+                          @click.stop="speak(word.wordProto, 'uk')"
+                        >
+                          <t-icon name="sound" size="14px" />
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+                </td>
+                <td class="cell-meaning">{{ word.partSpeechMean || '—' }}</td>
+                <td class="cell-muted">{{ word.rootAffix || '—' }}</td>
+                <td class="cell-example">
+                  <t-tooltip
+                    v-if="word.sentenceExample"
+                    :content="stripOriginalPrefix(word.sentenceExample)"
+                    placement="top"
+                    :show-arrow="true"
+                  >
+                    <span class="example-ellipsis">{{ ellipsisText(word.sentenceExample) }}</span>
+                  </t-tooltip>
+                  <span v-else>—</span>
+                </td>
+                <td>
+                  <t-popconfirm
+                    :content="$t('reader.collectRemoveConfirm')"
+                    @confirm="removeWord(word.id)"
+                  >
+                    <t-button variant="text" theme="danger" size="small">
+                      {{ $t('reader.collectRemove') }}
+                    </t-button>
+                  </t-popconfirm>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </template>
-    </template>
+
+      <!-- 垃圾桶 -->
+      <template v-else>
+        <p class="hint">{{ $t('reader.collectTrashHint') }}</p>
+        <div v-if="trashLoading" class="loading-row">
+          <t-loading size="small" />
+        </div>
+        <p v-else-if="!trashWords.length" class="hint">{{ $t('reader.collectTrashEmpty') }}</p>
+        <div v-else class="entry-table-wrap">
+          <table class="entry-table">
+            <thead>
+              <tr>
+                <th>{{ $t('reader.collectWord') }}</th>
+                <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
+                <th>{{ $t('reader.collectRootAffix') }}</th>
+                <th>{{ $t('reader.collectExample') }}</th>
+                <th style="width: 100px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="word in trashWords" :key="word.id">
+                <td>
+                  <div class="proto-row">
+                    <t-tag
+                      size="small"
+                      variant="light"
+                      :theme="word.entryType === 'phrase' ? 'warning' : 'primary'"
+                    >
+                      {{ word.entryType === 'phrase' ? $t('reader.collectPhrase') : $t('reader.collectWordTag') }}
+                    </t-tag>
+                    <span class="proto">{{ word.wordProto }}</span>
+                  </div>
+                  <div v-if="word.retainDaysLeft != null" class="retain-hint">
+                    {{ $t('reader.collectRetainDays', { days: word.retainDaysLeft }) }}
+                  </div>
+                </td>
+                <td class="cell-meaning">{{ word.partSpeechMean || '—' }}</td>
+                <td class="cell-muted">{{ word.rootAffix || '—' }}</td>
+                <td class="cell-example">
+                  <t-tooltip
+                    v-if="word.sentenceExample"
+                    :content="stripOriginalPrefix(word.sentenceExample)"
+                    placement="top"
+                    :show-arrow="true"
+                  >
+                    <span class="example-ellipsis">{{ ellipsisText(word.sentenceExample) }}</span>
+                  </t-tooltip>
+                  <span v-else>—</span>
+                </td>
+                <td>
+                  <t-button
+                    variant="text"
+                    theme="primary"
+                    size="small"
+                    :loading="restoringId === word.id"
+                    @click="restoreFromTrash(word.id)"
+                  >
+                    {{ $t('reader.collectRestore') }}
+                  </t-button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
   </t-drawer>
 </template>
 
@@ -223,21 +296,20 @@
 import { computed, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
-import { collectBookWords, getWords } from '../api'
+import { collectBookWords, deleteWord, getWordTrash, getWords, restoreWord } from '../api'
 import type { CollectEntry } from '../utils/collectBasket'
-import {
-  clearBasket,
-  loadBasket,
-  loadBasketCounts,
-  mergeIntoBasket,
-  saveBasket
-} from '../utils/collectBasket'
+import { ellipsisText, pickSentenceForLemma, stripOriginalPrefix } from '../utils/selectedText'
 
 interface SavedWord {
   id: number
   wordProto: string
   partSpeechMean?: string
   entryType?: string
+  rootAffix?: string
+  sentenceExample?: string
+  usPhonetic?: string
+  ukPhonetic?: string
+  retainDaysLeft?: number
 }
 
 const props = defineProps<{
@@ -247,35 +319,39 @@ const props = defineProps<{
   linkedNotebooks: { notebookId: number; notebookName: string }[]
   sourceSnippet?: string
   sourceLocation?: string
-  /** current=本次识别；basket=某单词本收录篮 */
-  preferredViewMode?: 'current' | 'basket'
-  /** 打开某本收录篮时指定 */
+  /** current=本次识别；notebook=单词本词表 */
+  preferredViewMode?: 'current' | 'notebook'
   targetNotebookId?: number
 }>()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   saved: []
-  'basket-changed': []
   'open-link-dialog': []
 }>()
 
 const { t } = useI18n()
-const viewMode = ref<'current' | 'basket'>('current')
-/** pending=未收录篮；saved=已写入单词本 */
-const basketTab = ref<'pending' | 'saved'>('pending')
+const viewMode = ref<'current' | 'notebook' | 'trash'>('current')
 const checkedKeys = ref<Set<string>>(new Set())
 const notebookId = ref<number | undefined>()
 const saving = ref(false)
-const basket = ref<CollectEntry[]>([])
-const basketCounts = ref<Record<number, number>>({})
 const savedWords = ref<SavedWord[]>([])
 const savedLoading = ref(false)
+const trashWords = ref<SavedWord[]>([])
+const trashLoading = ref(false)
+const trashCount = ref(0)
+const restoringId = ref<number | null>(null)
 
 const visibleModel = computed({
   get: () => props.visible,
   set: (v: boolean) => emit('update:visible', v)
 })
+
+/** 本次收录：每词只展示包含该词的那一句原文 */
+function exampleForEntry(entry: CollectEntry): string {
+  const snippet = props.sourceSnippet || entry.sentenceExample || ''
+  return pickSentenceForLemma(snippet, entry.wordProto)
+}
 
 const activeNotebookName = computed(() => {
   const nb = props.linkedNotebooks.find(n => n.notebookId === notebookId.value)
@@ -283,53 +359,34 @@ const activeNotebookName = computed(() => {
 })
 
 const drawerTitle = computed(() => {
-  if (viewMode.value === 'basket' && activeNotebookName.value) {
+  if (viewMode.value === 'trash') {
+    return t('reader.collectTrashTitle', { name: activeNotebookName.value || '' })
+  }
+  if (viewMode.value === 'notebook' && activeNotebookName.value) {
     return activeNotebookName.value
   }
   return t('reader.collectTitle')
 })
 
-const pendingTabLabel = computed(() =>
-  t('reader.collectTabPending', { count: basket.value.length })
-)
-
-const savedTabLabel = computed(() =>
-  t('reader.collectTabSaved', { count: savedWords.value.length })
-)
-
-const displayEntries = computed(() => (viewMode.value === 'basket' ? basket.value : props.currentEntries))
-
 const checkedEntries = computed(() =>
-  displayEntries.value.filter(e => checkedKeys.value.has(e.basketKey))
+  props.currentEntries.filter(e => checkedKeys.value.has(e.basketKey))
 )
 
 const allChecked = computed(() =>
-  displayEntries.value.length > 0 && displayEntries.value.every(e => checkedKeys.value.has(e.basketKey))
+  props.currentEntries.length > 0 && props.currentEntries.every(e => checkedKeys.value.has(e.basketKey))
 )
 
 const indeterminate = computed(() => {
-  const total = displayEntries.value.length
-  const checked = displayEntries.value.filter(e => checkedKeys.value.has(e.basketKey)).length
+  const total = props.currentEntries.length
+  const checked = checkedEntries.value.length
   return checked > 0 && checked < total
 })
-
-function refreshCounts() {
-  const ids = props.linkedNotebooks.map(n => n.notebookId)
-  basketCounts.value = loadBasketCounts(props.bookId, ids)
-  emit('basket-changed')
-}
-
-function refreshBasketFor(nbId: number) {
-  basket.value = loadBasket(props.bookId, nbId)
-  refreshCounts()
-}
 
 async function loadSavedWords(nbId: number) {
   savedLoading.value = true
   try {
     const res = await getWords(nbId)
-    const list = (res.data?.data || []) as SavedWord[]
-    savedWords.value = list
+    savedWords.value = (res.data?.data || []) as SavedWord[]
   } catch {
     savedWords.value = []
     MessagePlugin.error(t('reader.collectSavedLoadFail'))
@@ -338,9 +395,64 @@ async function loadSavedWords(nbId: number) {
   }
 }
 
-function onBasketTabChange(val: string | number) {
-  if (val === 'saved' && notebookId.value) {
-    void loadSavedWords(notebookId.value)
+async function loadTrash(nbId: number) {
+  trashLoading.value = true
+  try {
+    const res = await getWordTrash(nbId)
+    trashWords.value = (res.data?.data || []) as SavedWord[]
+    trashCount.value = trashWords.value.length
+  } catch {
+    trashWords.value = []
+    MessagePlugin.error(t('reader.collectTrashLoadFail'))
+  } finally {
+    trashLoading.value = false
+  }
+}
+
+async function refreshTrashCount(nbId: number) {
+  try {
+    const res = await getWordTrash(nbId)
+    trashCount.value = (res.data?.data || []).length
+  } catch {
+    trashCount.value = 0
+  }
+}
+
+function openTrash() {
+  if (!notebookId.value) return
+  viewMode.value = 'trash'
+  void loadTrash(notebookId.value)
+}
+
+function backToNotebook() {
+  viewMode.value = 'notebook'
+  if (notebookId.value) void loadSavedWords(notebookId.value)
+}
+
+async function removeWord(wordId: number) {
+  if (!notebookId.value) return
+  try {
+    await deleteWord(notebookId.value, wordId)
+    MessagePlugin.success(t('reader.collectRemoved'))
+    savedWords.value = savedWords.value.filter(w => w.id !== wordId)
+    trashCount.value += 1
+  } catch (e: any) {
+    MessagePlugin.error(e?.response?.data?.message || t('reader.collectRemoveFail'))
+  }
+}
+
+async function restoreFromTrash(wordId: number) {
+  if (!notebookId.value) return
+  restoringId.value = wordId
+  try {
+    await restoreWord(notebookId.value, wordId)
+    MessagePlugin.success(t('reader.collectRestored'))
+    trashWords.value = trashWords.value.filter(w => w.id !== wordId)
+    trashCount.value = Math.max(0, trashCount.value - 1)
+  } catch (e: any) {
+    MessagePlugin.error(e?.response?.data?.message || t('reader.collectRestoreFail'))
+  } finally {
+    restoringId.value = null
   }
 }
 
@@ -352,34 +464,9 @@ function toggleOne(key: string, checked: boolean) {
 }
 
 function toggleAll(checked: boolean) {
-  if (checked) {
-    checkedKeys.value = new Set(displayEntries.value.map(e => e.basketKey))
-  } else {
-    checkedKeys.value = new Set()
-  }
-}
-
-function addCheckedToBasket() {
-  if (!notebookId.value || checkedEntries.value.length === 0) return
-  const count = checkedEntries.value.length
-  basket.value = mergeIntoBasket(props.bookId, notebookId.value, checkedEntries.value)
-  refreshCounts()
-  MessagePlugin.success(
-    t('reader.collectBasketAdded', {
-      count,
-      name: activeNotebookName.value
-    })
-  )
-  // 成功提示即可，不跳转到未收录列表
-  visibleModel.value = false
-}
-
-function clearBasketLocal() {
-  if (!notebookId.value) return
-  clearBasket(props.bookId, notebookId.value)
-  basket.value = []
-  checkedKeys.value = new Set()
-  refreshCounts()
+  checkedKeys.value = checked
+    ? new Set(props.currentEntries.map(e => e.basketKey))
+    : new Set()
 }
 
 async function saveToNotebook() {
@@ -400,9 +487,7 @@ async function saveToNotebook() {
         partSpeechMean: e.partSpeechMean,
         usPhonetic: e.usPhonetic,
         ukPhonetic: e.ukPhonetic,
-        sentenceExample: props.sourceSnippet || e.sentenceExample || '',
-        rootAffix: e.rootAffix,
-        appendExample: true
+        rootAffix: e.rootAffix
       }))
     })
     const data = res.data.data
@@ -413,25 +498,9 @@ async function saveToNotebook() {
         updated: data.updated
       })
     )
-
-    if (viewMode.value === 'basket' && notebookId.value) {
-      const savedKeys = new Set(checkedEntries.value.map(e => e.basketKey))
-      basket.value = basket.value.filter(e => !savedKeys.has(e.basketKey))
-      saveBasket(props.bookId, notebookId.value, basket.value)
-      refreshCounts()
-    }
     checkedKeys.value = new Set()
     emit('saved')
-    // 从本次识别直接保存：成功提示后关闭，不跳列表
-    if (viewMode.value === 'current') {
-      visibleModel.value = false
-      return
-    }
-    // 从收录篮保存：切到已收录便于核对
-    if (viewMode.value === 'basket' && notebookId.value) {
-      basketTab.value = 'saved'
-      await loadSavedWords(notebookId.value)
-    }
+    visibleModel.value = false
   } catch (e: any) {
     MessagePlugin.error(e?.response?.data?.message || t('reader.collectSaveFail'))
   } finally {
@@ -461,21 +530,18 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 }
 
 watch(() => props.visible, (open) => {
-  if (open) {
-    refreshCounts()
-    viewMode.value = props.preferredViewMode || (props.currentEntries.length ? 'current' : 'basket')
-    basketTab.value = 'pending'
-    if (props.targetNotebookId) {
-      notebookId.value = props.targetNotebookId
-    } else if (!notebookId.value || !props.linkedNotebooks.some(n => n.notebookId === notebookId.value)) {
-      notebookId.value = props.linkedNotebooks[0]?.notebookId
-    }
-    if (viewMode.value === 'basket' && notebookId.value) {
-      refreshBasketFor(notebookId.value)
-      checkedKeys.value = new Set(basket.value.map(e => e.basketKey))
-    } else {
-      checkedKeys.value = new Set(props.currentEntries.map(e => e.basketKey))
-    }
+  if (!open) return
+  viewMode.value = props.preferredViewMode || (props.currentEntries.length ? 'current' : 'notebook')
+  if (props.targetNotebookId) {
+    notebookId.value = props.targetNotebookId
+  } else if (!notebookId.value || !props.linkedNotebooks.some(n => n.notebookId === notebookId.value)) {
+    notebookId.value = props.linkedNotebooks[0]?.notebookId
+  }
+  if (viewMode.value === 'notebook' && notebookId.value) {
+    void loadSavedWords(notebookId.value)
+    void refreshTrashCount(notebookId.value)
+  } else if (viewMode.value === 'current') {
+    checkedKeys.value = new Set(props.currentEntries.map(e => e.basketKey))
   }
 })
 
@@ -485,48 +551,85 @@ watch(() => props.currentEntries, (entries) => {
   }
 })
 
-watch(displayEntries, (entries) => {
-  const valid = new Set(entries.map(e => e.basketKey))
-  checkedKeys.value = new Set([...checkedKeys.value].filter(k => valid.has(k)))
-})
-
 watch(notebookId, (id) => {
-  if (!id || !props.visible || viewMode.value !== 'basket') return
-  refreshBasketFor(id)
-  if (basketTab.value === 'pending') {
-    checkedKeys.value = new Set(basket.value.map(e => e.basketKey))
-  } else {
+  if (!id || !props.visible) return
+  if (viewMode.value === 'notebook') {
     void loadSavedWords(id)
+    void refreshTrashCount(id)
+  } else if (viewMode.value === 'trash') {
+    void loadTrash(id)
   }
 })
 </script>
 
 <style scoped>
-.drawer-header {
+:deep(.t-drawer__body) {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.collect-drawer-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding-right: 28px;
   min-width: 0;
 }
 .drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 16px;
   font-weight: 600;
   line-height: 1.3;
+  min-width: 0;
+  flex: 1;
+}
+.drawer-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
-.basket-tabs {
-  margin-top: 2px;
+.drawer-header-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.basket-tabs :deep(.t-tabs__nav-container) {
-  margin-bottom: 0;
+.trash-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--td-error-color);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-weight: 600;
 }
 .hint {
   color: var(--td-text-color-secondary);
   font-size: 13px;
   margin: 0 0 12px;
+  flex-shrink: 0;
 }
 .loading-row {
   display: flex;
@@ -534,9 +637,10 @@ watch(notebookId, (id) => {
   padding: 32px 0;
 }
 .entry-table-wrap {
-  max-height: 360px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 .entry-table {
   width: 100%;
@@ -549,29 +653,129 @@ watch(notebookId, (id) => {
   padding: 8px 6px;
   text-align: left;
   vertical-align: top;
+  word-break: break-word;
 }
-.proto {
-  margin-left: 6px;
-  font-weight: 600;
+.entry-table th {
+  color: var(--td-text-color-secondary);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--td-bg-color-container);
+  z-index: 1;
+}
+.col-meaning,
+.cell-meaning {
+  width: 22%;
+  max-width: 140px;
+}
+.cell-meaning {
+  line-height: 1.45;
+}
+.cell-muted {
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 180px;
+  white-space: pre-wrap;
+}
+.cell-example {
+  max-width: 160px;
+  vertical-align: middle;
+}
+.example-ellipsis {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  cursor: default;
+  vertical-align: bottom;
+}
+.retain-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--td-warning-color);
+}
+.proto-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
 }
 .proto-row {
   display: flex;
   align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+.ph-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
+  margin-left: 2px;
+  min-width: 0;
+}
+.ph-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ph-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+.ph-ipa {
+  flex: 0 1 auto;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: normal;
+}
+.proto {
+  font-weight: 600;
+  flex: 0 0 auto;
 }
 .speak-btn {
-  color: var(--brand-ink, #315C34);
-  padding: 0 2px !important;
-  min-width: 24px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  color: var(--td-text-color-secondary);
+  line-height: 1;
 }
 .speak-btn:hover {
-  color: var(--brand-ink-hover, #274a2a);
+  color: #315c34;
 }
 .collect-actions {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-top: 12px;
+  padding-top: 4px;
 }
 .target-label {
   font-size: 13px;
@@ -581,9 +785,5 @@ watch(notebookId, (id) => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-.btn-row {
-  display: flex;
-  gap: 8px;
 }
 </style>

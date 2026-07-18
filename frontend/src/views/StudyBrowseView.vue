@@ -13,7 +13,7 @@
       <p class="browse-hint">{{ $t('study.browseHint') }}</p>
 
       <div v-if="currentWord" class="study-area">
-        <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = !showAnswer" />
+        <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = true" />
 
         <div v-if="showAnswer" class="study-actions">
           <t-button theme="danger" size="large" @click="handleAnswer(0)">{{ $t('study.forget') }}</t-button>

@@ -22,11 +22,20 @@ public class SysAiFeature {
     /** 功能标识键，如 word/meaning/collocation/sentence_pattern/phonetic/root_affix/example */
     private String featureKey;
 
-    /** 功能显示名称 */
+    /** 功能显示名称（中文源文） */
     private String featureName;
 
-    /** 功能描述说明 */
+    /** 功能描述说明（中文源文） */
     private String description;
+
+    /**
+     * 标签多语言 JSON，如 {"en":"Translation","id":"...","th":"...","vi":"..."}。
+     * 由中文源文经 AI 同步写入；zh-CN 仍用 featureName。
+     */
+    private String nameI18n;
+
+    /** 描述多语言 JSON，结构同 nameI18n */
+    private String descriptionI18n;
 
     /** AI提示词模板 */
     private String prompt;

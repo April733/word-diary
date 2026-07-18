@@ -40,8 +40,14 @@ public class WdUser {
     /** 会员等级，关联 sys_member_tier.tier */
     private Integer memberTier;
 
+    /** 角色：user | admin */
+    private String role;
+
     /** 偏好语言，如 zh-CN / en / id / vi / th */
     private String preferredLocale;
+
+    /** AI 线路偏好：auto / cn / global（与语言无关） */
+    private String preferredAiRegion;
 
     /** 创建人 */
     private Long createBy;

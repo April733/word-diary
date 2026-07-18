@@ -3,8 +3,11 @@ package spring.nexusfuture.word_diary.mapper;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+import spring.nexusfuture.word_diary.dto.AdminAiCallDetailVO;
+import spring.nexusfuture.word_diary.dto.AdminAiCallListItemVO;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
 
 import java.util.List;
@@ -25,7 +28,6 @@ public interface WdAiCallLogMapper {
     @Select("SELECT * FROM wd_ai_call_log WHERE user_id = #{userId} AND is_deleted = 0 ORDER BY create_time DESC")
     List<WdAiCallLog> selectByUserId(Long userId);
 
-    /** 按日汇总：token + 已落库估算成本 */
     @Select("SELECT DATE(create_time) AS day, COUNT(*) AS calls, " +
             "COALESCE(SUM(input_word_count),0) AS input_words, " +
             "COALESCE(SUM(input_char_count),0) AS input_chars, " +
@@ -38,25 +40,137 @@ public interface WdAiCallLogMapper {
             "GROUP BY DATE(create_time) ORDER BY day DESC")
     List<Map<String, Object>> selectDailyCostSummary();
 
-    /**
-     * 按当前 sys_ai_model 单价重算历史成本。
-     * 找不到精确 model_key 时回退到 is_default=1 的模型。
-     */
+    @Select("""
+            <script>
+            SELECT COUNT(*) FROM wd_ai_call_log l
+            WHERE l.is_deleted = 0
+            <if test="userId != null">AND l.user_id = #{userId}</if>
+            <if test="callScene != null and callScene != ''">AND l.call_scene = #{callScene}</if>
+            <if test="modelName != null and modelName != ''">AND l.model_name = #{modelName}</if>
+            <if test="fromDay != null and fromDay != ''">AND DATE(l.create_time) &gt;= #{fromDay}</if>
+            <if test="toDay != null and toDay != ''">AND DATE(l.create_time) &lt;= #{toDay}</if>
+            </script>
+            """)
+    long countAdminCalls(@Param("userId") Long userId,
+                         @Param("callScene") String callScene,
+                         @Param("modelName") String modelName,
+                         @Param("fromDay") String fromDay,
+                         @Param("toDay") String toDay);
+
+    @Select("""
+            <script>
+            SELECT l.id, l.user_id AS userId, u.username AS username, l.model_name AS modelName,
+                   l.call_scene AS callScene, l.input_char_count AS inputCharCount,
+                   l.input_word_count AS inputWordCount, l.prompt_tokens AS promptTokens,
+                   l.completion_tokens AS completionTokens, l.total_tokens AS totalTokens,
+                   l.estimated_cost AS estimatedCost, l.duration_ms AS durationMs,
+                   l.create_time AS createTime
+            FROM wd_ai_call_log l
+            LEFT JOIN wd_user u ON u.id = l.user_id
+            WHERE l.is_deleted = 0
+            <if test="userId != null">AND l.user_id = #{userId}</if>
+            <if test="callScene != null and callScene != ''">AND l.call_scene = #{callScene}</if>
+            <if test="modelName != null and modelName != ''">AND l.model_name = #{modelName}</if>
+            <if test="fromDay != null and fromDay != ''">AND DATE(l.create_time) &gt;= #{fromDay}</if>
+            <if test="toDay != null and toDay != ''">AND DATE(l.create_time) &lt;= #{toDay}</if>
+            ORDER BY l.create_time DESC
+            LIMIT #{offset}, #{size}
+            </script>
+            """)
+    List<AdminAiCallListItemVO> selectAdminCalls(@Param("userId") Long userId,
+                                                 @Param("callScene") String callScene,
+                                                 @Param("modelName") String modelName,
+                                                 @Param("fromDay") String fromDay,
+                                                 @Param("toDay") String toDay,
+                                                 @Param("offset") int offset,
+                                                 @Param("size") int size);
+
+    @Select("""
+            SELECT l.id, l.user_id AS userId, u.username AS username, l.model_name AS modelName,
+                   l.call_scene AS callScene, l.input_text AS inputText,
+                   l.input_char_count AS inputCharCount, l.input_word_count AS inputWordCount,
+                   l.assembled_prompt_chars AS assembledPromptChars,
+                   l.prompt_tokens AS promptTokens, l.completion_tokens AS completionTokens,
+                   l.total_tokens AS totalTokens, l.estimated_cost AS estimatedCost,
+                   l.system_prompt AS systemPrompt, l.user_prompt AS userPrompt,
+                   l.response_data AS responseData, l.duration_ms AS durationMs,
+                   l.create_time AS createTime
+            FROM wd_ai_call_log l
+            LEFT JOIN wd_user u ON u.id = l.user_id
+            WHERE l.id = #{id} AND l.is_deleted = 0
+            """)
+    AdminAiCallDetailVO selectAdminCallDetail(Long id);
+
+    @Select("""
+            SELECT
+              COALESCE(SUM(CASE WHEN DATE(create_time) = CURDATE() THEN estimated_cost ELSE 0 END), 0) AS todayCost,
+              COALESCE(SUM(CASE WHEN DATE(create_time) = CURDATE() THEN 1 ELSE 0 END), 0) AS todayCalls,
+              COALESCE(SUM(CASE WHEN DATE(create_time) = CURDATE() THEN total_tokens ELSE 0 END), 0) AS todayTokens,
+              COALESCE(SUM(CASE WHEN DATE_FORMAT(create_time, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+                                THEN estimated_cost ELSE 0 END), 0) AS monthCost,
+              COALESCE(SUM(CASE WHEN DATE_FORMAT(create_time, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+                                THEN 1 ELSE 0 END), 0) AS monthCalls,
+              COALESCE(SUM(estimated_cost), 0) AS totalCost,
+              COUNT(*) AS totalCalls
+            FROM wd_ai_call_log
+            WHERE is_deleted = 0
+            """)
+    Map<String, Object> selectCostKpis();
+
+    @Select("""
+            SELECT call_scene AS name, COUNT(*) AS calls,
+                   COALESCE(SUM(total_tokens),0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost),0) AS estimated_cost
+            FROM wd_ai_call_log
+            WHERE is_deleted = 0
+            GROUP BY call_scene
+            ORDER BY estimated_cost DESC
+            """)
+    List<Map<String, Object>> selectCostByScene();
+
+    @Select("""
+            SELECT model_name AS name, COUNT(*) AS calls,
+                   COALESCE(SUM(total_tokens),0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost),0) AS estimated_cost
+            FROM wd_ai_call_log
+            WHERE is_deleted = 0
+            GROUP BY model_name
+            ORDER BY estimated_cost DESC
+            """)
+    List<Map<String, Object>> selectCostByModel();
+
+    @Select("""
+            SELECT DATE(create_time) AS day, COUNT(*) AS calls,
+                   COALESCE(SUM(total_tokens),0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost),0) AS estimated_cost
+            FROM wd_ai_call_log
+            WHERE is_deleted = 0 AND create_time >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+            GROUP BY DATE(create_time)
+            ORDER BY day ASC
+            """)
+    List<Map<String, Object>> selectDailyCostRecent(int days);
+
+    @Select("""
+            SELECT l.user_id AS userId, u.username AS username, COUNT(*) AS calls,
+                   COALESCE(SUM(l.total_tokens),0) AS total_tokens,
+                   COALESCE(SUM(l.estimated_cost),0) AS estimated_cost
+            FROM wd_ai_call_log l
+            LEFT JOIN wd_user u ON u.id = l.user_id
+            WHERE l.is_deleted = 0
+            GROUP BY l.user_id, u.username
+            ORDER BY estimated_cost DESC
+            LIMIT #{limit}
+            """)
+    List<Map<String, Object>> selectCostTopUsers(int limit);
+
     @Update("""
             UPDATE wd_ai_call_log l
-            LEFT JOIN (
-              SELECT m1.model_key,
-                     m1.input_price_per_million,
-                     m1.output_price_per_million
-              FROM sys_ai_model m1
-              INNER JOIN (
-                SELECT model_key, MIN(id) AS min_id
-                FROM sys_ai_model
-                WHERE is_deleted = 0 AND is_enabled = 1
-                GROUP BY model_key
-              ) t ON t.min_id = m1.id
-            ) m ON m.model_key = l.model_name
-            LEFT JOIN sys_ai_model d ON d.scene_key = 'default' AND d.is_deleted = 0 AND d.is_enabled = 1
+            LEFT JOIN sys_ai_model m
+              ON m.model_key = l.model_name AND m.is_deleted = 0 AND m.is_enabled = 1
+            LEFT JOIN sys_ai_scene ds
+              ON ds.scene_key = 'default' AND ds.is_deleted = 0 AND ds.is_enabled = 1
+            LEFT JOIN sys_ai_model d
+              ON d.model_key = ds.model_key AND d.is_deleted = 0 AND d.is_enabled = 1
             SET l.estimated_cost = ROUND(
               COALESCE(l.prompt_tokens, 0) / 1000000 * COALESCE(COALESCE(m.input_price_per_million, d.input_price_per_million), 0)
             + COALESCE(l.completion_tokens, 0) / 1000000 * COALESCE(COALESCE(m.output_price_per_million, d.output_price_per_million), 0)

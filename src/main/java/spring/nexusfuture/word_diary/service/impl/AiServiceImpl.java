@@ -11,13 +11,14 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import spring.nexusfuture.word_diary.common.TextMetrics;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
-import spring.nexusfuture.word_diary.config.AiChatClientConfig.AiChatClientRouter;
+import spring.nexusfuture.word_diary.config.AiChatClientRouter;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
 import spring.nexusfuture.word_diary.dto.AiParseResult;
 import spring.nexusfuture.word_diary.dto.ResolvedAiEndpoint;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
 import spring.nexusfuture.word_diary.mapper.WdAiCallLogMapper;
 import spring.nexusfuture.word_diary.service.AiModelService;
+import spring.nexusfuture.word_diary.service.AiRegionResolver;
 import spring.nexusfuture.word_diary.service.AiService;
 
 import java.math.BigDecimal;
@@ -37,15 +38,17 @@ public class AiServiceImpl implements AiService {
     private final WdAiCallLogMapper aiCallLogMapper;
     private final AiPromptBuilder promptBuilder;
     private final AiModelService aiModelService;
+    private final AiRegionResolver aiRegionResolver;
 
     public AiServiceImpl(AiChatClientRouter chatClientRouter, ObjectMapper objectMapper,
                          WdAiCallLogMapper aiCallLogMapper, AiPromptBuilder promptBuilder,
-                         AiModelService aiModelService) {
+                         AiModelService aiModelService, AiRegionResolver aiRegionResolver) {
         this.chatClientRouter = chatClientRouter;
         this.objectMapper = objectMapper;
         this.aiCallLogMapper = aiCallLogMapper;
         this.promptBuilder = promptBuilder;
         this.aiModelService = aiModelService;
+        this.aiRegionResolver = aiRegionResolver;
     }
 
     @Override
@@ -64,7 +67,7 @@ public class AiServiceImpl implements AiService {
             systemPrompt = promptBuilder.buildWordParsePrompt(userId);
             userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
 
-            SceneCall call = resolveCall(SCENE_WORD_PARSE);
+            SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
             ChatResponse chatResponse = call.client().prompt()
                     .options(call.options())
                     .system(systemPrompt)
@@ -110,7 +113,7 @@ public class AiServiceImpl implements AiService {
         log.info("开始AI流式调用, userId={}, words={}", userId, words);
 
         StringBuilder fullResponseText = new StringBuilder();
-        SceneCall call = resolveCall(SCENE_WORD_PARSE);
+        SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
         return call.client().prompt()
                 .options(call.options())
                 .system(systemPrompt)
@@ -147,12 +150,19 @@ public class AiServiceImpl implements AiService {
         long startTime = System.currentTimeMillis();
         String scene = (callScene == null || callScene.isBlank()) ? SCENE_READING_CHAT : callScene;
         String rawInput = inputText != null ? inputText : "";
-        log.info("AI阅读助手流式对话开始, userId={}, scene={}, inputWords={}",
-                userId, scene, TextMetrics.wordCount(rawInput));
+        log.info("[ai-stream] 开始 userId={}, scene={}, inputWords={}, sysChars={}, userChars={}",
+                userId, scene, TextMetrics.wordCount(rawInput),
+                systemPrompt != null ? systemPrompt.length() : 0,
+                userPrompt != null ? userPrompt.length() : 0);
 
         StringBuilder fullResponseText = new StringBuilder();
+        final long[] providerRequestAt = {0L};
+        final long[] firstChunkAt = {0L};
 
-        SceneCall call = resolveCall(scene);
+        long tResolve = System.currentTimeMillis();
+        SceneCall call = resolveCall(userId, scene);
+        log.info("[ai-stream] resolveCall 耗时={}ms model/options就绪", System.currentTimeMillis() - tResolve);
+
         // 使用 content() 拿增量 token，避免 chatResponse 在部分供应商下整段回传
         return call.client().prompt()
                 .options(call.options())
@@ -161,10 +171,29 @@ public class AiServiceImpl implements AiService {
                 .stream()
                 .content()
                 .filter(text -> text != null && !text.isEmpty())
-                .doOnNext(fullResponseText::append)
+                .doOnSubscribe(s -> {
+                    providerRequestAt[0] = System.currentTimeMillis();
+                    // ★ 重要指标③起点：真正向大模型发起 stream
+                    log.info("========== [耗时] ③已请求大模型 scene={} model就绪耗时={}ms (等待首token…) ==========",
+                            scene, providerRequestAt[0] - startTime);
+                })
+                .doOnNext(text -> {
+                    if (firstChunkAt[0] == 0L) {
+                        firstChunkAt[0] = System.currentTimeMillis();
+                        long sinceProvider = providerRequestAt[0] > 0
+                                ? firstChunkAt[0] - providerRequestAt[0]
+                                : firstChunkAt[0] - startTime;
+                        // ★ 重要指标③结果：请求大模型 → 首 token
+                        log.info("========== [耗时] ③请求大模型→首token={}ms (chatStream总准备={}ms) 预览={} ==========",
+                                sinceProvider,
+                                firstChunkAt[0] - startTime,
+                                text.length() > 20 ? text.substring(0, 20) + "…" : text);
+                    }
+                    fullResponseText.append(text);
+                })
                 .doOnError(e -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    log.error("AI阅读助手流式调用失败, 耗时: {}ms, 错误: {}", durationMs, e.getMessage(), e);
+                    log.error("[ai-stream] 失败 耗时={}ms, 错误={}", durationMs, e.getMessage(), e);
                     try {
                         saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
                                 e.getMessage(), null, durationMs);
@@ -172,8 +201,12 @@ public class AiServiceImpl implements AiService {
                 })
                 .doOnComplete(() -> {
                     int durationMs = (int) (System.currentTimeMillis() - startTime);
-                    log.info("AI阅读助手流式调用完成, 耗时: {}ms, 响应总长度={}",
-                            durationMs, fullResponseText.length());
+                    long ttfbProvider = (firstChunkAt[0] > 0 && providerRequestAt[0] > 0)
+                            ? firstChunkAt[0] - providerRequestAt[0] : -1;
+                    log.info("[ai-stream] 完成 total={}ms, 请求大模型→首token={}ms, afterFirst={}ms, 响应长度={}",
+                            durationMs, ttfbProvider,
+                            firstChunkAt[0] > 0 ? durationMs - (firstChunkAt[0] - startTime) : durationMs,
+                            fullResponseText.length());
                     saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
                             fullResponseText.toString(), null, durationMs);
                 });
@@ -181,10 +214,12 @@ public class AiServiceImpl implements AiService {
 
     private record SceneCall(ChatClient client, OpenAiChatOptions options) {}
 
-    /** 场景 → DB 模型 + provider → 对应供应商 ChatClient */
-    private SceneCall resolveCall(String sceneKey) {
-        ResolvedAiEndpoint endpoint = aiModelService.requireEndpointForScene(sceneKey);
-        log.info("AI 场景={} 使用模型={} provider={}", sceneKey, endpoint.modelKey(), endpoint.provider());
+    /** 场景 + 用户地区 → DB 模型 + provider → ChatClient */
+    private SceneCall resolveCall(Long userId, String sceneKey) {
+        String region = aiRegionResolver.resolveEffectiveRegion(userId);
+        ResolvedAiEndpoint endpoint = aiModelService.requireEndpointForScene(sceneKey, region);
+        log.info("AI 场景={} region={} 使用模型={} provider={}",
+                sceneKey, region, endpoint.modelKey(), endpoint.provider());
         return new SceneCall(
                 chatClientRouter.require(endpoint.provider()),
                 OpenAiChatOptions.builder()

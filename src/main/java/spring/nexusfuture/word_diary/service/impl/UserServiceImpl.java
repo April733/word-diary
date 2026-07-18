@@ -3,8 +3,10 @@ package spring.nexusfuture.word_diary.service.impl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import spring.nexusfuture.word_diary.common.AiRegions;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.JwtUtil;
+import spring.nexusfuture.word_diary.common.UserRoles;
 import spring.nexusfuture.word_diary.dto.LoginReq;
 import spring.nexusfuture.word_diary.dto.RegisterReq;
 import spring.nexusfuture.word_diary.dto.UserVO;
@@ -67,6 +69,7 @@ public class UserServiceImpl implements UserService {
                 .email("email".equals(req.getRegisterType()) ? req.getEmail() : null)
                 .isMember(0)
                 .memberTier(tier)
+                .role(UserRoles.USER)
                 .build();
         userMapper.insert(user);
     }
@@ -88,13 +91,20 @@ public class UserServiceImpl implements UserService {
                 .token(token)
                 .isMember(user.getIsMember())
                 .memberTier(user.getMemberTier())
+                .role(UserRoles.normalize(user.getRole()))
                 .preferredLocale(user.getPreferredLocale())
+                .preferredAiRegion(user.getPreferredAiRegion() != null ? user.getPreferredAiRegion() : AiRegions.PREF_AUTO)
                 .build();
     }
 
     @Override
     public void updateLocale(Long userId, String locale) {
         userMapper.updateLocale(userId, locale);
+    }
+
+    @Override
+    public void updateAiRegion(Long userId, String region) {
+        userMapper.updateAiRegion(userId, AiRegions.normalizePreference(region));
     }
 
     @Override

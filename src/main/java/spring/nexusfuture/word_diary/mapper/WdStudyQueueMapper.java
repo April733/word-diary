@@ -37,6 +37,12 @@ public interface WdStudyQueueMapper {
     int countPendingByPhase(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate,
                             @Param("phase") String phase);
 
+    @Select("SELECT * FROM wd_study_queue WHERE user_id = #{userId} AND study_date = #{studyDate} " +
+            "AND phase = #{phase} ORDER BY state ASC, sort_order ASC, id ASC")
+    List<WdStudyQueue> selectByUserDateAndPhase(@Param("userId") Long userId,
+                                                @Param("studyDate") LocalDate studyDate,
+                                                @Param("phase") String phase);
+
     @Select("SELECT COALESCE(MAX(sort_order), 0) FROM wd_study_queue WHERE user_id = #{userId} AND study_date = #{studyDate}")
     int maxSortOrder(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate);
 
@@ -70,4 +76,31 @@ public interface WdStudyQueueMapper {
             "AND queue_type = #{queueType} AND state = 1")
     int countDoneByType(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate,
                         @Param("queueType") String queueType);
+
+    @Select("SELECT COUNT(*) FROM wd_study_queue WHERE user_id = #{userId} AND study_date = #{studyDate} " +
+            "AND plan_id = #{planId} AND state = 1")
+    int countDoneByPlan(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate,
+                        @Param("planId") Long planId);
+
+    /** 今日已完成至少 minPasses 遍的单词 ID */
+    @Select("SELECT p.word_id FROM wd_study_queue q " +
+            "INNER JOIN wd_learn_plan p ON p.id = q.plan_id " +
+            "WHERE q.user_id = #{userId} AND q.study_date = #{studyDate} AND q.state = 1 " +
+            "GROUP BY p.word_id HAVING COUNT(*) >= #{minPasses}")
+    List<Long> selectWordIdsWithMinDonePasses(@Param("userId") Long userId,
+                                              @Param("studyDate") LocalDate studyDate,
+                                              @Param("minPasses") int minPasses);
+
+    /** 某阶段已完成至少 minPasses 遍的单词数 */
+    @Select("SELECT COUNT(*) FROM (" +
+            "  SELECT p.word_id FROM wd_study_queue q " +
+            "  INNER JOIN wd_learn_plan p ON p.id = q.plan_id " +
+            "  WHERE q.user_id = #{userId} AND q.study_date = #{studyDate} AND q.state = 1 " +
+            "    AND q.phase = #{phase} " +
+            "  GROUP BY p.word_id HAVING COUNT(*) >= #{minPasses}" +
+            ") t")
+    int countWordsWithMinDonePassesByPhase(@Param("userId") Long userId,
+                                           @Param("studyDate") LocalDate studyDate,
+                                           @Param("phase") String phase,
+                                           @Param("minPasses") int minPasses);
 }

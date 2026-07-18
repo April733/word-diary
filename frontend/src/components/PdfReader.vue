@@ -107,12 +107,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import axios from 'axios'
 import { getBookFileUrl, updateProgress, getPdfMarkups, addPdfMarkup, deletePdfMarkup } from '../api'
 import { pdfjsLib, encodePdfCfi, decodePdfCfi, estimatePageHeight, type PdfProgressCfi } from '../utils/pdfReader'
 import { cropAndSharpenRegion, recognizeRegion, terminateOcrWorker } from '../utils/pdfImageOcr'
+import { normalizeSelectedText } from '../utils/selectedText'
 import {
   type AnnotateMode,
   type PdfMarkupDto,
@@ -135,6 +136,7 @@ const emit = defineEmits<{
   (e: 'ready', totalPages: number): void
   (e: 'toc', items: Array<{ label: string; href: string; level: number }>): void
   (e: 'chapter-highlight', tocIndex: number): void
+  (e: 'noted-pages', pages: number[]): void
   (e: 'select-text', text: string): void
   (e: 'loading', value: boolean): void
   (e: 'error', message: string): void
@@ -272,6 +274,16 @@ async function loadMarkups() {
     console.warn('[PdfReader] 加载批注失败:', e)
   }
 }
+
+watch(
+  markups,
+  (list) => {
+    const pages = [...new Set(list.map((m) => m.pageNum).filter((p): p is number => p != null && p > 0))]
+    pages.sort((a, b) => a - b)
+    emit('noted-pages', pages)
+  },
+  { deep: true }
+)
 
 function syncMarkupCanvasSize(pageNum: number) {
   const pdfCanvas = canvasMap.get(pageNum)
@@ -991,7 +1003,11 @@ async function onSelectEnd() {
       MessagePlugin.warning('未识别到文字，请放大后重新框选')
       return
     }
-    let finalText = text
+    let finalText = normalizeSelectedText(text, { trimPartialEdges: true })
+    if (!finalText) {
+      MessagePlugin.warning('未识别到文字，请放大后重新框选')
+      return
+    }
     if (finalText.length > MAX_SELECTION_LENGTH) {
       MessagePlugin.warning(`选中内容过长，已截取前 ${MAX_SELECTION_LENGTH} 字`)
       finalText = finalText.slice(0, MAX_SELECTION_LENGTH)

@@ -4,17 +4,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.Statement;
 
 /**
- * 数据库启动初始化：补全缺失字段
+ * 数据库启动初始化：补全缺失字段 / 表 / 种子数据（幂等，可重复执行）
  */
 @Slf4j
 @Component
+@Order(1)
 public class DatabaseInitConfig implements ApplicationRunner {
 
     @Autowired
@@ -24,25 +27,11 @@ public class DatabaseInitConfig implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
-            // 检查 wd_book 表是否已有 file_size 字段（MySQL 不支持 ADD COLUMN IF NOT EXISTS）
-            var rs = conn.getMetaData().getColumns(null, null, "wd_book", "file_size");
-            if (!rs.next()) {
-                stmt.execute("ALTER TABLE wd_book ADD COLUMN file_size bigint DEFAULT 0 COMMENT '文件大小(字节)' AFTER file_type");
-                log.info("数据库字段初始化完成: wd_book.file_size 已添加");
-            } else {
-                log.info("数据库字段初始化: file_size 字段已存在，跳过");
-            }
-            rs.close();
+            ensureColumn(conn, stmt, "wd_book", "file_size",
+                    "ALTER TABLE wd_book ADD COLUMN file_size bigint DEFAULT 0 COMMENT '文件大小(字节)' AFTER file_type");
 
-            // 检查 wd_ai_message 表是否已有 parent_id 字段
-            var rs2 = conn.getMetaData().getColumns(null, null, "wd_ai_message", "parent_id");
-            if (!rs2.next()) {
-                stmt.execute("ALTER TABLE wd_ai_message ADD COLUMN parent_id bigint DEFAULT NULL COMMENT '关联的问题ID' AFTER session_id");
-                log.info("数据库字段初始化完成: wd_ai_message.parent_id 已添加");
-            } else {
-                log.info("数据库字段初始化: parent_id 字段已存在，跳过");
-            }
-            rs2.close();
+            ensureColumn(conn, stmt, "wd_ai_message", "parent_id",
+                    "ALTER TABLE wd_ai_message ADD COLUMN parent_id bigint DEFAULT NULL COMMENT '关联的问题ID' AFTER session_id");
 
             // 修改 wd_ai_message.feature_key 长度（多选功能拼接后可能超过32）
             var rs3 = conn.getMetaData().getColumns(null, null, "wd_ai_message", "feature_key");
@@ -54,8 +43,521 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 }
             }
             rs3.close();
+
+            // 管理员角色
+            ensureColumn(conn, stmt, "wd_user", "role",
+                    "ALTER TABLE wd_user ADD COLUMN role varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin' AFTER member_tier");
+
+            // 单词垃圾桶：软删时间，满 7 天物理清理
+            ensureColumn(conn, stmt, "wd_word", "deleted_at",
+                    "ALTER TABLE wd_word ADD COLUMN deleted_at datetime DEFAULT NULL COMMENT '移入垃圾桶时间' AFTER is_deleted");
+            stmt.execute("UPDATE wd_word SET deleted_at = update_time WHERE is_deleted = 1 AND deleted_at IS NULL");
+
+            // 场景系统提示词表 + 默认种子
+            ensureScenePromptTable(conn, stmt);
+            seedScenePromptsIfEmpty(stmt);
+            migrateScenePromptLanguagePlaceholder(stmt);
+            ensureWordFeaturePhonetics(conn, stmt);
+            migrateWordFeatureConciseGloss(conn, stmt);
+            migrateSplitAiModelAndScene(conn, stmt);
+            ensureAiProviderTable(conn, stmt);
+            ensureColumn(conn, stmt, "wd_user", "preferred_ai_region",
+                    "ALTER TABLE wd_user ADD COLUMN preferred_ai_region varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global' AFTER preferred_locale");
+
+            // AI 功能标签多语言（中文源文 → AI 同步 en/id/th/vi）
+            ensureColumn(conn, stmt, "sys_ai_feature", "name_i18n",
+                    "ALTER TABLE sys_ai_feature ADD COLUMN name_i18n json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi' AFTER description");
+            ensureColumn(conn, stmt, "sys_ai_feature", "description_i18n",
+                    "ALTER TABLE sys_ai_feature ADD COLUMN description_i18n json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi' AFTER name_i18n");
         } catch (Exception e) {
             log.warn("数据库字段初始化警告: {}", e.getMessage());
+        }
+
+        // 独立执行：避免被上面其它迁移异常短路，导致 region 列一直缺失
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            migrateAiSceneRegion(conn, stmt);
+            seedAiScenes(stmt);
+        } catch (Exception e) {
+            log.warn("sys_ai_scene.region 初始化警告: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * sys_ai_scene 增加 region（cn/global），唯一键改为 (scene_key, region)，并为已有场景补 global 行。
+     * 用「直接 ALTER + 忽略重复」避免 DatabaseMetaData 误判导致跳过。
+     */
+    private void migrateAiSceneRegion(Connection conn, Statement stmt) {
+        try {
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN region varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global' AFTER scene_name",
+                    "ALTER TABLE sys_ai_scene ADD COLUMN region varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global'");
+
+            // 必须先放开 uk_scene_key，才能为同一 scene 插入 global 行
+            try {
+                stmt.execute("ALTER TABLE sys_ai_scene DROP INDEX uk_scene_key");
+                log.info("已删除索引 sys_ai_scene.uk_scene_key");
+            } catch (Exception e) {
+                // 索引本就不存在则忽略
+                log.debug("DROP uk_scene_key: {}", e.getMessage());
+            }
+
+            stmt.executeUpdate("""
+                    INSERT INTO sys_ai_scene
+                    (scene_key, scene_name, region, model_key, sort_num, is_enabled, remark, create_time, update_time)
+                    SELECT s.scene_key, s.scene_name, 'global', s.model_key, s.sort_num, s.is_enabled,
+                           CONCAT(COALESCE(s.remark, ''), CASE WHEN COALESCE(s.remark,'')='' THEN '' ELSE '；' END, '海外线路副本'),
+                           NOW(), NOW()
+                    FROM sys_ai_scene s
+                    WHERE s.is_deleted = 0
+                      AND (s.region = 'cn' OR s.region IS NULL OR s.region = '')
+                      AND NOT EXISTS (
+                        SELECT 1 FROM sys_ai_scene g
+                        WHERE g.scene_key = s.scene_key AND g.region = 'global' AND g.is_deleted = 0
+                      )
+                    """);
+
+            try {
+                stmt.execute("ALTER TABLE sys_ai_scene ADD UNIQUE KEY uk_scene_region (scene_key, region)");
+                log.info("已添加索引 sys_ai_scene.uk_scene_region");
+            } catch (Exception e) {
+                log.debug("ADD uk_scene_region: {}", e.getMessage());
+            }
+            log.info("sys_ai_scene.region 迁移完成");
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_scene.region 失败: {}", e.getMessage(), e);
+        }
+    }
+
+    private void addColumnIgnoreDuplicate(Statement stmt, String... alterSqls) throws Exception {
+        Exception last = null;
+        for (String sql : alterSqls) {
+            try {
+                stmt.execute(sql);
+                log.info("数据库字段初始化完成: {}", sql);
+                return;
+            } catch (Exception e) {
+                last = e;
+                String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                if (msg.contains("duplicate column") || msg.contains("already exists")) {
+                    log.debug("列已存在，跳过: {}", sql);
+                    return;
+                }
+            }
+        }
+        if (last != null) {
+            throw last;
+        }
+    }
+
+    /** 在 region 迁移完成后写入场景种子（幂等） */
+    private void seedAiScenes(Statement stmt) {
+        try {
+            stmt.executeUpdate("""
+                    INSERT IGNORE INTO sys_ai_scene
+                    (scene_key, scene_name, region, model_key, sort_num, is_enabled, remark)
+                    VALUES
+                    ('feature', '阅读解析（选中文字 AI 功能）', 'cn', 'deepseek-v4-flash', 1, 1, '阅读器勾选单词/释义等功能'),
+                    ('feature', '阅读解析（选中文字 AI 功能）', 'global', 'deepseek-v4-flash', 1, 1, '海外线路，可改为 Gemini 等'),
+                    ('word_parse', '单词批量导入', 'cn', 'qwen-turbo', 2, 1, '单词本批量导入 / AI 补全'),
+                    ('word_parse', '单词批量导入', 'global', 'qwen-turbo', 2, 1, '海外线路，可改为 Gemini 等'),
+                    ('reading_chat', '阅读自由问答', 'cn', 'deepseek-v4-flash', 3, 1, '阅读器右侧自由提问'),
+                    ('reading_chat', '阅读自由问答', 'global', 'deepseek-v4-flash', 3, 1, '海外线路，可改为 Gemini 等'),
+                    ('default', '未匹配场景回退', 'cn', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退'),
+                    ('default', '未匹配场景回退', 'global', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退')
+                    """);
+        } catch (Exception e) {
+            log.warn("写入 sys_ai_scene 种子失败: {}", e.getMessage());
+        }
+    }
+
+    private boolean indexExists(Connection conn, String table, String indexName) throws Exception {
+        var rs = conn.getMetaData().getIndexInfo(null, null, table, false, false);
+        try {
+            while (rs.next()) {
+                String name = rs.getString("INDEX_NAME");
+                if (indexName.equalsIgnoreCase(name)) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            rs.close();
+        }
+    }
+
+    /**
+     * 将「场景+模型」合并表拆成：sys_ai_model（模型目录）+ sys_ai_scene（场景绑定）。
+     * 幂等：检测 sys_ai_model 是否仍含 scene_key。
+     */
+    private void migrateSplitAiModelAndScene(Connection conn, Statement stmt) {
+        try {
+            var modelTable = conn.getMetaData().getTables(null, null, "sys_ai_model", new String[]{"TABLE"});
+            if (!modelTable.next()) {
+                modelTable.close();
+                return;
+            }
+            modelTable.close();
+
+            var sceneCol = conn.getMetaData().getColumns(null, null, "sys_ai_model", "scene_key");
+            boolean hasSceneKey = sceneCol.next();
+            sceneCol.close();
+            if (!hasSceneKey) {
+                // 已是新结构：确保场景表存在并有种子，并清理重复 model_key
+                ensureSceneTableAndSeed(conn, stmt);
+                dedupeAiModels(stmt);
+                return;
+            }
+
+            log.info("开始迁移: 拆分 sys_ai_model（场景+模型）→ 模型目录 + 场景绑定");
+
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `sys_ai_scene` (
+                      `id` bigint NOT NULL AUTO_INCREMENT,
+                      `scene_key` varchar(32) NOT NULL,
+                      `scene_name` varchar(64) NOT NULL,
+                      `model_key` varchar(64) NOT NULL,
+                      `sort_num` int NOT NULL DEFAULT 0,
+                      `is_enabled` tinyint NOT NULL DEFAULT 1,
+                      `remark` varchar(512) DEFAULT '',
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      `is_deleted` tinyint NOT NULL DEFAULT 0,
+                      PRIMARY KEY (`id`),
+                      UNIQUE KEY `uk_scene_key` (`scene_key`),
+                      KEY `idx_model_key` (`model_key`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI调用场景与模型映射'
+                    """);
+
+            // 从旧表灌入场景（已有则忽略）
+            stmt.executeUpdate("""
+                    INSERT IGNORE INTO sys_ai_scene
+                    (scene_key, scene_name, model_key, sort_num, is_enabled, remark, create_time, update_time)
+                    SELECT scene_key, COALESCE(NULLIF(scene_name,''), scene_key), model_key,
+                           COALESCE(sort_num, 0), COALESCE(is_enabled, 1), COALESCE(remark, ''),
+                           COALESCE(create_time, NOW()), COALESCE(update_time, NOW())
+                    FROM sys_ai_model
+                    WHERE is_deleted = 0 AND scene_key IS NOT NULL AND scene_key <> ''
+                    """);
+
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `sys_ai_model_new` (
+                      `id` bigint NOT NULL AUTO_INCREMENT,
+                      `model_key` varchar(64) NOT NULL,
+                      `display_name` varchar(128) NOT NULL DEFAULT '',
+                      `provider` varchar(64) NOT NULL DEFAULT '',
+                      `currency` varchar(8) NOT NULL DEFAULT 'CNY',
+                      `input_price_per_million` decimal(14,6) NOT NULL DEFAULT 0,
+                      `output_price_per_million` decimal(14,6) NOT NULL DEFAULT 0,
+                      `sort_num` int NOT NULL DEFAULT 0,
+                      `is_enabled` tinyint NOT NULL DEFAULT 1,
+                      `remark` varchar(512) DEFAULT '',
+                      `create_by` bigint DEFAULT NULL,
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      `update_by` bigint DEFAULT NULL,
+                      `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      `is_deleted` tinyint NOT NULL DEFAULT 0,
+                      PRIMARY KEY (`id`),
+                      UNIQUE KEY `uk_model_key` (`model_key`),
+                      KEY `idx_enabled` (`is_enabled`, `is_deleted`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI模型目录与Token单价'
+                    """);
+
+            // 每个 model_key 保留一条（最小 id）
+            stmt.executeUpdate("""
+                    INSERT IGNORE INTO sys_ai_model_new
+                    (model_key, display_name, provider, currency,
+                     input_price_per_million, output_price_per_million,
+                     sort_num, is_enabled, remark, create_time, update_time)
+                    SELECT m.model_key,
+                           COALESCE(NULLIF(m.display_name,''), m.model_key),
+                           COALESCE(m.provider, ''),
+                           COALESCE(NULLIF(m.currency,''), 'CNY'),
+                           COALESCE(m.input_price_per_million, 0),
+                           COALESCE(m.output_price_per_million, 0),
+                           COALESCE(m.sort_num, 0),
+                           COALESCE(m.is_enabled, 1),
+                           COALESCE(m.remark, ''),
+                           COALESCE(m.create_time, NOW()),
+                           COALESCE(m.update_time, NOW())
+                    FROM sys_ai_model m
+                    INNER JOIN (
+                      SELECT model_key, MIN(id) AS min_id
+                      FROM sys_ai_model
+                      WHERE is_deleted = 0 AND model_key IS NOT NULL AND model_key <> ''
+                      GROUP BY model_key
+                    ) t ON t.min_id = m.id
+                    """);
+
+            stmt.execute("RENAME TABLE sys_ai_model TO sys_ai_model_legacy_scene_merged, sys_ai_model_new TO sys_ai_model");
+            log.info("数据库迁移完成: sys_ai_model 已拆分为模型目录；原表备份为 sys_ai_model_legacy_scene_merged");
+            dedupeAiModels(stmt);
+        } catch (Exception e) {
+            log.warn("迁移拆分 sys_ai_model/sys_ai_scene 失败: {}", e.getMessage());
+        }
+    }
+
+    /** 软删同 model_key 的重复行，仅保留最小 id */
+    private void dedupeAiModels(Statement stmt) {
+        try {
+            int n = stmt.executeUpdate("""
+                    UPDATE sys_ai_model m
+                    INNER JOIN (
+                      SELECT model_key, MIN(id) AS keep_id
+                      FROM sys_ai_model
+                      WHERE is_deleted = 0 AND model_key IS NOT NULL AND model_key <> ''
+                      GROUP BY model_key
+                      HAVING COUNT(*) > 1
+                    ) d ON m.model_key = d.model_key AND m.id <> d.keep_id
+                    SET m.is_deleted = 1, m.update_time = NOW()
+                    WHERE m.is_deleted = 0
+                    """);
+            if (n > 0) {
+                log.info("已清理重复模型目录行: soft-deleted {} 条", n);
+            }
+        } catch (Exception e) {
+            log.warn("清理重复模型失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureSceneTableAndSeed(Connection conn, Statement stmt) throws Exception {
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `sys_ai_scene` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `scene_key` varchar(32) NOT NULL,
+                  `scene_name` varchar(64) NOT NULL,
+                  `region` varchar(16) NOT NULL DEFAULT 'cn',
+                  `model_key` varchar(64) NOT NULL,
+                  `sort_num` int NOT NULL DEFAULT 0,
+                  `is_enabled` tinyint NOT NULL DEFAULT 1,
+                  `remark` varchar(512) DEFAULT '',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_scene_region` (`scene_key`, `region`),
+                  KEY `idx_model_key` (`model_key`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI调用场景与模型映射（按地区）'
+                """);
+        // 场景种子在 migrateAiSceneRegion + seedAiScenes 中写入（需先具备 region 列与新唯一键）
+        stmt.executeUpdate("""
+                INSERT IGNORE INTO sys_ai_model
+                (model_key, display_name, provider, currency,
+                 input_price_per_million, output_price_per_million, sort_num, is_enabled, remark)
+                VALUES
+                ('deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY', 1.0, 2.0, 1, 1, ''),
+                ('qwen-turbo', 'Qwen Turbo', 'aliyun', 'CNY', 0.3, 0.6, 2, 1, '')
+                """);
+    }
+
+    private void ensureColumn(Connection conn, Statement stmt, String table, String column, String alterSql) throws Exception {
+        var rs = conn.getMetaData().getColumns(null, null, table, column);
+        if (!rs.next()) {
+            stmt.execute(alterSql);
+            log.info("数据库字段初始化完成: {}.{} 已添加", table, column);
+        } else {
+            log.debug("数据库字段初始化: {}.{} 已存在，跳过", table, column);
+        }
+        rs.close();
+    }
+
+    private void ensureAiProviderTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "sys_ai_provider", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (!exists) {
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `sys_ai_provider` (
+                      `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                      `provider_key` varchar(64) NOT NULL COMMENT '供应商标识，对齐 sys_ai_model.provider',
+                      `display_name` varchar(128) NOT NULL DEFAULT '' COMMENT '展示名',
+                      `base_url` varchar(512) NOT NULL DEFAULT '' COMMENT 'OpenAI 兼容根地址',
+                      `api_key` varchar(512) NOT NULL DEFAULT '' COMMENT 'API Key',
+                      `sort_num` int NOT NULL DEFAULT 0,
+                      `is_enabled` tinyint NOT NULL DEFAULT 1,
+                      `remark` varchar(512) DEFAULT '',
+                      `create_by` bigint DEFAULT NULL,
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      `update_by` bigint DEFAULT NULL,
+                      `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      `is_deleted` tinyint NOT NULL DEFAULT 0,
+                      PRIMARY KEY (`id`),
+                      UNIQUE KEY `uk_provider_key` (`provider_key`),
+                      KEY `idx_enabled` (`is_enabled`, `is_deleted`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI供应商接入点'
+                    """);
+            log.info("数据库表初始化完成: sys_ai_provider 已创建");
+        }
+        stmt.executeUpdate("""
+                INSERT IGNORE INTO sys_ai_provider
+                (provider_key, display_name, base_url, api_key, sort_num, is_enabled, remark)
+                VALUES
+                ('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
+                ('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
+                ('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写')
+                """);
+    }
+
+    private void ensureScenePromptTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
+        if (tables.next()) {
+            tables.close();
+            return;
+        }
+        tables.close();
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `sys_ai_scene_prompt` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `scene_key` varchar(32) NOT NULL COMMENT '场景: word_parse/reading_chat/feature',
+                  `locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '语言',
+                  `scene_name` varchar(64) NOT NULL DEFAULT '' COMMENT '场景展示名',
+                  `system_prompt` mediumtext NOT NULL COMMENT '系统提示词',
+                  `remark` varchar(255) DEFAULT '' COMMENT '备注',
+                  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+                  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+                  `create_by` bigint DEFAULT NULL,
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `update_by` bigint DEFAULT NULL,
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_scene_locale` (`scene_key`, `locale`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景系统提示词'
+                """);
+        log.info("数据库表初始化完成: sys_ai_scene_prompt 已创建");
+    }
+
+    private void seedScenePromptsIfEmpty(Statement stmt) throws Exception {
+        try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM sys_ai_scene_prompt WHERE is_deleted = 0")) {
+            if (rs.next() && rs.getLong(1) > 0) {
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("检查 sys_ai_scene_prompt 种子失败: {}", e.getMessage());
+            return;
+        }
+
+        stmt.execute("""
+                INSERT INTO `sys_ai_scene_prompt`
+                (`scene_key`, `locale`, `scene_name`, `system_prompt`, `remark`, `status`, `sort_num`) VALUES
+                ('word_parse', 'zh-CN', '单词解析',
+                '{global_constraint}
+                你是一个专业的英语词典助手。用户会给你一个英文单词/短语列表（JSON数组），请为每个词条补全信息，并以严格的 JSON 数组格式返回。必须返回完整的 JSON 数组，不要有任何额外的解释文字。',
+                '占位符 {global_constraint}=按语言注入回复规则；未配置其它语言时回退代码内置模板', 1, 1),
+                ('reading_chat', 'zh-CN', '阅读对话',
+                '{global_constraint}
+                你是一个专业的英语阅读助手。用户正在阅读英文原著，请用{language}回答用户的问题。
+                用户当前选中的上下文是："{context}"',
+                '占位符 {global_constraint}/{language}/{locale}/{context}', 1, 2),
+                ('feature', 'zh-CN', '阅读功能分析',
+                '{global_constraint}
+                你是一个专业的英语阅读助手。
+                {feature_prompts}
+                用户当前选中的上下文是："{context}"
+                请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。
+                各小节标题用 Markdown 加粗（如 **固定搭配**），列表词条也加粗。',
+                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}', 1, 3)
+                """);
+        log.info("数据库种子初始化完成: sys_ai_scene_prompt 默认场景提示词已写入");
+    }
+
+    /**
+     * 把旧种子里硬编码的「始终用中文」换成 {global_constraint}，运行时按请求语言注入。
+     */
+    private void migrateScenePromptLanguagePlaceholder(Statement stmt) {
+        try {
+            int n = stmt.executeUpdate("""
+                    UPDATE `sys_ai_scene_prompt`
+                    SET `system_prompt` = REPLACE(
+                      `system_prompt`,
+                      '【重要全局规则】请始终使用中文回复用户。无论用户输入何种语言，所有释义、例句翻译、解析说明都必须用中文。英文原文和音标除外。',
+                      '{global_constraint}'
+                    ),
+                    `update_time` = NOW()
+                    WHERE `is_deleted` = 0
+                      AND `system_prompt` LIKE '%【重要全局规则】请始终使用中文回复用户%'
+                    """);
+            if (n > 0) {
+                log.info("数据库迁移完成: sys_ai_scene_prompt 已将硬编码中文规则替换为 {{global_constraint}}，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_scene_prompt 语言占位符失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 为「单词」功能提示词补上英美音标要求（幂等：已含关键字则跳过）
+     */
+    private void ensureWordFeaturePhonetics(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            String addon = """
+
+                    【音标要求】讲解每个单词时必须同时给出美式与英式 IPA 音标，禁止省略。推荐格式：- **route**: 美 /ruːt/，英 /ruːt/；n. 路线。
+                    """;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = CONCAT(IFNULL(prompt,''), ?), update_time = NOW() " +
+                            "WHERE feature_key = 'word' AND is_deleted = 0 " +
+                            "AND (prompt IS NULL OR (prompt NOT LIKE '%美式音标%' AND prompt NOT LIKE '%美 /%' AND prompt NOT LIKE '%US /%'))")) {
+                ps.setString(1, addon);
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: sys_ai_feature.word 已追加英美音标要求，共 {} 行", n);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_feature 音标要求失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 将「单词」功能提示词中的冗长释义示例改为 n./v./adj. 简洁格式（幂等）
+     */
+    private void migrateWordFeatureConciseGloss(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            // 替换历史冗长示例句
+            int replaced = stmt.executeUpdate("""
+                    UPDATE sys_ai_feature
+                    SET prompt = REPLACE(
+                          REPLACE(
+                            REPLACE(prompt,
+                              '名词，意为“路线”。',
+                              'n. 路线。'),
+                            '名词，意为“路线，道路”。',
+                            'n. 路线，道路。'),
+                          '；名词，意为“路线”。',
+                          '；n. 路线。'),
+                        update_time = NOW()
+                    WHERE feature_key = 'word' AND is_deleted = 0
+                      AND prompt LIKE '%名词，意为%'
+                    """);
+            String conciseRule = """
+
+                    【释义格式】每个单词用「英文词性缩写 + 中文释义」，如 n. 律师；v. 建议；adj. 地下的。禁止写「名词，意为“…」」「动词，意为“…」。
+                    """;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = CONCAT(IFNULL(prompt,''), ?), update_time = NOW() " +
+                            "WHERE feature_key = 'word' AND is_deleted = 0 " +
+                            "AND (prompt IS NULL OR prompt NOT LIKE '%释义格式%')")) {
+                ps.setString(1, conciseRule);
+                int appended = ps.executeUpdate();
+                if (replaced > 0 || appended > 0) {
+                    log.info("数据库迁移完成: sys_ai_feature.word 释义简洁化 replace={}, append={}", replaced, appended);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_feature 释义格式失败: {}", e.getMessage());
         }
     }
 }

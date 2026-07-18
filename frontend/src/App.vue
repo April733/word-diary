@@ -6,12 +6,14 @@
     <div class="app-view">
       <router-view :key="$route.fullPath" />
     </div>
+    <ServiceTransitionOverlay />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import ServiceTransitionOverlay from './components/ServiceTransitionOverlay.vue'
 
 const route = useRoute()
 

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.entity.WdAiMessage;
 import spring.nexusfuture.word_diary.entity.WdAiSession;
 import spring.nexusfuture.word_diary.mapper.WdAiMessageMapper;
@@ -96,11 +97,34 @@ public class AiSessionServiceImpl implements AiSessionService {
     @Override
     public void updateSessionTitle(Long sessionId, String firstUserMessage) {
         if (firstUserMessage == null || firstUserMessage.isEmpty()) return;
-        // 截取前30个字符作为标题
+        WdAiSession session = sessionMapper.selectById(sessionId);
+        if (session == null) return;
+        // 用户已自定义过标题则不再用首条消息覆盖
+        String current = session.getTitle();
+        if (current != null && !current.isBlank() && !"新对话".equals(current.trim())) {
+            return;
+        }
         String title = firstUserMessage.length() > 30
                 ? firstUserMessage.substring(0, 30) + "..."
                 : firstUserMessage;
         sessionMapper.updateTitle(sessionId, title);
+    }
+
+    @Override
+    @Transactional
+    public void renameSession(Long sessionId, Long userId, String title) {
+        if (title == null || title.isBlank()) {
+            throw new BizException("会话名称不能为空");
+        }
+        String trimmed = title.trim();
+        if (trimmed.length() > 50) {
+            throw new BizException("会话名称最多 50 个字符");
+        }
+        WdAiSession session = sessionMapper.selectById(sessionId);
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new BizException("会话不存在");
+        }
+        sessionMapper.updateTitle(sessionId, trimmed);
     }
 
     @Override

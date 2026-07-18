@@ -6,8 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 多供应商接入点（仅 api-key / base-url，不含模型名）。
- * 模型由 sys_ai_scene + sys_ai_model 决定。
+ * yml 引导用的供应商接入点（api-key / base-url）。
+ * 运行时以 sys_ai_provider 为准，见 {@link AiProviderBootstrap}。
  */
 @ConfigurationProperties(prefix = "app.ai")
 public class AiProviderProperties {

@@ -16,6 +16,28 @@
     "copied": "Disalin",
     "copyFailed": "Gagal menyalin"
   },
+  "aiRegion": {
+    "auto": "Jalur AI · Otomatis",
+    "cn": "Jalur AI · Tiongkok",
+    "global": "Jalur AI · Luar negeri"
+  },
+  "service": {
+    "title": "Layanan sedang diperbarui",
+    "waitHint": "Sistem sedang dimulai atau dipublikasikan. Mohon tunggu sekitar 5 menit lalu coba lagi.",
+    "feedbackHint": "Jika masih tidak tersedia setelah menunggu, kirim umpan balik ke admin. Umpan balik tertunda akan dikirim otomatis saat layanan pulih.",
+    "retry": "Coba lagi",
+    "checking": "Memeriksa…",
+    "stillDown": "Belum pulih. Tunggu sebentar atau kirim umpan balik.",
+    "openFeedback": "Kirim umpan balik",
+    "emailOptional": "Email kontak (opsional)",
+    "emailPlaceholder": "Agar kami bisa membalas",
+    "description": "Deskripsi",
+    "descriptionPlaceholder": "Ceritakan situasi Anda…",
+    "submitFeedback": "Kirim umpan balik",
+    "feedbackSubject": "Umpan balik downtime layanan",
+    "feedbackSent": "Umpan balik terkirim — terima kasih",
+    "feedbackQueued": "Tidak dapat terhubung. Umpan balik disimpan dan akan dikirim saat layanan pulih"
+  },
   "nav": {
     "dashboard": "Ikhtisar Belajar",
     "study": "Mulai Belajar",
@@ -130,6 +152,10 @@
     "aiAssistant": "Asisten AI",
     "selectedText": "Teks Dipilih",
     "selectedTextHint": "Teks yang dipilih akan muncul di sini secara real-time",
+    "targetWordsHint": "Klik dua kali kata untuk memilih",
+    "targetWordsRequired": "Klik dua kali kata di teks yang dipilih terlebih dahulu",
+    "targetWordsAll": "Semua",
+    "targetWordsClear": "Hapus",
     "aiHint1": "Ajukan pertanyaan, AI akan menjawab dengan konteks teks yang dipilih",
     "aiHint2": "Pilih teks, lalu tanyakan ke AI untuk menganalisisnya",
     "aiInputPlaceholder": "Ketik pertanyaan Anda...",

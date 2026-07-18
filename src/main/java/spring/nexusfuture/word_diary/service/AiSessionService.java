@@ -44,9 +44,14 @@ public interface AiSessionService {
     WdAiMessage saveMessage(Long sessionId, Long parentId, String role, String content, String featureKey);
 
     /**
-     * 更新会话标题（取第一条用户消息截断）
+     * 更新会话标题（取第一条用户消息截断；仅当标题仍为默认「新对话」时）
      */
     void updateSessionTitle(Long sessionId, String firstUserMessage);
+
+    /**
+     * 用户自定义重命名会话
+     */
+    void renameSession(Long sessionId, Long userId, String title);
 
     /**
      * 删除会话（软删除）

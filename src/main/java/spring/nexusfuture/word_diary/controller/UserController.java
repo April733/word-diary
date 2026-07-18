@@ -189,6 +189,13 @@ public class UserController {
         return R.ok();
     }
 
+    /** AI 线路：auto / cn / global（与界面语言无关） */
+    @PutMapping("/ai-region")
+    public R<Void> updateAiRegion(@RequestAttribute Long userId, @RequestBody Map<String, String> body) {
+        userService.updateAiRegion(userId, body.get("region"));
+        return R.ok();
+    }
+
     @GetMapping("/check-phone")
     public R<Boolean> checkPhone(@RequestParam String phone) {
         boolean exists = userService.isPhoneExists(phone);

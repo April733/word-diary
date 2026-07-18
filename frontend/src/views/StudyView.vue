@@ -17,17 +17,39 @@
 
     <div class="page-body">
       <div class="today-stats">
-        <div class="stat-item">
+        <div
+          class="stat-item stat-item--clickable"
+          role="button"
+          tabindex="0"
+          :title="$t('study.viewQueueList')"
+          @click="openQueueList('review')"
+          @keydown.enter="openQueueList('review')"
+        >
           <span class="stat-label">{{ $t('study.reviewPending') }}</span>
           <span class="stat-value">{{ today.reviewPending }}</span>
         </div>
-        <div class="stat-item" :class="{ locked: !today.reviewPhaseDone }">
+        <div
+          class="stat-item stat-item--clickable"
+          :class="{ locked: !today.reviewPhaseDone }"
+          role="button"
+          tabindex="0"
+          :title="$t('study.viewQueueList')"
+          @click="openQueueList('new')"
+          @keydown.enter="openQueueList('new')"
+        >
           <span class="stat-label">{{ $t('study.newPending') }}</span>
           <span class="stat-value">{{ today.newPending }}</span>
         </div>
-        <div class="stat-item">
-          <span class="stat-label">{{ $t('study.phase') }}</span>
-          <span class="stat-value phase">{{ phaseLabel }}</span>
+        <div
+          class="stat-item stat-item--clickable"
+          role="button"
+          tabindex="0"
+          :title="$t('study.viewQueueList')"
+          @click="openCompletedList"
+          @keydown.enter="openCompletedList"
+        >
+          <span class="stat-label">{{ $t('study.completed') }}</span>
+          <span class="stat-value">{{ completedWords.length }}</span>
         </div>
       </div>
 
@@ -36,7 +58,7 @@
       </p>
 
       <div v-if="currentWord" class="study-area">
-        <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = !showAnswer" />
+        <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = true" />
 
         <div v-if="showAnswer" class="study-actions">
           <t-button theme="danger" size="large" @click="handleAnswer(0)">{{ $t('study.forget') }}</t-button>
@@ -51,16 +73,31 @@
       </div>
 
       <t-empty v-else-if="!loading" :description="$t('study.allDone')" />
-
-      <t-collapse v-if="completedWords.length > 0" class="completed-section" default-expand-all>
-        <t-collapse-panel :header="$t('study.todayCompleted', { count: completedWords.length })">
-          <div v-for="word in completedWords" :key="word.planId" class="completed-item">
-            <span class="completed-word">{{ word.wordProto }}</span>
-            <span class="completed-mean">{{ word.partSpeechMean }}</span>
-          </div>
-        </t-collapse-panel>
-      </t-collapse>
     </div>
+
+    <t-drawer
+      v-model:visible="queueListVisible"
+      size="400px"
+      :footer="false"
+      :close-btn="true"
+    >
+      <template #header>
+        <div class="queue-drawer-title">{{ queueListTitle }}</div>
+      </template>
+      <div v-if="queueListLoading" class="queue-loading">
+        <t-loading size="small" />
+      </div>
+      <t-empty v-else-if="!queueListItems.length" :description="$t('study.queueListEmpty')" />
+      <div v-else class="queue-list">
+        <div v-for="(item, idx) in queueListItems" :key="item.planId" class="queue-item">
+          <span class="queue-idx">{{ idx + 1 }}</span>
+          <div class="queue-main">
+            <div class="queue-word">{{ item.wordProto }}</div>
+            <div class="queue-mean">{{ item.partSpeechMean || '—' }}</div>
+          </div>
+        </div>
+      </div>
+    </t-drawer>
   </div>
 </template>
 
@@ -69,7 +106,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { openStudySession, submitStudyAnswer, getTodayCompleted } from '../api'
+import { openStudySession, submitStudyAnswer, getTodayCompleted, getStudySessionQueue } from '../api'
 import WordCard from '../components/WordCard.vue'
 
 const router = useRouter()
@@ -87,13 +124,21 @@ const today = ref({
   currentPhase: 'review'
 })
 
+const queueListVisible = ref(false)
+const queueListLoading = ref(false)
+const queueListPhase = ref<'review' | 'new' | 'completed'>('review')
+const queueListItems = ref<any[]>([])
+
+const queueListTitle = computed(() => {
+  const n = queueListItems.value.length
+  if (queueListPhase.value === 'new') return t('study.queueListNewTitle', { n })
+  if (queueListPhase.value === 'completed') return t('study.queueListCompletedTitle', { n })
+  return t('study.queueListReviewTitle', { n })
+})
+
 const currentWord = computed(() => session.value?.current || null)
 const queueItemId = computed(() => session.value?.queueItemId || null)
 const phase = computed(() => session.value?.phase || today.value.currentPhase)
-
-const phaseLabel = computed(() =>
-  phase.value === 'new' ? t('study.phaseNew') : t('study.phaseReview')
-)
 
 const progressText = computed(() => {
   if (phase.value === 'new') {
@@ -177,6 +222,33 @@ async function handleAnswer(feedback: number) {
     MessagePlugin.error(e.response?.data?.msg || t('study.actionFailed'))
   }
 }
+
+async function openQueueList(phaseKey: 'review' | 'new') {
+  queueListPhase.value = phaseKey
+  queueListVisible.value = true
+  queueListLoading.value = true
+  queueListItems.value = []
+  try {
+    const res = await getStudySessionQueue({ phase: phaseKey })
+    queueListItems.value = res.data?.data || []
+  } catch {
+    MessagePlugin.error(t('study.loadFailed'))
+  } finally {
+    queueListLoading.value = false
+  }
+}
+
+async function openCompletedList() {
+  queueListPhase.value = 'completed'
+  queueListVisible.value = true
+  queueListLoading.value = true
+  try {
+    await loadCompleted()
+    queueListItems.value = [...completedWords.value]
+  } finally {
+    queueListLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -218,7 +290,7 @@ async function handleAnswer(feedback: number) {
 .today-stats {
   display: flex;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .stat-item {
@@ -227,6 +299,19 @@ async function handleAnswer(feedback: number) {
   border-radius: 8px;
   padding: 12px 16px;
   text-align: center;
+}
+
+.stat-item--clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.stat-item--clickable:hover {
+  box-shadow: 0 2px 8px rgba(49, 92, 52, 0.12);
+}
+
+.stat-item--clickable:active {
+  transform: scale(0.98);
 }
 
 .stat-item.locked {
@@ -258,7 +343,7 @@ async function handleAnswer(feedback: number) {
 }
 
 .study-area {
-  padding: 32px 0;
+  padding: 12px 0 24px;
 }
 
 .study-actions {
@@ -295,29 +380,62 @@ async function handleAnswer(feedback: number) {
   margin-top: 8px;
 }
 
-.completed-section {
-  margin-top: 24px;
+.queue-drawer-title {
+  font-size: 16px;
+  font-weight: 600;
+  padding-right: 28px;
 }
 
-.completed-item {
+.queue-loading {
   display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
   border-bottom: 1px solid #f3f4f6;
 }
 
-.completed-word {
+.queue-idx {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: #f0f4f0;
+  color: #315C34;
+  font-size: 12px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
 }
 
-.completed-mean {
-  color: #6b7280;
-  font-size: 14px;
-  margin-left: 12px;
+.queue-main {
+  min-width: 0;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
+}
+
+.queue-word {
+  font-weight: 600;
+  font-size: 15px;
+  color: #111827;
+}
+
+.queue-mean {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.4;
 }
 </style>

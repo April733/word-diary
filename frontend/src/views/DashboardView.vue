@@ -9,6 +9,7 @@
         </div>
       </div>
       <div class="top-right">
+        <AiRegionSwitcher />
         <LocaleSwitcher />
         <t-button variant="text" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
       </div>
@@ -62,6 +63,7 @@ import { useI18n } from 'vue-i18n'
 import { useUserStore } from '../stores/user'
 import { getStats, getBooks } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
+import AiRegionSwitcher from '../components/AiRegionSwitcher.vue'
 
 const router = useRouter()
 const { t } = useI18n()

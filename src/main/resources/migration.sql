@@ -46,6 +46,10 @@ UPDATE sys_ai_feature SET description = '分析选中句子的发音技巧，包
 -- 1. 添加 prompt 字段
 ALTER TABLE sys_ai_feature ADD COLUMN prompt TEXT COMMENT 'AI提示词，传递给大模型的详细指令' AFTER description;
 
+-- 多语言标签（中文源文在 feature_name/description；其它语言 AI 同步）
+-- ALTER TABLE sys_ai_feature ADD COLUMN name_i18n json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi' AFTER description;
+-- ALTER TABLE sys_ai_feature ADD COLUMN description_i18n json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi' AFTER name_i18n;
+
 -- 2. 将现有 description 迁移到 prompt（因为旧数据都是AI提示词）
 UPDATE sys_ai_feature SET prompt = description;
 
@@ -470,3 +474,100 @@ CREATE TABLE IF NOT EXISTS `wd_pdf_markup` (
   KEY `idx_book_page` (`book_id`, `user_id`, `page_num`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='PDF批注表';
 
+
+-- ========== 管理员角色 ==========
+ALTER TABLE wd_user ADD COLUMN role varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin' AFTER member_tier;
+-- 将指定账号升为管理员（按需修改用户名后执行）：
+-- UPDATE wd_user SET role = 'admin' WHERE username = 'your_admin' AND is_deleted = 0;
+
+-- ========== AI 场景系统提示词 ==========
+CREATE TABLE IF NOT EXISTS `sys_ai_scene_prompt` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `scene_key` varchar(32) NOT NULL COMMENT '场景: word_parse/reading_chat/feature',
+  `locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '语言',
+  `scene_name` varchar(64) NOT NULL DEFAULT '' COMMENT '场景展示名',
+  `system_prompt` mediumtext NOT NULL COMMENT '系统提示词',
+  `remark` varchar(255) DEFAULT '' COMMENT '备注',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scene_locale` (`scene_key`, `locale`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景系统提示词';
+
+INSERT IGNORE INTO `sys_ai_scene_prompt` (`scene_key`, `locale`, `scene_name`, `system_prompt`, `remark`, `status`, `sort_num`) VALUES
+('word_parse', 'zh-CN', '单词解析',
+'{global_constraint}
+你是一个专业的英语词典助手。用户会给你一个英文单词/短语列表（JSON数组），请为每个词条补全信息，并以严格的 JSON 数组格式返回。必须返回完整的 JSON 数组，不要有任何额外的解释文字。',
+'占位符 {global_constraint}=按语言注入回复规则；未配置其它语言时回退代码内置模板', 1, 1),
+('reading_chat', 'zh-CN', '阅读对话',
+'{global_constraint}
+你是一个专业的英语阅读助手。用户正在阅读英文原著，请用{language}回答用户的问题。
+用户当前选中的上下文是："{context}"',
+'占位符 {global_constraint}/{language}/{locale}/{context}', 1, 2),
+('feature', 'zh-CN', '阅读功能分析',
+'{global_constraint}
+你是一个专业的英语阅读助手。
+{feature_prompts}
+用户当前选中的上下文是："{context}"
+请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。',
+'占位符 {global_constraint}/{language}/{feature_prompts}/{context}', 1, 3);
+
+-- 已有环境：把旧版硬编码「始终用中文」换成可按请求语言注入的占位符
+UPDATE `sys_ai_scene_prompt`
+SET `system_prompt` = REPLACE(
+  `system_prompt`,
+  '【重要全局规则】请始终使用中文回复用户。无论用户输入何种语言，所有释义、例句翻译、解析说明都必须用中文。英文原文和音标除外。',
+  '{global_constraint}'
+),
+`update_time` = NOW()
+WHERE `is_deleted` = 0
+  AND `system_prompt` LIKE '%【重要全局规则】请始终使用中文回复用户%';
+
+-- =============================================
+-- 2026-07-17: 模型目录与场景绑定拆分
+-- 运行时由 DatabaseInitConfig.migrateSplitAiModelAndScene 自动迁移；
+-- 新库直接使用 schema.sql 中的 sys_ai_model（无 scene_key）+ sys_ai_scene。
+-- =============================================
+
+-- =============================================
+-- 2026-07-18: AI 供应商接入点（后台可配 base-url / api-key）
+-- 运行时由 DatabaseInitConfig.ensureAiProviderTable 自动建表；亦可手动执行。
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_ai_provider` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `provider_key` varchar(64) NOT NULL COMMENT '供应商标识，对齐 sys_ai_model.provider',
+  `display_name` varchar(128) NOT NULL DEFAULT '' COMMENT '展示名',
+  `base_url` varchar(512) NOT NULL DEFAULT '' COMMENT 'OpenAI 兼容根地址',
+  `api_key` varchar(512) NOT NULL DEFAULT '' COMMENT 'API Key',
+  `sort_num` int NOT NULL DEFAULT 0,
+  `is_enabled` tinyint NOT NULL DEFAULT 1,
+  `remark` varchar(512) DEFAULT '',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_provider_key` (`provider_key`),
+  KEY `idx_enabled` (`is_enabled`, `is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI供应商接入点';
+
+INSERT IGNORE INTO `sys_ai_provider`
+(`provider_key`, `display_name`, `base_url`, `api_key`, `sort_num`, `is_enabled`, `remark`)
+VALUES
+('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
+('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
+('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写');
+
+-- =============================================
+-- 2026-07-18: AI 线路地区（与语言分离）
+-- 运行时由 DatabaseInitConfig.migrateAiSceneRegion 自动迁移。
+-- =============================================
+ALTER TABLE wd_user ADD COLUMN preferred_ai_region varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global' AFTER preferred_locale;
+ALTER TABLE sys_ai_scene ADD COLUMN region varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global' AFTER scene_name;
+-- 随后需：为每条 cn 场景补 global 行；DROP uk_scene_key；ADD uk_scene_region (scene_key, region)

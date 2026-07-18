@@ -23,5 +23,8 @@ class OpenAiBaseUrlEnvironmentPostProcessorTest {
         assertEquals("https://dashscope.aliyuncs.com/compatible-mode",
                 OpenAiBaseUrlEnvironmentPostProcessor.normalizeBaseUrl(
                         "https://dashscope.aliyuncs.com/compatible-mode"));
+        assertEquals("https://api-inference.modelscope.cn",
+                OpenAiBaseUrlEnvironmentPostProcessor.normalizeBaseUrl(
+                        "https://api-inference.modelscope.cn/v1"));
     }
 }

@@ -1,14 +1,169 @@
 <!doctype html>
-<html lang="">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/brand/logo-circle-64.png" />
     <link rel="apple-touch-icon" href="/brand/logo-256.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Aikoread</title>
+    <style>
+      /* 启动/部署空档过渡壳：Vue 挂载前可见；资源加载失败时仍可反馈 */
+      html, body { margin: 0; min-height: 100%; }
+      #app:empty, #boot-shell {
+        min-height: 100vh;
+      }
+      #boot-shell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        box-sizing: border-box;
+        font-family: "Noto Sans SC", "PingFang SC", "Segoe UI", sans-serif;
+        color: #315C34;
+        background:
+          radial-gradient(ellipse 70% 50% at 50% -8%, rgba(168, 181, 159, 0.34), transparent 60%),
+          #F6F0E6;
+      }
+      .boot-card {
+        width: min(420px, 100%);
+        background: #fff;
+        border-radius: 16px;
+        padding: 28px 24px 22px;
+        box-shadow: 0 8px 28px -12px rgba(49, 92, 52, 0.16);
+      }
+      .boot-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+      .boot-brand img { width: 48px; height: 48px; border-radius: 50%; }
+      .boot-brand h1 { margin: 0; font-size: 18px; font-weight: 650; }
+      .boot-brand p { margin: 2px 0 0; font-size: 13px; opacity: 0.7; }
+      .boot-lead { margin: 0 0 8px; font-size: 15px; line-height: 1.55; }
+      .boot-sub { margin: 0 0 16px; font-size: 13px; line-height: 1.5; opacity: 0.8; }
+      .boot-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+      .boot-btn {
+        border: 0; border-radius: 10px; padding: 10px 16px; font-size: 14px; cursor: pointer; font-weight: 500;
+      }
+      .boot-btn-primary { background: #315C34; color: #fff; }
+      .boot-btn-ghost { background: rgba(168, 181, 159, 0.28); color: #315C34; }
+      .boot-form { display: none; margin-top: 16px; flex-direction: column; gap: 10px; }
+      .boot-form.open { display: flex; }
+      .boot-form label { font-size: 13px; font-weight: 500; display: flex; flex-direction: column; gap: 6px; }
+      .boot-form input, .boot-form textarea {
+        border: 1px solid rgba(168, 181, 159, 0.7); border-radius: 10px; padding: 10px 12px; font: inherit; color: #315C34;
+      }
+      .boot-msg { margin: 0; font-size: 13px; }
+      .boot-msg.ok { color: #315C34; }
+      .boot-msg.err { color: #8a4b2a; }
+      .boot-hidden { display: none !important; }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="boot-shell" role="status">
+        <div class="boot-card">
+          <div class="boot-brand">
+            <img src="/brand/logo-circle-64.png" width="48" height="48" alt="" />
+            <div>
+              <h1>服务升级中</h1>
+              <p>Aikoread 爱可悦读</p>
+            </div>
+          </div>
+          <p class="boot-lead">系统正在启动或发布更新，请耐心等待约 5 分钟后刷新页面。</p>
+          <p class="boot-sub">若等待后仍无法使用，可向管理员发送反馈（网络恢复后会自动补发暂存的反馈）。</p>
+          <div class="boot-actions">
+            <button type="button" class="boot-btn boot-btn-ghost" id="boot-retry">刷新重试</button>
+            <button type="button" class="boot-btn boot-btn-primary" id="boot-feedback-toggle">发送反馈</button>
+          </div>
+          <form class="boot-form" id="boot-form">
+            <label>
+              联系邮箱（选填）
+              <input id="boot-email" type="email" placeholder="便于管理员回复" autocomplete="email" />
+            </label>
+            <label>
+              问题描述
+              <textarea id="boot-desc" rows="4" required placeholder="请描述您遇到的情况…"></textarea>
+            </label>
+            <button type="submit" class="boot-btn boot-btn-primary">提交反馈</button>
+            <p class="boot-msg" id="boot-msg" hidden></p>
+          </form>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var PENDING_KEY = 'aikoread_pending_feedback'
+        var toggle = document.getElementById('boot-feedback-toggle')
+        var form = document.getElementById('boot-form')
+        var retry = document.getElementById('boot-retry')
+        var msg = document.getElementById('boot-msg')
+        if (!toggle || !form || !retry || !msg) return
+
+        toggle.addEventListener('click', function () {
+          form.classList.toggle('open')
+          toggle.textContent = form.classList.contains('open') ? '收起' : '发送反馈'
+        })
+        retry.addEventListener('click', function () {
+          location.reload()
+        })
+
+        function queue(item) {
+          try {
+            var list = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]')
+            if (!Array.isArray(list)) list = []
+            list.push(item)
+            localStorage.setItem(PENDING_KEY, JSON.stringify(list))
+          } catch (e) { /* ignore */ }
+        }
+
+        form.addEventListener('submit', function (e) {
+          e.preventDefault()
+          var email = (document.getElementById('boot-email').value || '').trim()
+          var description = (document.getElementById('boot-desc').value || '').trim()
+          if (!description) return
+          msg.hidden = false
+          msg.className = 'boot-msg'
+          msg.textContent = '提交中…'
+          var payload = {
+            username: email || '匿名用户',
+            reporterEmail: email,
+            subject: '启动/部署空档反馈',
+            description: description,
+            errorDetail: 'boot-shell; path=' + location.pathname
+          }
+          fetch('/api/user/report-issue-public', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).then(function (res) {
+            if (!res.ok) throw new Error('http')
+            return res.json().catch(function () { return {} })
+          }).then(function (body) {
+            if (body && typeof body.code === 'number' && body.code !== 200) throw new Error(body.message || 'fail')
+            msg.className = 'boot-msg ok'
+            msg.textContent = '反馈已提交，感谢您'
+            document.getElementById('boot-desc').value = ''
+          }).catch(function () {
+            queue({
+              id: Date.now() + '-boot',
+              username: payload.username,
+              reporterEmail: payload.reporterEmail,
+              subject: payload.subject,
+              description: payload.description,
+              errorDetail: payload.errorDetail,
+              createdAt: new Date().toISOString()
+            })
+            msg.className = 'boot-msg ok'
+            msg.textContent = '当前无法连上服务器，反馈已暂存，恢复后会自动发送'
+          })
+        })
+
+        // 若 8 秒后仍未挂载 Vue，保持引导文案（资源可能加载失败）
+        setTimeout(function () {
+          if (document.getElementById('boot-shell')) {
+            var lead = document.querySelector('.boot-lead')
+            if (lead) lead.textContent = '页面资源可能尚未就绪，或服务正在发布。请再等待约 5 分钟后刷新；也可发送反馈。'
+          }
+        }, 8000)
+      })()
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

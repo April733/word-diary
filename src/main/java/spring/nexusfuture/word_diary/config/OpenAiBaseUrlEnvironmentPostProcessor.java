@@ -35,7 +35,7 @@ public class OpenAiBaseUrlEnvironmentPostProcessor implements EnvironmentPostPro
         }
     }
 
-    static String normalizeBaseUrl(String baseUrl) {
+    public static String normalizeBaseUrl(String baseUrl) {
         if (baseUrl == null || baseUrl.isBlank()) {
             return baseUrl;
         }

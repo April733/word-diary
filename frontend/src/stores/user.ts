@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as userApi from '../api'
 import { getStoredLocale, setStoredLocale, type SupportedLocale } from '../i18n'
+import { getStoredAiRegion, setStoredAiRegion, type AiRegionPreference } from '../utils/aiRegion'
 
 interface UserInfo {
   id: number
@@ -10,6 +11,7 @@ interface UserInfo {
   token: string
   isMember: number
   preferredLocale?: string
+  preferredAiRegion?: string
 }
 
 export const useUserStore = defineStore('user', () => {
@@ -23,6 +25,9 @@ export const useUserStore = defineStore('user', () => {
       if (user.value?.preferredLocale) {
         setStoredLocale(user.value.preferredLocale as SupportedLocale)
       }
+      if (user.value?.preferredAiRegion) {
+        setStoredAiRegion(user.value.preferredAiRegion as AiRegionPreference)
+      }
     }
   }
 
@@ -34,6 +39,11 @@ export const useUserStore = defineStore('user', () => {
     // 登录后用服务端保存的 locale 初始化 i18n
     if (user.value?.preferredLocale) {
       setStoredLocale(user.value.preferredLocale as SupportedLocale)
+    }
+    if (user.value?.preferredAiRegion) {
+      setStoredAiRegion(user.value.preferredAiRegion as AiRegionPreference)
+    } else {
+      setStoredAiRegion(getStoredAiRegion())
     }
   }
 
@@ -62,5 +72,17 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  return { user, loadFromStorage, loginAction, registerAction, logout, updateLocale }
+  async function updateAiRegion(region: AiRegionPreference) {
+    try {
+      await userApi.updateUserAiRegion(region)
+      if (user.value) {
+        user.value.preferredAiRegion = region
+        localStorage.setItem('user', JSON.stringify(user.value))
+      }
+    } catch {
+      // 静默失败，本地已经生效
+    }
+  }
+
+  return { user, loadFromStorage, loginAction, registerAction, logout, updateLocale, updateAiRegion }
 })

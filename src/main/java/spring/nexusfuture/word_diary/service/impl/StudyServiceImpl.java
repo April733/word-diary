@@ -26,16 +26,19 @@ public class StudyServiceImpl implements StudyService {
     private final WdLearnRecordMapper recordMapper;
     private final WdWordMapper wordMapper;
     private final WdWordBookMapper bookMapper;
+    private final WdStudyQueueMapper queueMapper;
     private final SysBaseConfigService configService;
     private final StudySessionService sessionService;
 
     public StudyServiceImpl(WdLearnPlanMapper planMapper, WdLearnRecordMapper recordMapper,
                             WdWordMapper wordMapper, WdWordBookMapper bookMapper,
+                            WdStudyQueueMapper queueMapper,
                             SysBaseConfigService configService, StudySessionService sessionService) {
         this.planMapper = planMapper;
         this.recordMapper = recordMapper;
         this.wordMapper = wordMapper;
         this.bookMapper = bookMapper;
+        this.queueMapper = queueMapper;
         this.configService = configService;
         this.sessionService = sessionService;
     }
@@ -50,7 +53,8 @@ public class StudyServiceImpl implements StudyService {
     @Override
     public List<StudyTaskVO> getTodayReview(Long userId) {
         List<WdLearnPlan> plans = planMapper.selectReviewTasks(userId, configService.getReviewUnlockHour());
-        List<Long> todayCompletedWordIds = recordMapper.selectTodayCompletedWordIds(userId);
+        List<Long> todayCompletedWordIds = queueMapper.selectWordIdsWithMinDonePasses(
+                userId, LocalDate.now(), 2);
         return dedupByWordId(plans).stream()
                 .filter(p -> !todayCompletedWordIds.contains(p.getWordId()))
                 .map(this::toTaskVO)
@@ -59,7 +63,8 @@ public class StudyServiceImpl implements StudyService {
 
     @Override
     public List<StudyTaskVO> getTodayCompleted(Long userId) {
-        List<Long> todayWordIds = recordMapper.selectTodayCompletedWordIds(userId);
+        // 一天内至少背完 2 遍才算已完成
+        List<Long> todayWordIds = queueMapper.selectWordIdsWithMinDonePasses(userId, LocalDate.now(), 2);
         if (todayWordIds.isEmpty()) {
             return List.of();
         }
@@ -115,17 +120,30 @@ public class StudyServiceImpl implements StudyService {
     public List<StudyRecordVO> getRecords(Long userId) {
         List<WdLearnRecord> records = recordMapper.selectByUserId(userId);
         return records.stream().map(r -> {
-            WdWord word = wordMapper.selectById(r.getWordId());
-            WdWordBook book = bookMapper.selectById(r.getNotebookId());
+            // 词/本可能已软删，学习记录仍应展示当时词形
+            WdWord word = wordMapper.selectByIdAny(r.getWordId());
+            WdWordBook book = bookMapper.selectByIdAny(r.getNotebookId());
+            String proto = word != null && word.getWordProto() != null && !word.getWordProto().isBlank()
+                    ? word.getWordProto() : "未知";
+            if (word != null && word.getIsDeleted() != null && word.getIsDeleted() == 1
+                    && !"未知".equals(proto)) {
+                proto = proto + "（已删除）";
+            }
+            String notebookName = book != null && book.getBookName() != null && !book.getBookName().isBlank()
+                    ? book.getBookName() : "未知";
+            if (book != null && book.getIsDeleted() != null && book.getIsDeleted() == 1
+                    && !"未知".equals(notebookName)) {
+                notebookName = notebookName + "（已删除）";
+            }
             return StudyRecordVO.builder()
                     .id(r.getId())
-                    .wordProto(word != null ? word.getWordProto() : "未知")
+                    .wordProto(proto)
                     .studyType(r.getStudyType())
                     .result(r.getResult())
                     .feedback(r.getFeedback())
                     .studyMode(r.getStudyMode())
                     .studyTime(r.getStudyTime())
-                    .notebookName(book != null ? book.getBookName() : "未知")
+                    .notebookName(notebookName)
                     .build();
         }).collect(Collectors.toList());
     }

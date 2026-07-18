@@ -16,12 +16,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class BookCollectServiceImpl implements BookCollectService {
 
-    private static final int MAX_EXAMPLE_LEN = 2000;
-    private static final String EXAMPLE_SEP = "\n---\n";
+    /** 书籍收录例句统一带此前缀，展示端无需再判断来源 */
+    public static final String ORIGINAL_PREFIX = "【原文】";
 
     private final WdBookMapper bookMapper;
     private final WdWordBookMapper notebookMapper;
@@ -56,8 +57,8 @@ public class BookCollectServiceImpl implements BookCollectService {
 
         int added = 0, skipped = 0, updated = 0;
         List<String> messages = new ArrayList<>();
-        // 同一请求内按原型去重（忽略大小写）；单词本内已有词不重复插入
         Set<String> seenInBatch = new HashSet<>();
+        String fullSnippet = req.getSourceSnippet();
 
         for (CollectEntryDTO item : req.getItems()) {
             if (item.getWordProto() == null || item.getWordProto().isBlank()) {
@@ -76,27 +77,14 @@ public class BookCollectServiceImpl implements BookCollectService {
             }
             WdWord existing = wordMapper.selectByNotebookAndWordProto(req.getNotebookId(), proto);
             if (existing != null) {
-                // 已存在：不新建重复行；仅在明确要求时追加例句
-                if (Boolean.TRUE.equals(item.getAppendExample()) && hasText(item.getSentenceExample())) {
-                    String merged = mergeExample(existing.getSentenceExample(), item.getSentenceExample());
-                    if (!merged.equals(existing.getSentenceExample() == null ? "" : existing.getSentenceExample())) {
-                        existing.setSentenceExample(merged);
-                        if (hasText(req.getSourceSnippet())) {
-                            existing.setSourceSnippet(req.getSourceSnippet());
-                        }
-                        wordMapper.update(existing);
-                        updated++;
-                        messages.add(proto + "：已存在，已追加例句");
-                    } else {
-                        skipped++;
-                        messages.add(proto + "：已存在，已跳过");
-                    }
-                } else {
-                    skipped++;
-                    messages.add(proto + "：已存在，已跳过");
-                }
+                skipped++;
+                messages.add(proto + "：已存在，已跳过");
                 continue;
             }
+
+            // 每个词条只存「包含该词」的那一句原文，避免多选粘连整段
+            String sentence = pickSentenceForLemma(fullSnippet, proto);
+            String example = toOriginalExample(sentence);
 
             WdWord word = WdWord.builder()
                     .notebookId(req.getNotebookId())
@@ -105,12 +93,12 @@ public class BookCollectServiceImpl implements BookCollectService {
                     .partSpeechMean(item.getPartSpeechMean().trim())
                     .usPhonetic(emptyToNull(item.getUsPhonetic()))
                     .ukPhonetic(emptyToNull(item.getUkPhonetic()))
-                    .sentenceExample(emptyToNull(item.getSentenceExample()))
+                    .sentenceExample(example)
                     .rootAffix(emptyToNull(item.getRootAffix()))
                     .entryType(normalizeEntryType(item.getEntryType()))
                     .sourceBookId(bookId)
-                    .sourceSnippet(req.getSourceSnippet())
-                    .sourceLocation(req.getSourceLocation())
+                    .sourceSnippet(emptyToNull(sentence))
+                    .sourceLocation(emptyToNull(req.getSourceLocation()))
                     .isPublic(0)
                     .build();
             wordMapper.insert(word);
@@ -135,6 +123,66 @@ public class BookCollectServiceImpl implements BookCollectService {
                 .build();
     }
 
+    /** 原文 →「【原文】…」；无原文则 null */
+    static String toOriginalExample(String snippet) {
+        if (!hasText(snippet)) return null;
+        String t = snippet.trim();
+        if (t.startsWith(ORIGINAL_PREFIX)) return t;
+        return ORIGINAL_PREFIX + t;
+    }
+
+    static String stripOriginalPrefix(String text) {
+        if (!hasText(text)) return "";
+        String t = text.trim();
+        if (t.startsWith(ORIGINAL_PREFIX)) {
+            return t.substring(ORIGINAL_PREFIX.length()).trim();
+        }
+        return t;
+    }
+
+    /**
+     * 从选中原文中取出包含该词条的那一句；找不到则回退整段。
+     */
+    static String pickSentenceForLemma(String snippet, String wordProto) {
+        String full = repairSentenceBoundaries(stripOriginalPrefix(snippet));
+        if (!hasText(full)) return null;
+        if (!hasText(wordProto)) return full.trim();
+
+        String lemma = wordProto.trim().toLowerCase(Locale.ROOT);
+        String[] parts = full.split("(?<=[.!?…])\\s+");
+        for (String part : parts) {
+            if (!hasText(part)) continue;
+            if (sentenceContainsLemma(part, lemma)) {
+                return part.trim();
+            }
+        }
+        return full.trim();
+    }
+
+    /**
+     * 修复 OCR/框选句界：e / ° / • 等条目符号被粘进正文。
+     * 例：construction e. The → construction. The；tunnels ° on → tunnels. on
+     */
+    static String repairSentenceBoundaries(String raw) {
+        if (!hasText(raw)) return "";
+        String t = raw.trim().replaceAll("\\s+", " ");
+        t = t.replaceAll("\\s+[eE]\\.\\s+(?=[A-Z“\"‘'])", ". ");
+        t = t.replaceAll("\\s+[eE°•·◦▪]\\s+(?=[A-Za-z“\"‘'])", ". ");
+        t = t.replaceAll("([a-zà-ÿ])[eE]\\.\\s+(?=[A-Z“\"‘'])", "$1. ");
+        t = t.replaceAll(" {2,}", " ").replaceAll("\\.\\s*\\.", ".").trim();
+        return t;
+    }
+
+    private static boolean sentenceContainsLemma(String sentence, String lemma) {
+        String s = sentence.toLowerCase(Locale.ROOT);
+        if (lemma.contains(" ") || lemma.contains("-")) {
+            return s.contains(lemma);
+        }
+        Pattern re = Pattern.compile("(?:^|[^a-z0-9'])" + Pattern.quote(lemma) + "(?:[^a-z0-9']|$)",
+                Pattern.CASE_INSENSITIVE);
+        return re.matcher(sentence).find() || s.contains(lemma);
+    }
+
     private static String normalizeEntryType(String type) {
         if (type != null && "phrase".equalsIgnoreCase(type.trim())) {
             return "phrase";
@@ -148,13 +196,5 @@ public class BookCollectServiceImpl implements BookCollectService {
 
     private static String emptyToNull(String s) {
         return hasText(s) ? s.trim() : null;
-    }
-
-    private static String mergeExample(String existing, String incoming) {
-        if (!hasText(existing)) return incoming.trim();
-        if (!hasText(incoming)) return existing;
-        if (existing.contains(incoming.trim())) return existing;
-        String merged = existing + EXAMPLE_SEP + incoming.trim();
-        return merged.length() > MAX_EXAMPLE_LEN ? merged.substring(0, MAX_EXAMPLE_LEN) : merged;
     }
 }

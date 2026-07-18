@@ -72,6 +72,90 @@ class BookCollectServiceImplTest {
         assertEquals("Strategy", captor.getValue().getWordProto());
     }
 
+    @Test
+    void collect_usesOriginalSnippetAsExample() {
+        when(wordMapper.selectByNotebookAndWordProto(eq(2L), anyString())).thenReturn(null);
+
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setSourceSnippet("The streets were full of horse-drawn vehicles.");
+        req.setItems(List.of(entry("street", "n. 街道", false)));
+
+        service.collect(9L, 1L, req);
+        ArgumentCaptor<WdWord> captor = ArgumentCaptor.forClass(WdWord.class);
+        verify(wordMapper).insert(captor.capture());
+        assertEquals("【原文】The streets were full of horse-drawn vehicles.",
+                captor.getValue().getSentenceExample());
+    }
+
+    @Test
+    void collect_picksOnlySentenceContainingLemma() {
+        when(wordMapper.selectByNotebookAndWordProto(eq(2L), anyString())).thenReturn(null);
+
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setSourceSnippet(
+                "Charles Pearson, a solicitor, suggested building an underground railway. "
+                        + "Building the railway would make it possible to move people.");
+        req.setItems(List.of(
+                entry("solicitor", "n. 律师", false),
+                entry("possible", "adj. 可能的", false)
+        ));
+
+        service.collect(9L, 1L, req);
+        ArgumentCaptor<WdWord> captor = ArgumentCaptor.forClass(WdWord.class);
+        verify(wordMapper, times(2)).insert(captor.capture());
+        List<WdWord> words = captor.getAllValues();
+        assertEquals("【原文】Charles Pearson, a solicitor, suggested building an underground railway.",
+                words.get(0).getSentenceExample());
+        assertTrue(words.get(1).getSentenceExample().contains("Building the railway would make it possible"));
+        assertFalse(words.get(1).getSentenceExample().toLowerCase().contains("solicitor"));
+    }
+
+    @Test
+    void collect_repairsOcrSeparatorsThenPicksSentence() {
+        when(wordMapper.selectByNotebookAndWordProto(eq(2L), anyString())).thenReturn(null);
+
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setSourceSnippet(
+                "The construction e. The chosen route did not require many buildings to be pulled down e "
+                        + "The 'cut and cover' method was used to construct the tunnels ° "
+                        + "on the completion of the brick arch, the tunnel was covered with");
+        req.setItems(List.of(entry("arch", "n. 拱", false)));
+
+        service.collect(9L, 1L, req);
+        ArgumentCaptor<WdWord> captor = ArgumentCaptor.forClass(WdWord.class);
+        verify(wordMapper).insert(captor.capture());
+        String example = captor.getValue().getSentenceExample();
+        assertTrue(example.contains("arch"));
+        assertFalse(example.toLowerCase().contains("require"));
+        assertFalse(example.toLowerCase().contains("cut and cover"));
+        assertEquals(
+                "pulled down. The tunnels. on the completion",
+                BookCollectServiceImpl.repairSentenceBoundaries("pulled down e The tunnels ° on the completion"));
+    }
+
+    @Test
+    void collect_ignoresAiSentenceExampleAndDoesNotAppend() {
+        when(wordMapper.selectByNotebookAndWordProto(2L, "strategy"))
+                .thenReturn(WdWord.builder().id(10L).wordProto("strategy")
+                        .sentenceExample("【原文】old").build());
+
+        CollectEntryDTO dto = entry("strategy", "n. 策略", true);
+        dto.setSentenceExample("AI invented example");
+        BookCollectReq req = new BookCollectReq();
+        req.setNotebookId(2L);
+        req.setSourceSnippet("new snippet");
+        req.setItems(List.of(dto));
+
+        BookCollectResultVO result = service.collect(9L, 1L, req);
+        assertEquals(0, result.getAdded());
+        assertEquals(1, result.getSkipped());
+        assertEquals(0, result.getUpdated());
+        verify(wordMapper, never()).update(any());
+    }
+
     private static CollectEntryDTO entry(String proto, String mean, boolean append) {
         CollectEntryDTO dto = new CollectEntryDTO();
         dto.setEntryType("word");
