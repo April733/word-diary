@@ -224,9 +224,13 @@
               {{ $t('reader.aiHint1') }}
             </div>
             <div v-for="(msg, i) in aiMessages" :key="msg.id ?? i" class="ai-msg" :class="msg.role">
-              <div class="ai-msg-content" v-html="renderMarkdown(displayAiMessageBody(msg))"></div>
               <div
-                v-if="msg.role === 'assistant' && (msg.content || msg.analyzeResult || looksLikeAnalyzeJson(msg.content))"
+                class="ai-msg-content"
+                :class="isAnalyzeAssistantMessage(msg) ? 'ai-msg-content--analyze' : 'ai-msg-content--chat'"
+                v-html="renderAiMessageHtml(msg)"
+              ></div>
+              <div
+                v-if="isAnalyzeAssistantMessage(msg) && (msg.content || msg.analyzeResult || looksLikeAnalyzeJson(msg.content))"
                 class="ai-msg-actions"
               >
                 <t-button
@@ -473,7 +477,8 @@ import { normalizeSelectedText, pickSentenceForLemma, tokenizeContextSegments } 
 import {
   formatAnalyzeResultMarkdown,
   normalizeDisplayFeatureKeys,
-  renderAiMarkdown
+  renderAnalyzeMarkdown,
+  renderChatMarkdown
 } from '../utils/aiMarkdown'
 import {
   isTransportError,
@@ -2566,22 +2571,34 @@ function truncate(text: string, len: number) {
   return text.length > len ? text.substring(0, len) + '...' : text
 }
 
-/** AI 回复渲染：统一走 aiMarkdown（紫色小节 / 词条） */
-function renderMarkdown(text: string): string {
-  return renderAiMarkdown(text)
+/** 解析场景消息：有 featureKeys / analyzeResult，或正文是解析 JSON */
+function isAnalyzeAssistantMessage(msg: AiMessage): boolean {
+  if (msg.role !== 'assistant') return false
+  if (msg.analyzeResult && typeof msg.analyzeResult === 'object') return true
+  if (msg.featureKeys && msg.featureKeys.length > 0) return true
+  return looksLikeAnalyzeJson(msg.content)
+}
+
+/** 两套展示：解析走 analyze 渲染，问答走 chat 渲染，禁止混用 */
+function renderAiMessageHtml(msg: AiMessage): string {
+  if (msg.role !== 'assistant') {
+    return renderChatMarkdown(msg.content || '')
+  }
+  if (isAnalyzeAssistantMessage(msg)) {
+    return renderAnalyzeMarkdown(displayAnalyzeMessageBody(msg))
+  }
+  return renderChatMarkdown(msg.content || '')
 }
 
 function looksLikeAnalyzeJson(text?: string): boolean {
   return !!parseAnalyzeResultFromStored(text || '')
 }
 
-/** 优先 analyzeResult；content 若是解析 JSON 也格式化。绝对禁止把 JSON 原文刷到右侧。 */
-function displayAiMessageBody(msg: AiMessage): string {
-  // 用户消息原样展示
-  if (msg.role !== 'assistant') {
-    return msg.content || ''
-  }
-
+/**
+ * 解析场景正文：优先 analyzeResult；content 若是解析 JSON 也格式化。
+ * 绝对禁止把 JSON 原文刷到右侧。仅供解析渲染，勿用于问答。
+ */
+function displayAnalyzeMessageBody(msg: AiMessage): string {
   const raw = msg.content || ''
   let result: Record<string, unknown> | null =
     msg.analyzeResult && typeof msg.analyzeResult === 'object' && !Array.isArray(msg.analyzeResult)
@@ -3135,13 +3152,13 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
   color: inherit;
 }
 
-/* 正文里的普通加粗保持深色；小节标题与词条用主题蓝（标题不用 strong，避免「翻译」发黑加粗） */
-.ai-msg-content :deep(strong) {
+/* —— 解析场景：紫色小节 / 词条 —— */
+.ai-msg-content--analyze :deep(strong) {
   color: #2d2d3a;
   font-weight: 600;
 }
 
-.ai-msg-content :deep(span.ai-section) {
+.ai-msg-content--analyze :deep(span.ai-section) {
   display: block;
   margin-top: 8px;
   margin-bottom: 0;
@@ -3150,27 +3167,46 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
   line-height: 1.4;
 }
 
-.ai-msg-content :deep(span.ai-section:first-child) {
+.ai-msg-content--analyze :deep(span.ai-section:first-child) {
   margin-top: 0;
 }
 
-.ai-msg-content :deep(strong.ai-term) {
+.ai-msg-content--analyze :deep(strong.ai-term) {
   color: #5e57b5;
   font-weight: 600;
 }
 
-.ai-msg-content :deep(.ai-bullet) {
+.ai-msg-content--analyze :deep(.ai-bullet) {
   color: #5e57b5;
   font-weight: 600;
   margin-right: 2px;
 }
 
-.ai-msg-content :deep(.ai-word-line) {
+.ai-msg-content--analyze :deep(.ai-word-line) {
   display: block;
   margin: 2px 0;
   line-height: 1.55;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* —— Aiko 问答：保留加粗 / 空格 / 列表 —— */
+.ai-msg-content--chat :deep(strong) {
+  color: #2d2d3a;
+  font-weight: 600;
+}
+
+.ai-msg-content--chat :deep(strong.ai-chat-heading) {
+  display: block;
+  margin: 4px 0 2px;
+}
+
+.ai-msg-content--chat :deep(.ai-chat-li) {
+  display: block;
+}
+
+.ai-msg-content--chat :deep(.ai-chat-bullet) {
+  font-weight: 600;
 }
 
 .ai-msg-content :deep(em) {

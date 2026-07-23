@@ -322,6 +322,72 @@ public class AiPromptBuilder {
     }
 
     /**
+     * 雅思写作批改 system prompt。优先 sys_ai_scene_prompt(writing_grade)；占位符 {task_type}。
+     */
+    public String buildWritingGradeSystemPrompt(Long userId, String taskType) {
+        String locale = getUserLocale(userId);
+        String task = taskType == null ? "task2" : taskType;
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_WRITING_GRADE, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, "", "", locale)
+                    .replace("{task_type}", task)
+                    + replyLanguageReinforcement(locale);
+        }
+        return defaultWritingGradeSystem(locale, task);
+    }
+
+    public String buildWritingGradeUserPrompt(Long userId, String taskType, String promptText,
+                                              String bodyText, int wordCount) {
+        String locale = getUserLocale(userId);
+        PromptTemplate t = getTemplateByLocale(locale);
+        String taskLabel = "task1".equalsIgnoreCase(taskType) ? "Task 1" : "Task 2";
+        return """
+                %sWriting type: %s
+                Word count (approx): %d
+                Question:
+                ---
+                %s
+                ---
+                Student essay:
+                ---
+                %s
+                ---
+                Return ONE JSON object only.
+                """.formatted(
+                AiFeatureI18nSupport.isChinese(locale) ? "请用" + t.localeName() + "写评语与批注。\n" : "",
+                taskLabel,
+                wordCount,
+                promptText == null ? "" : promptText,
+                bodyText == null ? "" : bodyText
+        );
+    }
+
+    private String defaultWritingGradeSystem(String locale, String taskType) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        String taskCriterion = "task1".equalsIgnoreCase(taskType)
+                ? "taskAchievement (Task Achievement)"
+                : "taskResponse (Task Response)";
+        return t.globalConstraint() + "\n" + """
+                You are an IELTS Academic Writing examiner and writing coach for {task_type}.
+                Grade the essay and produce a polished rewrite that keeps the student's ideas.
+                Also provide a high-band model essay for the same question (mark it as a model, not a rewrite).
+
+                Return ONLY one JSON object (no Markdown fences) with keys:
+                - overallBand (number, 0-9, 0.5 steps)
+                - %s (number)
+                - coherence (number)
+                - lexical (number)
+                - grammar (number)
+                - summary (short string)
+                - priorities (array of 3-5 actionable improvement strings, highest impact first)
+                - annotations (array of {excerpt, issue, fix})
+                - polishedEssay (string: improved version of the student's essay)
+                - modelEssay (string: high-band sample for the same question)
+                Do not invent scores without reading the essay. Be specific and actionable.
+                """.formatted(taskCriterion).replace("{task_type}", taskType);
+    }
+
+    /**
      * 功能预设 system prompt。
      * 场景壳 = sys_ai_scene_prompt(feature)；功能细节 = sys_ai_feature.prompt。不追加任何代码内文案。
      */

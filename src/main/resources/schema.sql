@@ -474,6 +474,46 @@ CREATE TABLE IF NOT EXISTS `wd_abuse_notice_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉处理时间线（证据留存）';
 
 -- =============================================
+-- 雅思写作练习稿
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_writing_essay` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
+  `task_type` varchar(16) NOT NULL COMMENT 'task1|task2',
+  `prompt_text` mediumtext NOT NULL COMMENT '题目',
+  `prompt_image_key` varchar(512) DEFAULT NULL COMMENT '题目截图COS key',
+  `body_text` mediumtext COMMENT '作文正文',
+  `status` varchar(16) NOT NULL DEFAULT 'draft' COMMENT 'draft|graded',
+  `word_count` int NOT NULL DEFAULT 0 COMMENT '英文词数',
+  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+  `score_json` mediumtext COMMENT '评分详情JSON',
+  `polished_essay` mediumtext COMMENT 'AI写作',
+  `model_essay` mediumtext COMMENT '满分示范(兼容)',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_update` (`user_id`, `update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='雅思写作练习稿';
+
+CREATE TABLE IF NOT EXISTS `wd_writing_essay_grade` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `essay_id` bigint NOT NULL COMMENT '作文ID',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `body_text` mediumtext COMMENT '批改当时正文',
+  `word_count` int NOT NULL DEFAULT 0 COMMENT '词数',
+  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+  `score_json` mediumtext COMMENT '评分详情JSON',
+  `polished_essay` mediumtext COMMENT 'AI润色',
+  `model_essay` mediumtext COMMENT '示范范文',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_essay_id` (`essay_id`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='写作批改历史';
+
+-- =============================================
 -- AI 场景系统提示词（按 locale 可配置，覆盖代码默认）
 -- =============================================
 CREATE TABLE IF NOT EXISTS `sys_ai_scene_prompt` (

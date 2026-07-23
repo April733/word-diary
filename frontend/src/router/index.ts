@@ -67,6 +67,30 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/writing',
+      name: 'Writing',
+      component: () => import('../views/WritingListView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/writing/new',
+      name: 'WritingNew',
+      component: () => import('../views/WritingEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/writing/:id/result',
+      name: 'WritingResult',
+      component: () => import('../views/WritingResultView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/writing/:id',
+      name: 'WritingEdit',
+      component: () => import('../views/WritingEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/reader/:id',
       name: 'Reader',
       component: () => import('../views/ReaderView.vue'),

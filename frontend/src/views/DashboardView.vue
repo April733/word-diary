@@ -46,6 +46,7 @@
         <button type="button" @click="router.push('/plan')">{{ $t('study.planOverviewTitle') }}</button>
         <button type="button" @click="router.push('/notebooks')">{{ $t('nav.wordbook') }}</button>
         <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
+        <button type="button" @click="router.push('/writing')">{{ $t('nav.writing') }}</button>
       </nav>
     </main>
   </div>

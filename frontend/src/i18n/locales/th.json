@@ -45,7 +45,8 @@
     "reading": "อ่านหนังสือต้นฉบับ",
     "wordbook": "สมุดคำศัพท์",
     "records": "ประวัติการเรียนรู้",
-    "notebook": "บันทึก"
+    "notebook": "บันทึก",
+    "writing": "การเขียน"
   },
   "login": {
     "title": "เข้าสู่ระบบ Aikoread",

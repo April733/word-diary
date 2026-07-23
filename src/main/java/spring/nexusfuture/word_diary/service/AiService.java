@@ -77,4 +77,12 @@ public interface AiService {
      */
     String chatOnce(Long userId, String callScene, String inputText,
                     String systemPrompt, String userPrompt);
+
+    /**
+     * 同步单轮调用，可附带图片等媒体（写作题目截图等）。
+     * media 为空时等价于 {@link #chatOnce}。
+     */
+    String chatOnce(Long userId, String callScene, String inputText,
+                    String systemPrompt, String userPrompt,
+                    List<org.springframework.ai.content.Media> media);
 }

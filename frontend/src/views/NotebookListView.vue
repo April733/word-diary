@@ -257,7 +257,7 @@ async function handleDelete(id: number) {
 }
 
 .page-body {
-  max-width: 800px;
+  max-width: 640px;
   margin: 24px auto;
   padding: 0 24px;
 }

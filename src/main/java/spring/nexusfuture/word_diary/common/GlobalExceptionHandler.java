@@ -8,6 +8,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
@@ -54,11 +55,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(500).body(R.fail(500, "保存失败，请稍后重试或联系管理员"));
     }
 
+    @ExceptionHandler(ResourceAccessException.class)
+    public ResponseEntity<R<Void>> handleResourceAccess(ResourceAccessException e) {
+        log.warn("上游 AI/网络调用失败: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(R.fail(502, "AI 线路调用失败，请稍后重试或切换线路"));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<R<Void>> handleException(Exception e) {
         log.error("未处理异常", e);
         // 不对用户暴露 SQL/堆栈细节
-        return ResponseEntity.status(500)
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(R.fail(500, "保存失败，请稍后重试或联系管理员"));
     }
 }

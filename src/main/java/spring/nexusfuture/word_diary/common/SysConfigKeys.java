@@ -24,6 +24,9 @@ public final class SysConfigKeys {
     /** 阅读：自由问答 */
     public static final String AI_SCENE_READING_CHAT = "reading_chat";
 
+    /** 雅思写作：评分批改 + 润色/示范范文 */
+    public static final String AI_SCENE_WRITING_GRADE = "writing_grade";
+
     /** 未匹配场景时的回退 */
     public static final String AI_SCENE_DEFAULT = "default";
 }

@@ -10,6 +10,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.TextMetrics;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.config.AiChatClientRouter;
@@ -25,8 +26,11 @@ import spring.nexusfuture.word_diary.service.AiService;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.springframework.web.client.ResourceAccessException;
 
 @Slf4j
 @Service
@@ -258,37 +262,138 @@ public class AiServiceImpl implements AiService {
     @Override
     public String chatOnce(Long userId, String callScene, String inputText,
                            String systemPrompt, String userPrompt) {
+        return chatOnce(userId, callScene, inputText, systemPrompt, userPrompt, null);
+    }
+
+    @Override
+    public String chatOnce(Long userId, String callScene, String inputText,
+                           String systemPrompt, String userPrompt,
+                           List<org.springframework.ai.content.Media> media) {
         long startTime = System.currentTimeMillis();
         String scene = (callScene == null || callScene.isBlank()) ? SCENE_READING_CHAT : callScene;
         String rawInput = inputText != null ? inputText : "";
         String usedModelKey = null;
+        String usedProvider = null;
+        boolean wantMedia = media != null && !media.isEmpty();
         try {
             SceneCall call = resolveCall(userId, scene);
             usedModelKey = call.modelKey();
-            ChatResponse chatResponse = call.client().prompt()
-                    .options(OpenAiChatOptions.builder().model(usedModelKey).build())
-                    .system(systemPrompt != null ? systemPrompt : "")
-                    .user(userPrompt != null ? userPrompt : "")
-                    .call()
-                    .chatResponse();
-            int durationMs = (int) (System.currentTimeMillis() - startTime);
-            String content = chatResponse.getResult().getOutput().getText();
-            saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt, content,
-                    chatResponse, usedModelKey, durationMs);
-            return content != null ? content : "";
+            usedProvider = call.provider();
+            boolean useMedia = wantMedia && providerSupportsVision(usedProvider, usedModelKey);
+            if (wantMedia && !useMedia) {
+                log.warn("[ai-once] 当前线路不支持识图，改为纯文本 scene={} provider={} model={}",
+                        scene, usedProvider, usedModelKey);
+            }
+            String effectiveUser = userPrompt != null ? userPrompt : "";
+            if (wantMedia && !useMedia) {
+                effectiveUser = effectiveUser + VISION_FALLBACK_NOTE;
+            }
+            try {
+                return invokeOnce(call, systemPrompt, effectiveUser, useMedia ? media : null,
+                        userId, scene, rawInput, startTime);
+            } catch (Exception first) {
+                if (useMedia && isLikelyVisionUnsupported(first)) {
+                    log.warn("[ai-once] 识图调用失败，降级纯文本 scene={} err={}", scene, first.getMessage());
+                    return invokeOnce(call, systemPrompt, (userPrompt != null ? userPrompt : "") + VISION_FALLBACK_NOTE,
+                            null, userId, scene, rawInput, startTime);
+                }
+                throw first;
+            }
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             int durationMs = (int) (System.currentTimeMillis() - startTime);
-            log.error("[ai-once] 失败 scene={}, 耗时={}ms, err={}", scene, durationMs, e.getMessage(), e);
+            log.error("[ai-once] 失败 scene={}, media={}, 耗时={}ms, err={}",
+                    scene, wantMedia ? media.size() : 0, durationMs, e.getMessage(), e);
             try {
                 saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
                         e.getMessage(), null, usedModelKey, durationMs);
             } catch (Exception ignored) {
             }
-            throw e;
+            throw wrapAiCallException(e);
         }
     }
 
-    private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey) {}
+    private static final String VISION_FALLBACK_NOTE = """
+
+
+            [系统说明] 当前 AI 线路不支持图片输入，题目截图未能送达模型。
+            请主要依据作文正文评分，并在 summary 中注明「未能核对照片题目」。
+            """;
+
+    private String invokeOnce(SceneCall call, String systemPrompt, String userPrompt,
+                              List<org.springframework.ai.content.Media> media,
+                              Long userId, String scene, String rawInput, long startTime) {
+        var promptSpec = call.client().prompt()
+                .options(OpenAiChatOptions.builder().model(call.modelKey()).build())
+                .system(systemPrompt != null ? systemPrompt : "");
+        ChatResponse chatResponse;
+        if (media != null && !media.isEmpty()) {
+            org.springframework.ai.chat.messages.UserMessage userMessage =
+                    new org.springframework.ai.chat.messages.UserMessage(
+                            userPrompt != null ? userPrompt : "", media);
+            chatResponse = promptSpec.messages(userMessage).call().chatResponse();
+        } else {
+            chatResponse = promptSpec
+                    .user(userPrompt != null ? userPrompt : "")
+                    .call()
+                    .chatResponse();
+        }
+        int durationMs = (int) (System.currentTimeMillis() - startTime);
+        String content = chatResponse.getResult().getOutput().getText();
+        saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt, content,
+                chatResponse, call.modelKey(), durationMs);
+        return content != null ? content : "";
+    }
+
+    /** DeepSeek 等官方 API 目前多为纯文本；带图请求易 Broken pipe / 参数拒绝 */
+    private boolean providerSupportsVision(String provider, String modelKey) {
+        String p = provider != null ? provider.toLowerCase(Locale.ROOT) : "";
+        String m = modelKey != null ? modelKey.toLowerCase(Locale.ROOT) : "";
+        if (p.contains("deepseek") || m.contains("deepseek")) {
+            return false;
+        }
+        // 明确含 vl / vision 的模型键视为支持
+        if (m.contains("vl") || m.contains("vision") || m.contains("gpt-4o") || m.contains("gemini")) {
+            return true;
+        }
+        // 其它线路保守尝试；失败再降级
+        return true;
+    }
+
+    private boolean isLikelyVisionUnsupported(Throwable e) {
+        String msg = rootMessage(e).toLowerCase(Locale.ROOT);
+        return msg.contains("broken pipe")
+                || msg.contains("image_url")
+                || msg.contains("image")
+                || msg.contains("vision")
+                || msg.contains("multimodal")
+                || msg.contains("unknown variant")
+                || e instanceof ResourceAccessException;
+    }
+
+    private BizException wrapAiCallException(Throwable e) {
+        String msg = rootMessage(e);
+        if (msg.toLowerCase(Locale.ROOT).contains("broken pipe")
+                || e instanceof ResourceAccessException) {
+            return new BizException("AI 线路调用失败（可能不支持识图或网络中断），请稍后重试或切换线路");
+        }
+        return new BizException("AI 调用失败，请稍后重试");
+    }
+
+    private String rootMessage(Throwable e) {
+        Throwable cur = e;
+        String last = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        while (cur.getCause() != null && cur.getCause() != cur) {
+            cur = cur.getCause();
+            if (cur.getMessage() != null && !cur.getMessage().isBlank()) {
+                last = cur.getMessage();
+            }
+        }
+        return last;
+    }
+
+    private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey, String provider) {}
 
     /** 场景 + 用户地区 → DB 模型 + provider → ChatClient */
     private SceneCall resolveCall(Long userId, String sceneKey) {
@@ -303,7 +408,8 @@ public class AiServiceImpl implements AiService {
                         // 开启后末包带回 usage；OpenAI 兼容网关一般不影响增量推流
                         .streamUsage(true)
                         .build(),
-                endpoint.modelKey()
+                endpoint.modelKey(),
+                endpoint.provider()
         );
     }
 

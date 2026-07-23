@@ -78,6 +78,14 @@ public class DatabaseInitConfig implements ApplicationRunner {
             ensureAbuseNoticeTables(conn, stmt);
             ensureColumn(conn, stmt, "wd_abuse_notice", "submitter_user_id",
                     "ALTER TABLE wd_abuse_notice ADD COLUMN submitter_user_id bigint DEFAULT NULL COMMENT '提交账号用户ID' AFTER status");
+            ensureWritingEssayTable(conn, stmt);
+            ensureColumn(conn, stmt, "wd_writing_essay", "prompt_image_key",
+                    "ALTER TABLE wd_writing_essay ADD COLUMN prompt_image_key varchar(512) DEFAULT NULL COMMENT '题目截图COS key' AFTER prompt_text");
+            ensureColumn(conn, stmt, "wd_writing_essay", "title",
+                    "ALTER TABLE wd_writing_essay ADD COLUMN title varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名' AFTER user_id");
+            ensureWritingEssayGradeTable(conn, stmt);
+            seedWritingGradeHistoryFromExisting(conn);
+            seedWritingGradePromptIfMissing(conn);
             // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
             ensureColumn(conn, stmt, "wd_user", "preferred_locale",
                     "ALTER TABLE wd_user ADD COLUMN preferred_locale varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言' AFTER role");
@@ -211,6 +219,8 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     ('word_parse', '单词批量导入', 'global', 'qwen-turbo', 2, 1, '海外线路，可改为 Gemini 等'),
                     ('reading_chat', '阅读自由问答', 'cn', 'deepseek-v4-flash', 3, 1, '阅读器右侧自由提问'),
                     ('reading_chat', '阅读自由问答', 'global', 'deepseek-v4-flash', 3, 1, '海外线路，可改为 Gemini 等'),
+                    ('writing_grade', '雅思写作批改', 'cn', 'deepseek-v4-flash', 4, 1, '写作评分+润色范文'),
+                    ('writing_grade', '雅思写作批改', 'global', 'deepseek-v4-flash', 4, 1, '海外线路'),
                     ('default', '未匹配场景回退', 'cn', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退'),
                     ('default', '未匹配场景回退', 'global', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退')
                     """);
@@ -1067,6 +1077,147 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("迁移 Key 分包 JSON 约定失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureWritingEssayTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_writing_essay", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_writing_essay` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
+                  `task_type` varchar(16) NOT NULL COMMENT 'task1|task2',
+                  `prompt_text` mediumtext NOT NULL COMMENT '题目',
+                  `prompt_image_key` varchar(512) DEFAULT NULL COMMENT '题目截图COS key',
+                  `body_text` mediumtext COMMENT '作文正文',
+                  `status` varchar(16) NOT NULL DEFAULT 'draft' COMMENT 'draft|graded',
+                  `word_count` int NOT NULL DEFAULT 0 COMMENT '英文词数',
+                  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+                  `score_json` mediumtext COMMENT '评分详情JSON',
+                  `polished_essay` mediumtext COMMENT 'AI写作',
+                  `model_essay` mediumtext COMMENT '满分示范(兼容)',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_user_update` (`user_id`, `update_time`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='雅思写作练习稿'
+                """);
+        log.info("数据库表初始化完成: wd_writing_essay");
+    }
+
+    private void ensureWritingEssayGradeTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_writing_essay_grade", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_writing_essay_grade` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `essay_id` bigint NOT NULL COMMENT '作文ID',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `body_text` mediumtext COMMENT '批改当时正文',
+                  `word_count` int NOT NULL DEFAULT 0 COMMENT '词数',
+                  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+                  `score_json` mediumtext COMMENT '评分详情JSON',
+                  `polished_essay` mediumtext COMMENT 'AI润色',
+                  `model_essay` mediumtext COMMENT '示范范文',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_essay_id` (`essay_id`, `id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='写作批改历史'
+                """);
+        log.info("数据库表初始化完成: wd_writing_essay_grade");
+    }
+
+    /** 已批改但无历史行的作文，灌入一条当前结果，供下拉回看 */
+    private void seedWritingGradeHistoryFromExisting(Connection conn) {
+        try {
+            var essayTables = conn.getMetaData().getTables(null, null, "wd_writing_essay", new String[]{"TABLE"});
+            if (!essayTables.next()) {
+                essayTables.close();
+                return;
+            }
+            essayTables.close();
+            var gradeTables = conn.getMetaData().getTables(null, null, "wd_writing_essay_grade", new String[]{"TABLE"});
+            if (!gradeTables.next()) {
+                gradeTables.close();
+                return;
+            }
+            gradeTables.close();
+            int n = conn.createStatement().executeUpdate("""
+                    INSERT INTO wd_writing_essay_grade(
+                      essay_id, user_id, body_text, word_count, overall_band,
+                      score_json, polished_essay, model_essay, create_time
+                    )
+                    SELECT e.id, e.user_id, e.body_text, e.word_count, e.overall_band,
+                           e.score_json, e.polished_essay, e.model_essay,
+                           COALESCE(e.update_time, e.create_time, NOW())
+                    FROM wd_writing_essay e
+                    WHERE e.is_deleted = 0
+                      AND e.status = 'graded'
+                      AND e.score_json IS NOT NULL
+                      AND e.score_json <> ''
+                      AND NOT EXISTS (
+                        SELECT 1 FROM wd_writing_essay_grade g
+                        WHERE g.essay_id = e.id AND g.is_deleted = 0
+                      )
+                    """);
+            if (n > 0) {
+                log.info("数据库种子初始化完成: 写作批改历史已从存量灌入 {} 条", n);
+            }
+        } catch (Exception e) {
+            log.warn("灌入写作批改历史失败: {}", e.getMessage());
+        }
+    }
+
+    /** 已有库写入 writing_grade 场景壳（仅缺省时插入，不覆盖后台已改文案） */
+    private void seedWritingGradePromptIfMissing(Connection conn) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            String prompt = """
+                    {global_constraint}
+                    You are an IELTS Academic Writing examiner and coach for {task_type}.
+                    Grade the essay; produce polishedEssay (keep student's ideas) and modelEssay (high-band sample for the same question).
+                    Return ONLY one JSON object with keys:
+                    overallBand, taskAchievement or taskResponse, coherence, lexical, grammar,
+                    summary, priorities (3-5 strings), annotations ([{excerpt,issue,fix}]),
+                    polishedEssay, modelEssay.
+                    Bands use 0-9 with 0.5 steps. Be specific and actionable. Reply language follows {language}.
+                    """;
+            try (var ps = conn.prepareStatement("""
+                    INSERT INTO sys_ai_scene_prompt
+                    (scene_key, locale, scene_name, system_prompt, remark, status, sort_num, create_time, update_time)
+                    SELECT 'writing_grade', 'zh-CN', '雅思写作批改', ?, ?, 1, 4, NOW(), NOW()
+                    FROM DUAL
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM sys_ai_scene_prompt
+                      WHERE scene_key = 'writing_grade' AND locale = 'zh-CN' AND is_deleted = 0
+                    )
+                    """)) {
+                ps.setString(1, prompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}/{task_type}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库种子初始化完成: writing_grade 场景提示词已写入");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("写入 writing_grade 场景提示词失败: {}", e.getMessage());
         }
     }
 }

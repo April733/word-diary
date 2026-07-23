@@ -243,6 +243,35 @@ export const getMyAbuseNotice = (id: number) =>
 export const claimMyAbuseNotice = (noticeNo: string) =>
   api.post('/abuse-notices/mine/claim', { noticeNo })
 
+// Writing (IELTS)
+export const listWritingEssays = () => api.get('/writing')
+export const getWritingSamples = () => api.get('/writing/samples')
+export const createWritingEssay = (data: {
+  title?: string
+  taskType: string
+  promptText: string
+  bodyText?: string
+}) => api.post('/writing', data)
+export const getWritingEssay = (id: number) => api.get(`/writing/${id}`)
+export const saveWritingEssay = (
+  id: number,
+  data: { title?: string; taskType?: string; promptText?: string; bodyText?: string }
+) => api.put(`/writing/${id}`, data)
+export const deleteWritingEssay = (id: number) => api.delete(`/writing/${id}`)
+export const gradeWritingEssay = (id: number) =>
+  api.post(`/writing/${id}/grade`, null, { timeout: 180000 })
+export const listWritingGrades = (id: number) => api.get(`/writing/${id}/grades`)
+export const uploadWritingPromptImage = (id: number, file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post(`/writing/${id}/prompt-image`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  })
+}
+export const clearWritingPromptImage = (id: number) =>
+  api.delete(`/writing/${id}/prompt-image`)
+
 // Book ↔ Notebook links & collect
 export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)
 export const collectBookWords = (bookId: number, data: any) =>
