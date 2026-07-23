@@ -18,10 +18,6 @@
           <t-input-number v-model="form.reviewUnlockHour" :min="0" :max="23" theme="column" />
           <p class="hint">{{ $t('study.reviewUnlockHourHint') }}</p>
         </t-form-item>
-        <t-form-item :label="$t('study.autoSpreadNew')">
-          <t-switch v-model="form.autoSpreadNew" />
-          <p class="hint">{{ $t('study.autoSpreadNewHint') }}</p>
-        </t-form-item>
         <t-button theme="primary" block :loading="saving" @click="handleSave">{{ $t('common.save') }}</t-button>
       </t-form>
     </div>
@@ -40,8 +36,7 @@ const { t } = useI18n()
 const saving = ref(false)
 const form = ref({
   dailyNewLimit: 20,
-  reviewUnlockHour: 7,
-  autoSpreadNew: true
+  reviewUnlockHour: 7
 })
 
 onMounted(async () => {
@@ -50,8 +45,7 @@ onMounted(async () => {
     const data = res.data.data
     form.value = {
       dailyNewLimit: data.dailyNewLimit,
-      reviewUnlockHour: data.reviewUnlockHour,
-      autoSpreadNew: data.autoSpreadNew
+      reviewUnlockHour: data.reviewUnlockHour
     }
   } catch {
     MessagePlugin.error(t('study.loadFailed'))

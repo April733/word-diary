@@ -272,8 +272,11 @@ ALTER TABLE wd_learn_plan ADD COLUMN lapse_count int NOT NULL DEFAULT 0 COMMENT 
 ALTER TABLE wd_learn_plan ADD COLUMN last_feedback tinyint DEFAULT NULL COMMENT '最近一次反馈' AFTER lapse_count;
 ALTER TABLE wd_learn_plan ADD COLUMN last_study_at datetime DEFAULT NULL COMMENT '最近一次正式学习时间' AFTER last_feedback;
 ALTER TABLE wd_learn_plan ADD COLUMN priority_score int NOT NULL DEFAULT 0 COMMENT '复习优先级分' AFTER last_study_at;
-ALTER TABLE wd_learn_plan ADD COLUMN scheduled_new_date date DEFAULT NULL COMMENT '计划作为今日新词出现的日期' AFTER priority_score;
-ALTER TABLE wd_learn_plan ADD COLUMN new_alloc_seq int DEFAULT NULL COMMENT '在该日新词队列中的顺序' AFTER scheduled_new_date;
+-- 已废弃：禁止预排未来新词（现查模式）。启动时 DatabaseInitConfig 会清空这两列。
+-- ALTER TABLE wd_learn_plan ADD COLUMN scheduled_new_date ...
+-- ALTER TABLE wd_learn_plan ADD COLUMN new_alloc_seq ...
+UPDATE wd_learn_plan SET scheduled_new_date = NULL, new_alloc_seq = NULL
+WHERE scheduled_new_date IS NOT NULL OR new_alloc_seq IS NOT NULL;
 
 ALTER TABLE wd_learn_record ADD COLUMN feedback tinyint NOT NULL DEFAULT 1 COMMENT '0忘记 1认识 2模糊' AFTER result;
 ALTER TABLE wd_learn_record ADD COLUMN study_mode tinyint NOT NULL DEFAULT 1 COMMENT '1正式每日 2自由回顾' AFTER feedback;
@@ -577,3 +580,108 @@ ALTER TABLE sys_ai_scene ADD COLUMN region varchar(16) NOT NULL DEFAULT 'cn' COM
 -- 2026-07-18: 单词本 status 语义：1参与每日学习 0不参与（无新列）
 -- =============================================
 -- ALTER TABLE wd_word_book MODIFY COLUMN status tinyint NOT NULL DEFAULT 1 COMMENT '1参与每日学习 0不参与';
+
+-- =============================================
+-- 2026-07-19: 侵权投诉 / 违法内容举报通道（合规留存）
+-- 运行时由 DatabaseInitConfig.ensureAbuseNoticeTables 自动建表。
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_abuse_notice` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `notice_no` varchar(32) NOT NULL COMMENT '通知编号（对外回执）',
+  `notice_type` varchar(16) NOT NULL COMMENT 'copyright版权投诉 | illegal违法举报',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0待审 1合格待处理 2已处理 3驳回 4关闭',
+  `submitter_user_id` bigint DEFAULT NULL COMMENT '提交账号用户ID',
+  `complainant_name` varchar(128) NOT NULL COMMENT '投诉人姓名/名称',
+  `complainant_email` varchar(128) NOT NULL COMMENT '投诉人邮箱',
+  `complainant_phone` varchar(32) DEFAULT '' COMMENT '投诉人电话',
+  `organization` varchar(256) DEFAULT '' COMMENT '权利人/机构名称',
+  `right_description` text COMMENT '权利说明（版权投诉）',
+  `ownership_proof` text COMMENT '权属证明说明',
+  `target_url` varchar(1024) DEFAULT '' COMMENT '涉事链接',
+  `target_book_id` bigint DEFAULT NULL COMMENT '涉事电子书ID',
+  `target_description` text NOT NULL COMMENT '涉事内容描述',
+  `detail` text NOT NULL COMMENT '投诉/举报详情',
+  `good_faith` tinyint NOT NULL DEFAULT 0 COMMENT '是否勾选善意声明 1是',
+  `received_at` datetime NOT NULL COMMENT '收到通知时间',
+  `qualified_at` datetime DEFAULT NULL COMMENT '认定为合格通知时间',
+  `due_at` datetime DEFAULT NULL COMMENT '处理时限（合格后24-48h）',
+  `actioned_at` datetime DEFAULT NULL COMMENT '实际处理完成时间',
+  `action_taken` varchar(32) DEFAULT '' COMMENT 'remove|restrict|reject|none',
+  `handle_note` text COMMENT '处理说明',
+  `handler_id` bigint DEFAULT NULL COMMENT '处理人用户ID',
+  `ip_address` varchar(64) DEFAULT '' COMMENT '提交IP',
+  `user_agent` varchar(512) DEFAULT '' COMMENT '提交UA',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_notice_no` (`notice_no`),
+  KEY `idx_status_due` (`status`, `due_at`),
+  KEY `idx_type` (`notice_type`),
+  KEY `idx_received` (`received_at`),
+  KEY `idx_book` (`target_book_id`),
+  KEY `idx_submitter` (`submitter_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉/违法举报通知';
+
+-- 已有表补列（幂等由 DatabaseInitConfig.ensureColumn 执行亦可）
+-- ALTER TABLE wd_abuse_notice ADD COLUMN submitter_user_id bigint DEFAULT NULL COMMENT '提交账号用户ID' AFTER status;
+
+CREATE TABLE IF NOT EXISTS `wd_abuse_notice_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `notice_id` bigint NOT NULL COMMENT '通知ID',
+  `event_type` varchar(32) NOT NULL COMMENT 'received|qualified|reviewing|removed|restricted|rejected|closed|note',
+  `event_detail` text COMMENT '事件详情/证据摘要',
+  `operator_id` bigint DEFAULT NULL COMMENT '操作人，NULL=系统/投诉人提交',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件时间点',
+  PRIMARY KEY (`id`),
+  KEY `idx_notice_time` (`notice_id`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉处理时间线（证据留存）';
+
+-- =============================================
+-- 2026-07-22: 下线功能表清理（与当前代码对齐）
+-- 语法大纲 / 做题本 / 拆句学习 / 旧字典表 / 权益快照 / 会员等级 / 邀请码 / AI 迁移临时表
+-- 垃圾桶 TTL 列 deleted_at
+-- =============================================
+DROP TABLE IF EXISTS `wd_user_grammar_point`;
+DROP TABLE IF EXISTS `wd_user_grammar_profile`;
+DROP TABLE IF EXISTS `sys_grammar_diagnostic_item`;
+DROP TABLE IF EXISTS `sys_grammar_point`;
+DROP TABLE IF EXISTS `wd_exercise_item`;
+DROP TABLE IF EXISTS `wd_sentence_study_item`;
+DROP TABLE IF EXISTS `wd_sentence_study_session`;
+DROP TABLE IF EXISTS `sys_ebbinghaus_node`;
+DROP TABLE IF EXISTS `sys_learn_status`;
+DROP TABLE IF EXISTS `wd_user_benefit`;
+DROP TABLE IF EXISTS `sys_member_tier`;
+DROP TABLE IF EXISTS `wd_invite_code`;
+DROP TABLE IF EXISTS `sys_ai_model_legacy_scene_merged`;
+DROP TABLE IF EXISTS `sys_ai_model_new`;
+
+-- 单词垃圾桶已下线：删除 TTL 列（幂等：仅当列存在时执行）
+SET @db := DATABASE();
+SET @sql := (
+  SELECT IF(
+    COUNT(*) > 0,
+    'ALTER TABLE `wd_word` DROP COLUMN `deleted_at`',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'wd_word' AND COLUMN_NAME = 'deleted_at'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 会员等级列下线（幂等）
+SET @sql := (
+  SELECT IF(
+    COUNT(*) > 0,
+    'ALTER TABLE `wd_user` DROP COLUMN `member_tier`',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'wd_user' AND COLUMN_NAME = 'member_tier'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

@@ -8,13 +8,13 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 电子书/书架表（wd_book）：保存用户上传的电子书元数据、文件路径与阅读进度。
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-/**
- * 电子书/书架表
- */
 public class WdBook {
 
     /** 主键 */
@@ -35,7 +35,7 @@ public class WdBook {
     /** 文件存储路径 */
     private String filePath;
 
-    /** 文件类型，如 epub/pdf/txt */
+    /** 文件类型，如 epub / pdf / txt */
     private String fileType;
 
     /** 文件大小（字节） */
@@ -44,10 +44,10 @@ public class WdBook {
     /** 总章节数 */
     private Integer totalChapters;
 
-    /** 当前阅读章节 */
+    /** 当前阅读章节索引 */
     private Integer currentChapter;
 
-    /** 当前阅读位置 CFI */
+    /** 当前阅读位置（EPUB CFI） */
     private String currentCfi;
 
     /** 阅读进度百分比 */
@@ -68,6 +68,6 @@ public class WdBook {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

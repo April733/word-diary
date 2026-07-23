@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * AI 对话会话
+ * AI 对话会话表（wd_ai_session）：保存阅读助手等多轮对话的会话元数据。
  */
 @Data
 @Builder
@@ -25,7 +25,7 @@ public class WdAiSession {
     /** 关联书籍ID（可选，按书隔离会话） */
     private Long bookId;
 
-    /** 会话标题（取第一条用户消息摘要） */
+    /** 会话标题（通常取第一条用户消息摘要） */
     private String title;
 
     /** 创建时间 */
@@ -34,6 +34,6 @@ public class WdAiSession {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

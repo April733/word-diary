@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 用户表
+ * 用户表（wd_user）：存放账号、角色、会员与语言/AI 线路偏好等基础资料。
  */
 @Data
 @Builder
@@ -34,12 +34,6 @@ public class WdUser {
     /** 手机号 */
     private String phone;
 
-    /** 是否会员 1是 0否 */
-    private Integer isMember;
-
-    /** 会员等级，关联 sys_member_tier.tier */
-    private Integer memberTier;
-
     /** 角色：user | admin */
     private String role;
 
@@ -61,6 +55,6 @@ public class WdUser {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

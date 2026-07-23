@@ -72,29 +72,25 @@ public class FullFlowIntegrationTest {
         List items = (List) listResp.getBody().get("data");
         Assertions.assertTrue(items.size() >= 1);
 
-        String openSessionUrl = baseUrl() + "/api/study/session/open";
+        String openSessionUrl = baseUrl() + "/api/study-today/session/open";
         ResponseEntity<Map> sessionResp = restTemplate.exchange(openSessionUrl, HttpMethod.POST, new HttpEntity<>(headers), Map.class);
         Assertions.assertEquals(HttpStatus.OK, sessionResp.getStatusCode());
         Map sessionData = (Map) sessionResp.getBody().get("data");
         Assertions.assertNotNull(sessionData.get("current"));
         Map current = (Map) sessionData.get("current");
-        Long planId = ((Number) current.get("planId")).longValue();
-        Long queueItemId = ((Number) sessionData.get("queueItemId")).longValue();
+        Long wordId = ((Number) current.get("wordId")).longValue();
         String phase = (String) sessionData.get("phase");
 
-        String answerUrl = baseUrl() + "/api/study/answer";
-        String answerJson = "{\"planId\":" + planId + ",\"queueItemId\":" + queueItemId
-                + ",\"feedback\":1,\"phase\":\"" + phase + "\"}";
+        String answerUrl = baseUrl() + "/api/study-today/answer";
+        String answerJson = "{\"wordId\":" + wordId + ",\"feedback\":1,\"phase\":\"" + phase + "\"}";
         ResponseEntity<Map> answerResp = restTemplate.exchange(answerUrl, HttpMethod.POST, new HttpEntity<>(answerJson, headers), Map.class);
         Assertions.assertEquals(HttpStatus.OK, answerResp.getStatusCode());
 
-        String recordsUrl = baseUrl() + "/api/study/records";
-        ResponseEntity<Map> recordsResp = restTemplate.exchange(recordsUrl, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
-        Assertions.assertEquals(HttpStatus.OK, recordsResp.getStatusCode());
-        List recs = (List) recordsResp.getBody().get("data");
-        Assertions.assertTrue(recs.size() >= 1);
+        // 第一遍认识不改库；再答一遍才毕业
+        ResponseEntity<Map> answer2Resp = restTemplate.exchange(answerUrl, HttpMethod.POST, new HttpEntity<>(answerJson, headers), Map.class);
+        Assertions.assertEquals(HttpStatus.OK, answer2Resp.getStatusCode());
 
-        String statsUrl = baseUrl() + "/api/study/stats";
+        String statsUrl = baseUrl() + "/api/study-plan/stats";
         ResponseEntity<Map> statsResp = restTemplate.exchange(statsUrl, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
         Assertions.assertEquals(HttpStatus.OK, statsResp.getStatusCode());
         Map stats = (Map) statsResp.getBody().get("data");

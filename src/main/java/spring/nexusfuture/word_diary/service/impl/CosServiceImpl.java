@@ -44,6 +44,10 @@ public class CosServiceImpl implements CosService {
     @Value("${app.cos.book-prefix:books/}")
     private String bookPrefix;
 
+    /** 绕过 IDE/本机残留的 SOCKS·HTTP 代理，避免代理关闭后 COS 报 Connection refused */
+    @Value("${app.cos.bypass-system-proxy:true}")
+    private boolean bypassSystemProxy;
+
     private COSClient cosClient;
 
     @PostConstruct
@@ -52,11 +56,34 @@ public class CosServiceImpl implements CosService {
             log.warn("COS 配置未设置 (secretId/secretKey 为空)，COS 服务将不可用");
             return;
         }
+        if (bypassSystemProxy) {
+            clearJvmProxyProperties();
+        }
         COSCredentials cred = new BasicCOSCredentials(secretId, secretKey);
         ClientConfig clientConfig = new ClientConfig(new Region(region));
         clientConfig.setHttpProtocol(HttpProtocol.https);
         this.cosClient = new COSClient(cred, clientConfig);
-        log.info("COS 客户端初始化完成: region={}, bucket={}", region, bucket);
+        log.info("COS 客户端初始化完成: region={}, bucket={}, bypassSystemProxy={}",
+                region, bucket, bypassSystemProxy);
+    }
+
+    /** 清除会劫持出站连接的 JVM 代理属性（常见于 Clash / IDE HTTP Proxy 残留） */
+    private void clearJvmProxyProperties() {
+        String[] keys = {
+                "socksProxyHost", "socksProxyPort", "socksNonProxyHosts",
+                "http.proxyHost", "http.proxyPort",
+                "https.proxyHost", "https.proxyPort",
+                "http.nonProxyHosts", "ftp.proxyHost", "ftp.proxyPort",
+                "java.net.useSystemProxies"
+        };
+        for (String key : keys) {
+            String old = System.getProperty(key);
+            if (old != null && !old.isBlank()) {
+                System.clearProperty(key);
+                log.info("COS 绕过系统代理，已清除 JVM 属性 {}={}", key, old);
+            }
+        }
+        System.setProperty("java.net.useSystemProxies", "false");
     }
 
     @PreDestroy

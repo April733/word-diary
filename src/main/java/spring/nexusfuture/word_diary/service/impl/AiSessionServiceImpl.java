@@ -129,6 +129,27 @@ public class AiSessionServiceImpl implements AiSessionService {
 
     @Override
     @Transactional
+    public void updateMessageContent(Long messageId, Long userId, String content) {
+        if (content == null || content.isBlank()) {
+            throw new BizException("内容不能为空");
+        }
+        WdAiMessage msg = messageMapper.selectById(messageId);
+        if (msg == null) {
+            throw new BizException("消息不存在");
+        }
+        WdAiSession session = sessionMapper.selectById(msg.getSessionId());
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new BizException("消息不存在");
+        }
+        if (!"assistant".equals(msg.getRole())) {
+            throw new BizException("仅可编辑助手消息");
+        }
+        messageMapper.updateContent(messageId, content);
+        sessionMapper.touch(msg.getSessionId());
+    }
+
+    @Override
+    @Transactional
     public void deleteSession(Long sessionId, Long userId) {
         sessionMapper.deleteById(sessionId, userId);
         messageMapper.softDeleteBySessionId(sessionId);

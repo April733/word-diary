@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 单词库（个人私有单词表）
+ * 个人单词库表（wd_word）：存放用户私有单词/短语及其释义、例句、来源定位与学习阶段。
  */
 @Data
 @Builder
@@ -40,7 +40,7 @@ public class WdWord {
     /** 词根词缀解析 */
     private String rootAffix;
 
-    /** word | phrase */
+    /** 条目类型：word 单词 / phrase 短语 */
     private String entryType;
 
     /** 来源书籍 */
@@ -58,6 +58,18 @@ public class WdWord {
     /** 创建用户ID，NULL表示系统预置 */
     private Long userId;
 
+    /**
+     * 学习状态（见 {@link spring.nexusfuture.word_diary.common.WordStudyStatus}）：
+     * 0未学 1~6复习阶梯 7熟记
+     */
+    private Integer status;
+
+    /**
+     * 进入当前 status 的时间；认识升阶时写入当前<strong>学习日</strong>日期（默认每天 7:00 切日）。
+     * 到期复习：DATEDIFF(学习日, DATE(status_data)) &gt;= 该阶段间隔天数
+     */
+    private LocalDateTime statusData;
+
     /** 创建人 */
     private Long createBy;
 
@@ -70,9 +82,6 @@ public class WdWord {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
-
-    /** 移入垃圾桶时间；满 7 天后物理删除 */
-    private LocalDateTime deletedAt;
 }

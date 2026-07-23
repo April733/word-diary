@@ -6,14 +6,14 @@
         <button
           type="button"
           class="speak-btn speak-btn--lg"
-          title="US"
-          @click.stop="speak(word.wordProto, 'us')"
+          title="UK"
+          @click.stop="speak(word.wordProto, 'uk')"
         >
           <t-icon name="sound" size="20px" />
         </button>
       </div>
-      <div class="word-hint" v-if="word.usPhonetic">{{ word.usPhonetic }}</div>
-      <p class="tap-hint">点击查看释义</p>
+      <div class="word-hint" v-if="word.ukPhonetic || word.usPhonetic">{{ word.ukPhonetic || word.usPhonetic }}</div>
+      <p class="tap-hint">{{ $t('study.tapCardHint') }}</p>
     </div>
     <div class="card-back" v-else>
       <div class="word-main-row">
@@ -46,10 +46,10 @@
         </span>
       </div>
       <div class="meaning">{{ word.partSpeechMean }}</div>
-      <div class="sentence" v-if="word.sentenceExample">📝 {{ word.sentenceExample }}</div>
-      <div class="root" v-if="word.rootAffix">🔍 {{ word.rootAffix }}</div>
-      <div class="review-info" v-if="word.reviewTimes > 0">
-        已复习 {{ word.reviewTimes }} 次 · 当前第 {{ word.currentLevel }} 级
+      <div class="sentence" v-if="word.sentenceExample">{{ word.sentenceExample }}</div>
+      <div class="root" v-if="word.rootAffix">{{ word.rootAffix }}</div>
+      <div class="review-info" v-if="word.learnStatus > 0">
+        {{ statusLabel(word.learnStatus) }}
       </div>
     </div>
   </div>
@@ -57,6 +57,9 @@
 
 <script setup lang="ts">
 import { MessagePlugin } from 'tdesign-vue-next'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   word: any
@@ -67,44 +70,49 @@ const emit = defineEmits<{
   toggle: []
 }>()
 
+function statusLabel(status: number) {
+  const map: Record<number, string> = {
+    0: '未学习',
+    1: '首次学完',
+    2: '第一轮复习',
+    3: '第二轮复习',
+    4: '第三轮复习',
+    5: '第四轮复习',
+    6: '第五轮复习',
+    7: '已熟记',
+  }
+  return map[status] || '未知'
+}
+
 function onCardClick() {
-  // 只揭示释义，不再来回切换隐藏
   if (props.showAnswer) return
   emit('toggle')
 }
 
-function speak(text: string, accent: 'us' | 'uk' = 'us') {
+function speak(text: string, accent: 'us' | 'uk' = 'uk') {
   if (!text?.trim()) return
   if (!window.speechSynthesis) {
-    MessagePlugin.warning('当前浏览器不支持语音播放')
+    MessagePlugin.warning(t('study.speechUnsupported'))
     return
   }
   window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(text.trim())
-  utterance.lang = accent === 'us' ? 'en-US' : 'en-GB'
-  utterance.rate = 0.85
-  const voices = window.speechSynthesis.getVoices()
-  if (voices.length > 0) {
-    const langPrefix = accent === 'us' ? 'en-US' : 'en-GB'
-    let best = voices.find(v => v.lang === langPrefix && v.localService)
-    if (!best) best = voices.find(v => v.lang.startsWith(langPrefix))
-    if (!best) best = voices.find(v => v.lang.startsWith('en-'))
-    if (best) utterance.voice = best
-  }
-  window.speechSynthesis.speak(utterance)
+  const u = new SpeechSynthesisUtterance(text.trim())
+  u.lang = accent === 'us' ? 'en-US' : 'en-GB'
+  window.speechSynthesis.speak(u)
 }
 </script>
 
 <style scoped>
 .word-card {
-  background: #fff;
-  border-radius: 16px;
-  padding: 48px 32px;
+  background: var(--brand-white);
+  border-radius: 18px;
+  padding: 40px 28px;
   text-align: center;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  border: 1px solid color-mix(in srgb, var(--brand-lizard) 42%, var(--brand-white));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--brand-ink) 6%, transparent);
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  min-height: 280px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  min-height: 240px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -117,7 +125,8 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 
 .word-card:not(.revealed):hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  border-color: color-mix(in srgb, var(--brand-lizard) 70%, var(--brand-ink));
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--brand-ink) 9%, transparent);
 }
 
 .word-main-row {
@@ -128,22 +137,23 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 }
 
 .word-main {
-  font-size: 36px;
+  font-size: 34px;
   font-weight: 700;
-  color: #1a1a2e;
-  margin-bottom: 0;
+  letter-spacing: 0.01em;
+  color: var(--brand-ink);
+  line-height: 1.25;
 }
 
 .word-hint {
   margin-top: 12px;
-  font-size: 16px;
-  color: #9ca3af;
+  font-size: 15px;
+  color: color-mix(in srgb, var(--brand-ink) 45%, var(--brand-lizard));
 }
 
 .tap-hint {
-  margin-top: 24px;
+  margin-top: 28px;
   font-size: 13px;
-  color: #c4c4c4;
+  color: color-mix(in srgb, var(--brand-lizard) 35%, #999);
 }
 
 .card-back {
@@ -156,7 +166,7 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
   justify-content: center;
   gap: 16px;
   font-size: 14px;
-  color: #9ca3af;
+  color: color-mix(in srgb, var(--brand-ink) 50%, var(--brand-lizard));
   margin: 12px 0 16px;
 }
 
@@ -179,7 +189,7 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 .speak-btn {
   border: none;
   background: transparent;
-  color: #315C34;
+  color: var(--brand-ink);
   cursor: pointer;
   padding: 2px;
   line-height: 1;
@@ -190,7 +200,7 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 }
 
 .speak-btn:hover {
-  background: rgba(49, 92, 52, 0.1);
+  background: color-mix(in srgb, var(--brand-lizard) 35%, transparent);
 }
 
 .speak-btn--lg {
@@ -198,28 +208,29 @@ function speak(text: string, accent: 'us' | 'uk' = 'us') {
 }
 
 .meaning {
-  font-size: 22px;
-  color: #315C34;
+  font-size: 20px;
+  color: var(--brand-ink);
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+  line-height: 1.45;
 }
 
 .sentence {
   font-size: 14px;
-  color: #6b7280;
+  color: color-mix(in srgb, var(--brand-ink) 62%, #666);
   margin-bottom: 8px;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .root {
   font-size: 13px;
-  color: #6b7280;
+  color: color-mix(in srgb, var(--brand-ink) 55%, #888);
   margin-bottom: 8px;
 }
 
 .review-info {
   margin-top: 12px;
   font-size: 12px;
-  color: #9ca3af;
+  color: color-mix(in srgb, var(--brand-lizard) 30%, #999);
 }
 </style>

@@ -7,27 +7,22 @@ import spring.nexusfuture.word_diary.common.AiRegions;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.JwtUtil;
 import spring.nexusfuture.word_diary.common.UserRoles;
-import spring.nexusfuture.word_diary.dto.LoginReq;
-import spring.nexusfuture.word_diary.dto.RegisterReq;
-import spring.nexusfuture.word_diary.dto.UserVO;
+import spring.nexusfuture.word_diary.dto.request.LoginReq;
+import spring.nexusfuture.word_diary.dto.request.RegisterReq;
+import spring.nexusfuture.word_diary.dto.response.UserVO;
 import spring.nexusfuture.word_diary.entity.WdUser;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
-import spring.nexusfuture.word_diary.service.MemberTierService;
 import spring.nexusfuture.word_diary.service.UserService;
 
 @Service
 public class UserServiceImpl implements UserService {
 
     private final WdUserMapper userMapper;
-    private final MemberTierService memberTierService;
     private final JwtUtil jwtUtil;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    public UserServiceImpl(WdUserMapper userMapper,
-                           MemberTierService memberTierService,
-                           JwtUtil jwtUtil) {
+    public UserServiceImpl(WdUserMapper userMapper, JwtUtil jwtUtil) {
         this.userMapper = userMapper;
-        this.memberTierService = memberTierService;
         this.jwtUtil = jwtUtil;
     }
 
@@ -58,17 +53,12 @@ public class UserServiceImpl implements UserService {
             throw new BizException("注册方式不正确");
         }
 
-        // 暂不启用会员体系：注册不需要邀请码，默认免费档
-        Integer tier = memberTierService.getDefaultTier().getTier();
-
         WdUser user = WdUser.builder()
                 .username(req.getUsername())
                 .password(passwordEncoder.encode(req.getPassword()))
                 .nickname(req.getUsername())
                 .phone("phone".equals(req.getRegisterType()) ? req.getPhone() : null)
                 .email("email".equals(req.getRegisterType()) ? req.getEmail() : null)
-                .isMember(0)
-                .memberTier(tier)
                 .role(UserRoles.USER)
                 .build();
         userMapper.insert(user);
@@ -89,8 +79,6 @@ public class UserServiceImpl implements UserService {
                 .username(user.getUsername())
                 .nickname(user.getNickname())
                 .token(token)
-                .isMember(user.getIsMember())
-                .memberTier(user.getMemberTier())
                 .role(UserRoles.normalize(user.getRole()))
                 .preferredLocale(user.getPreferredLocale())
                 .preferredAiRegion(user.getPreferredAiRegion() != null ? user.getPreferredAiRegion() : AiRegions.PREF_AUTO)
@@ -133,5 +121,13 @@ public class UserServiceImpl implements UserService {
             throw new BizException("该邮箱未注册");
         }
         userMapper.updatePassword(user.getId(), passwordEncoder.encode(newPassword));
+    }
+
+    @Override
+    public WdUser findById(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        return userMapper.selectById(userId);
     }
 }

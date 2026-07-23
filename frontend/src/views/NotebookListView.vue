@@ -11,35 +11,40 @@
     </header>
 
     <div class="page-body">
-      <t-list v-if="notebooks.length > 0" :split="true">
-        <t-list-item v-for="book in notebooks" :key="book.id">
-          <t-list-item-meta :title="book.bookName" :description="book.bookDesc || $t('wordbook.noDesc')" />
-          <template #action>
-            <t-space align="center">
-              <t-tag variant="light" theme="primary">{{ book.wordCount }} {{ $t('wordbook.wordUnit') }}</t-tag>
-              <t-switch
-                :key="`${book.id}-${book.status}`"
-                :value="isStudyOn(book)"
-                :loading="togglingId === book.id"
-                :disabled="isStudyToggleCooling(book.id)"
-                :title="$t('wordbook.studyEnabled')"
-                @change="(v: boolean) => handleToggleStudy(book.id, v)"
-              />
-              <t-button variant="text" @click="router.push(`/notebooks/${book.id}`)">{{ $t('wordbook.view') }}</t-button>
-              <t-button variant="text" @click="openEdit(book)">{{ $t('wordbook.edit') }}</t-button>
-              <t-popconfirm :content="$t('wordbook.deleteConfirm')" @confirm="handleDelete(book.id)">
-                <t-button variant="text" theme="danger">{{ $t('wordbook.delete') }}</t-button>
-              </t-popconfirm>
-            </t-space>
-          </template>
-        </t-list-item>
-      </t-list>
+      <ul v-if="notebooks.length > 0" class="nb-list">
+        <li v-for="book in notebooks" :key="book.id" class="nb-item">
+          <div class="nb-main">
+            <div class="nb-name" :title="book.bookName">{{ book.bookName }}</div>
+            <div class="nb-desc" :title="book.bookDesc || $t('wordbook.noDesc')">
+              {{ book.bookDesc || $t('wordbook.noDesc') }}
+            </div>
+          </div>
+          <div class="nb-actions">
+            <t-tag variant="light" theme="primary" class="nb-count">
+              {{ book.wordCount }} {{ $t('wordbook.wordUnit') }}
+            </t-tag>
+            <t-switch
+              :key="`${book.id}-${book.status}`"
+              :value="isStudyOn(book)"
+              :loading="togglingId === book.id"
+              :disabled="isStudyToggleCooling(book.id)"
+              :title="$t('wordbook.studyEnabled')"
+              @change="(v: boolean) => handleToggleStudy(book.id, v)"
+            />
+            <t-button variant="text" @click="router.push(`/notebooks/${book.id}`)">{{ $t('wordbook.view') }}</t-button>
+            <t-button variant="text" @click="openEdit(book)">{{ $t('wordbook.rename') }}</t-button>
+            <t-popconfirm :content="$t('wordbook.deleteConfirm')" @confirm="handleDelete(book.id)">
+              <t-button variant="text" theme="danger">{{ $t('wordbook.delete') }}</t-button>
+            </t-popconfirm>
+          </div>
+        </li>
+      </ul>
       <t-empty v-else :description="$t('wordbook.noWordbooks')" />
     </div>
 
     <t-dialog
       v-model:visible="showAddDialog"
-      :header="editingBook ? $t('wordbook.edit') : $t('wordbook.create')"
+      :header="editingBook ? $t('wordbook.rename') : $t('wordbook.create')"
       @confirm="handleSave"
       :confirm-btn="{ content: editingBook ? $t('common.confirm') : $t('wordbook.create'), loading: saving }"
     >
@@ -225,6 +230,7 @@ async function handleDelete(id: number) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 16px 24px;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
@@ -234,15 +240,118 @@ async function handleDelete(id: number) {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .page-header h1 {
   font-size: 20px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-header > .t-button {
+  flex-shrink: 0;
 }
 
 .page-body {
   max-width: 800px;
   margin: 24px auto;
   padding: 0 24px;
+}
+
+.nb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.nb-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard, #a8b59f) 28%, transparent);
+  overflow: hidden;
+}
+
+.nb-item:last-child {
+  border-bottom: none;
+}
+
+.nb-main {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.nb-name,
+.nb-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nb-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--brand-ink, #315c34);
+  line-height: 1.4;
+}
+
+.nb-desc {
+  margin-top: 2px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--brand-ink, #315c34) 55%, #888);
+  line-height: 1.4;
+}
+
+.nb-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.nb-count {
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .page-header {
+    padding: 12px 16px;
+  }
+
+  .page-header h1 {
+    font-size: 17px;
+  }
+
+  .page-body {
+    margin: 16px auto;
+    padding: 0 16px;
+  }
+
+  .nb-item {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .nb-main {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .nb-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>

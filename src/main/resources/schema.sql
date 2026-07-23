@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS `wd_user` (
   `password` varchar(64) NOT NULL COMMENT '密码',
   `email` varchar(128) DEFAULT '' COMMENT '邮箱地址',
   `phone` varchar(20) DEFAULT '' COMMENT '手机号',
-  `is_member` tinyint NOT NULL DEFAULT 0 COMMENT '是否会员 1是 0否',
-  `member_tier` int NOT NULL DEFAULT 1 COMMENT '会员等级，关联 sys_member_tier.tier',
   `role` varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin',
   `preferred_locale` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言',
   `preferred_ai_region` varchar(16) NOT NULL DEFAULT 'auto' COMMENT 'AI线路偏好 auto|cn|global',
@@ -59,6 +57,8 @@ CREATE TABLE IF NOT EXISTS `wd_word` (
   `source_location` varchar(255) DEFAULT '' COMMENT '定位信息',
   `is_public` tinyint NOT NULL DEFAULT 1 COMMENT '是否公开 1公开 0私有',
   `user_id` bigint DEFAULT NULL COMMENT '创建用户ID，NULL表示系统预置',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '学习状态: 0未学 1~6复习阶梯 7熟记',
+  `status_data` datetime DEFAULT NULL COMMENT '进入当前status的时间；0时为创建时间',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_by` bigint DEFAULT NULL COMMENT '修改人',
@@ -67,35 +67,9 @@ CREATE TABLE IF NOT EXISTS `wd_word` (
   PRIMARY KEY (`id`),
   KEY `idx_user_id` (`user_id`),
   KEY `idx_word_proto` (`word_proto`),
-  KEY `idx_notebook_id` (`notebook_id`)
+  KEY `idx_notebook_id` (`notebook_id`),
+  KEY `idx_user_status_data` (`user_id`, `status`, `status_data`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单词库';
-
--- 艾宾浩斯复习间隔配置
-CREATE TABLE IF NOT EXISTS `sys_ebbinghaus_node` (
-  `id` tinyint NOT NULL AUTO_INCREMENT COMMENT '复习层级ID',
-  `node_name` varchar(30) NOT NULL COMMENT '阶段名称',
-  `day_interval` int NOT NULL COMMENT '距初次学习间隔天数',
-  `sort` tinyint NOT NULL COMMENT '排序顺序',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='艾宾浩斯复习间隔配置';
-
--- 单词学习状态配置
-CREATE TABLE IF NOT EXISTS `sys_learn_status` (
-  `status` tinyint NOT NULL COMMENT '状态编码',
-  `status_name` varchar(20) NOT NULL COMMENT '状态名称',
-  `remark` varchar(100) DEFAULT '' COMMENT '备注说明',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单词学习状态配置';
 
 -- =============================================
 -- 系统基础配置（全局可调，含说明）
@@ -117,102 +91,17 @@ CREATE TABLE IF NOT EXISTS `sys_base_config` (
   KEY `idx_category` (`category`, `sort_num`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统基础配置表';
 
--- 个人单词背诵学习计划
-CREATE TABLE IF NOT EXISTS `wd_learn_plan` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `user_id` bigint NOT NULL COMMENT '所属用户',
-  `notebook_id` bigint NOT NULL COMMENT '所属单词本',
-  `word_id` bigint NOT NULL COMMENT '关联私有单词ID',
-  `learn_status` tinyint NOT NULL DEFAULT 0 COMMENT '关联学习状态',
-  `current_level` tinyint NOT NULL DEFAULT 0 COMMENT '当前艾宾浩斯层级',
-  `first_study_time` datetime DEFAULT NULL COMMENT '首次学习时间',
-  `next_review_time` datetime DEFAULT NULL COMMENT '下次复习时间',
-  `review_times` int NOT NULL DEFAULT 0 COMMENT '累计复习次数',
-  `interval_days` decimal(8,2) NOT NULL DEFAULT 0 COMMENT '当前复习间隔(天)',
-  `ease_factor` decimal(4,2) NOT NULL DEFAULT 2.50 COMMENT '难度系数',
-  `rep_count` int NOT NULL DEFAULT 0 COMMENT '连续成功复习次数',
-  `lapse_count` int NOT NULL DEFAULT 0 COMMENT '遗忘次数',
-  `last_feedback` tinyint DEFAULT NULL COMMENT '最近一次反馈: 0忘记 1认识 2模糊',
-  `last_study_at` datetime DEFAULT NULL COMMENT '最近一次正式学习时间',
-  `priority_score` int NOT NULL DEFAULT 0 COMMENT '复习优先级分',
-  `scheduled_new_date` date DEFAULT NULL COMMENT '计划作为今日新词出现的日期',
-  `new_alloc_seq` int DEFAULT NULL COMMENT '在该日新词队列中的顺序',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`id`),
-  KEY `idx_user_review` (`user_id`, `next_review_time`),
-  KEY `idx_plan_new_schedule` (`user_id`, `scheduled_new_date`, `new_alloc_seq`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人单词背诵学习计划';
-
 -- 用户学习偏好
 CREATE TABLE IF NOT EXISTS `wd_user_study_pref` (
   `user_id` bigint NOT NULL COMMENT '用户ID',
   `daily_new_limit` int NOT NULL DEFAULT 20 COMMENT '每日新词上限',
   `review_unlock_hour` tinyint NOT NULL DEFAULT 7 COMMENT '当日复习最早出现时刻(时)',
-  `auto_spread_new` tinyint NOT NULL DEFAULT 1 COMMENT '1自动均摊新词到未来各日',
+  `auto_spread_new` tinyint NOT NULL DEFAULT 0 COMMENT '已废弃：禁止均摊到未来',
   `timezone` varchar(64) NOT NULL DEFAULT 'Asia/Shanghai',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户学习偏好';
-
--- 每日学习会话汇总
-CREATE TABLE IF NOT EXISTS `wd_study_daily` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `user_id` bigint NOT NULL,
-  `study_date` date NOT NULL COMMENT '学习日（按解锁时刻切分，默认早7点至次日早7点）',
-  `review_total` int NOT NULL DEFAULT 0 COMMENT '当日复习任务总数',
-  `review_done` int NOT NULL DEFAULT 0 COMMENT '当日复习已完成数',
-  `new_total` int NOT NULL DEFAULT 0 COMMENT '当日新词任务总数',
-  `new_done` int NOT NULL DEFAULT 0 COMMENT '当日新词已完成数',
-  `review_phase_done` tinyint NOT NULL DEFAULT 0 COMMENT '1=复习阶段已全部完成',
-  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0进行中 1已完成',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_user_date` (`user_id`, `study_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每日学习会话汇总';
-
--- 当日学习队列
-CREATE TABLE IF NOT EXISTS `wd_study_queue` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `user_id` bigint NOT NULL,
-  `study_date` date NOT NULL,
-  `plan_id` bigint NOT NULL,
-  `queue_type` varchar(16) NOT NULL COMMENT 'review|new|intraday',
-  `phase` varchar(16) NOT NULL DEFAULT 'review' COMMENT 'review|new',
-  `sort_order` int NOT NULL DEFAULT 0,
-  `state` tinyint NOT NULL DEFAULT 0 COMMENT '0待做 1已完成',
-  `insert_reason` varchar(32) DEFAULT '' COMMENT 'initial|fuzzy_repeat|forget_repeat',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_user_date_type` (`user_id`, `study_date`, `queue_type`, `state`, `sort_order`),
-  KEY `idx_plan` (`plan_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当日学习队列';
-
--- 背诵行为记录
-CREATE TABLE IF NOT EXISTS `wd_learn_record` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `user_id` bigint NOT NULL COMMENT '用户ID',
-  `notebook_id` bigint NOT NULL COMMENT '单词本ID',
-  `word_id` bigint NOT NULL COMMENT '单词ID',
-  `study_type` tinyint NOT NULL COMMENT '1初次学习 2复习',
-  `result` tinyint NOT NULL COMMENT '0未记住 1记住',
-  `feedback` tinyint NOT NULL DEFAULT 1 COMMENT '0忘记 1认识 2模糊',
-  `study_mode` tinyint NOT NULL DEFAULT 1 COMMENT '1正式每日 2自由回顾',
-  `affects_schedule` tinyint NOT NULL DEFAULT 1 COMMENT '1更新计划 0仅记录',
-  `study_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '学习时间',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='背诵行为记录';
 
 -- 大模型调用历史记录
 CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
@@ -422,99 +311,6 @@ CREATE TABLE IF NOT EXISTS `wd_reader_settings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户阅读设置表';
 
 -- =============================================
--- 会员等级配置表
--- =============================================
-CREATE TABLE IF NOT EXISTS `sys_member_tier` (
-  `tier` int NOT NULL COMMENT '会员等级',
-  `tier_name` varchar(32) NOT NULL COMMENT '等级名称',
-  `max_bookshelves` int NOT NULL DEFAULT 3 COMMENT '书架数量上限',
-  `max_wordbooks` int NOT NULL DEFAULT 3 COMMENT '单词本数量上限',
-  `max_words_per_book` int NOT NULL DEFAULT 200 COMMENT '每个单词本单词上限',
-  `daily_import_limit` int NOT NULL DEFAULT 10 COMMENT '每日批量导入次数上限',
-  `daily_ai_reading_limit` int NOT NULL DEFAULT 50 COMMENT '每日AI阅读次数上限',
-  `is_ai_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '是否启用AI功能 1是 0否',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`tier`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会员等级配置表';
-
--- 种子数据：默认会员等级
-INSERT IGNORE INTO `sys_member_tier` (`tier`, `tier_name`, `max_bookshelves`, `max_wordbooks`, `max_words_per_book`, `daily_import_limit`, `daily_ai_reading_limit`, `is_ai_enabled`) VALUES
-(1, '免费版', 3, 3, 200, 10, 50, 1),
-(2, '会员版', 6, 6, 400, 20, 100, 1);
-
--- =============================================
--- 邀请码表
--- =============================================
-CREATE TABLE IF NOT EXISTS `wd_invite_code` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `seq_no` int NOT NULL COMMENT '序号',
-  `invite_code` varchar(32) NOT NULL COMMENT '邀请码',
-  `member_tier` int NOT NULL DEFAULT 1 COMMENT '对应会员等级，关联 sys_member_tier.tier',
-  `used_by` bigint DEFAULT NULL COMMENT '核销用户ID，NULL表示未核销',
-  `used_time` datetime DEFAULT NULL COMMENT '核销时间',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_invite_code` (`invite_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邀请码表';
-
--- =============================================
--- 用户权益记录表
--- =============================================
-CREATE TABLE IF NOT EXISTS `wd_user_benefit` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `user_id` bigint NOT NULL COMMENT '用户ID',
-  `tier_snapshot` int NOT NULL COMMENT '会员等级快照',
-  `max_bookshelves` int NOT NULL COMMENT '书架数量上限',
-  `max_wordbooks` int NOT NULL COMMENT '单词本数量上限',
-  `max_words_per_book` int NOT NULL COMMENT '每个单词本单词上限',
-  `daily_import_limit` int NOT NULL COMMENT '每日批量导入次数上限',
-  `daily_ai_reading_limit` int NOT NULL COMMENT '每日AI阅读次数上限',
-  `is_ai_enabled` tinyint NOT NULL DEFAULT 1 COMMENT '是否启用AI功能 1是 0否',
-  `channel` varchar(32) NOT NULL COMMENT '获取渠道: invite_code/purchase/gift/admin',
-  `channel_ref_id` bigint DEFAULT NULL COMMENT '渠道关联ID，如邀请码ID、订单ID等',
-  `acquired_at` datetime NOT NULL COMMENT '获取时间',
-  `expired_at` datetime DEFAULT NULL COMMENT '过期时间，NULL表示永久',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_by` bigint DEFAULT NULL COMMENT '修改人',
-  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
-  PRIMARY KEY (`id`),
-  KEY `idx_user_acquired` (`user_id`, `acquired_at` DESC),
-  KEY `idx_user_channel` (`user_id`, `channel`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户权益记录表';
-
--- =============================================
--- 种子数据：艾宾浩斯复习节点配置
--- =============================================
-INSERT IGNORE INTO `sys_ebbinghaus_node` (`id`, `node_name`, `day_interval`, `sort`) VALUES
-(1, '初学', 0, 0),
-(2, '第1天复习', 1, 1),
-(3, '第2天复习', 2, 2),
-(4, '第4天复习', 4, 3),
-(5, '第7天复习', 7, 4),
-(6, '第15天复习', 15, 5),
-(7, '第30天复习', 30, 6);
-
--- =============================================
--- 种子数据：学习状态字典
--- =============================================
-INSERT IGNORE INTO `sys_learn_status` (`status`, `status_name`, `remark`) VALUES
-(0, '未学习', '单词已录入，尚未进行初次学习'),
-(1, '已初学', '已完成初次学习，等待首次复习'),
-(2, '复习中', '已进入艾宾浩斯复习周期'),
-(3, '已熟记', '已通过全部复习节点，进入熟记状态'),
-(4, '遗忘重学', '复习时未记住，需重新开始学习');
-
--- =============================================
 -- 种子数据：系统基础配置
 -- =============================================
 INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`, `category`, `description`, `sort_num`) VALUES
@@ -547,13 +343,14 @@ CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
 
 -- 种子数据：默认AI阅读功能
 INSERT IGNORE INTO `sys_ai_feature` (`feature_key`, `feature_name`, `description`, `prompt`, `sort_num`) VALUES
-('word', '单词', '讲解重难点单词的词性、含义和用法', '只讲选段中的重难点词（如 solicitor），跳过专有名词与 make/move/people 等基础高频词；短段通常 1～5 个，宁少勿滥。含美英音标；释义用「n./v./adj. + 用户语言」，禁止「名词，意为…」。', 1),
-('meaning', '释义', '翻译和释义选中的句子或段落', '对选中的句子或段落进行翻译和释义（目标语言见全局回复规则），帮助理解整体意思。要求简洁，不要啰嗦。', 2),
-('collocation', '固搭', '分析固定搭配和短语用法', '分析句子中的固定搭配和短语用法，说明其含义和使用场景。要求简洁，不要啰嗦。', 3),
-('sentence_pattern', '句式', '分析语法结构和句式特点', '分析句子中的语法结构和句式特点，帮助理解语法。要求简洁，不要啰嗦。', 4),
-('phonetic', '连读音标', '分析发音技巧：连读、吞音、重读、不发音字母等', '分析选中句子的发音技巧，包括：连读（linking）、吞音/省略（elision）、重读/弱读（stressed/unstressed）、哪个字母不发音（silent letters）、轻音/浊化等。给出具体的发音音标和技巧说明。要求简洁，不要啰嗦。', 5),
-('root_affix', '词根词缀', '分析词根词缀构成和词义演变', '分析句子中单词的词根词缀构成，帮助记忆和理解词义演变。要求简洁，不要啰嗦。', 6),
-('example', '例句', '提供类似例句帮助理解用法', '根据选中的内容，提供类似的例句帮助理解用法。要求简洁，不要啰嗦。', 7);
+('word', '单词', '讲解重难点单词的词性、含义和用法', '在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}', 1),
+('meaning', '释义', '翻译和释义选中的句子或段落', '在 JSON 键 \"meaning\" 写整句/段落译文（字符串）。例：{\"meaning\":\"…\"}', 2),
+('collocation', '固搭', '分析固定搭配和短语用法', '在 JSON 键 \"collocation\" 写固定搭配数组。元素：word, meaning。例：{\"collocation\":[{\"word\":\"examples of\",\"meaning\":\"…的例子\"}]}', 3),
+('sentence_pattern', '句式', '分析句式结构与句子骨架', '在 JSON 顶层键 \"sentence_pattern\" 按三行填写：句式 / 句子类型 / 功能。例：{\"sentence_pattern\":\"句式：…\\\\n句子类型：…\\\\n功能：…\"}', 4),
+('phonetic', '连读音标', '分析发音技巧：连读、吞音、重读、不发音字母等', '在 JSON 键 \"phonetic\" 写连读/吞音/重读等发音说明（字符串）。例：{\"phonetic\":\"…\"}', 5),
+('root_affix', '词根词缀', '分析词根词缀构成和词义演变', '在 JSON 键 \"root_affix\" 写词条数组，含 rootAffix。仅解析场景中的目标词。例：{\"root_affix\":[{\"word\":\"…\",\"meaning\":\"…\",\"rootAffix\":\"…\"}]}', 6),
+('example', '例句', '提供类似例句帮助理解用法', '在 JSON 键 \"example\" 写例句/用法数组。例：{\"example\":[{\"word\":\"…\",\"meaning\":\"例句与说明\"}]}', 7),
+('grammar', '语法', '分析语法点（时态、语态、从句类型等）', '在 JSON 顶层键 \"grammar\" 填写语法分析（可用\\\\n）。例：{\"grammar\":\"时态…\\\\n语态…\\\\n主谓结构…\"}', 8);
 
 -- =============================================
 -- 用户 AI 功能偏好表（记住用户勾选了哪些功能）
@@ -623,6 +420,58 @@ CREATE TABLE IF NOT EXISTS `wd_feedback` (
   KEY `idx_status` (`status`),
   KEY `idx_create_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户反馈表';
+
+-- =============================================
+-- 侵权 / 违法内容投诉通知（合规留存）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_abuse_notice` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `notice_no` varchar(32) NOT NULL COMMENT '通知编号（对外回执）',
+  `notice_type` varchar(16) NOT NULL COMMENT 'copyright版权投诉 | illegal违法举报',
+  `status` tinyint NOT NULL DEFAULT 0 COMMENT '0待审 1合格待处理 2已处理 3驳回 4关闭',
+  `submitter_user_id` bigint DEFAULT NULL COMMENT '提交账号用户ID（登录提交时写入）',
+  `complainant_name` varchar(128) NOT NULL COMMENT '投诉人姓名/名称',
+  `complainant_email` varchar(128) NOT NULL COMMENT '投诉人邮箱',
+  `complainant_phone` varchar(32) DEFAULT '' COMMENT '投诉人电话',
+  `organization` varchar(256) DEFAULT '' COMMENT '权利人/机构名称',
+  `right_description` text COMMENT '权利说明（版权投诉）',
+  `ownership_proof` text COMMENT '权属证明说明',
+  `target_url` varchar(1024) DEFAULT '' COMMENT '涉事链接',
+  `target_book_id` bigint DEFAULT NULL COMMENT '涉事电子书ID',
+  `target_description` text NOT NULL COMMENT '涉事内容描述',
+  `detail` text NOT NULL COMMENT '投诉/举报详情',
+  `good_faith` tinyint NOT NULL DEFAULT 0 COMMENT '是否勾选善意声明 1是',
+  `received_at` datetime NOT NULL COMMENT '收到通知时间',
+  `qualified_at` datetime DEFAULT NULL COMMENT '认定为合格通知时间',
+  `due_at` datetime DEFAULT NULL COMMENT '处理时限（合格后24-48h）',
+  `actioned_at` datetime DEFAULT NULL COMMENT '实际处理完成时间',
+  `action_taken` varchar(32) DEFAULT '' COMMENT 'remove|restrict|reject|none',
+  `handle_note` text COMMENT '处理说明',
+  `handler_id` bigint DEFAULT NULL COMMENT '处理人用户ID',
+  `ip_address` varchar(64) DEFAULT '' COMMENT '提交IP',
+  `user_agent` varchar(512) DEFAULT '' COMMENT '提交UA',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_notice_no` (`notice_no`),
+  KEY `idx_status_due` (`status`, `due_at`),
+  KEY `idx_type` (`notice_type`),
+  KEY `idx_received` (`received_at`),
+  KEY `idx_book` (`target_book_id`),
+  KEY `idx_submitter` (`submitter_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉/违法举报通知';
+
+CREATE TABLE IF NOT EXISTS `wd_abuse_notice_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `notice_id` bigint NOT NULL COMMENT '通知ID',
+  `event_type` varchar(32) NOT NULL COMMENT 'received|qualified|reviewing|removed|restricted|rejected|closed|note',
+  `event_detail` text COMMENT '事件详情/证据摘要',
+  `operator_id` bigint DEFAULT NULL COMMENT '操作人，NULL=系统/投诉人提交',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件时间点',
+  PRIMARY KEY (`id`),
+  KEY `idx_notice_time` (`notice_id`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉处理时间线（证据留存）';
 
 -- =============================================
 -- AI 场景系统提示词（按 locale 可配置，覆盖代码默认）

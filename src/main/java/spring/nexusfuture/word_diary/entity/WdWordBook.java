@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 单词本表
+ * 单词本表（wd_word_book）：管理用户单词本（可独立或归属某本书），并控制是否参与每日学习。
  */
 @Data
 @Builder
@@ -34,7 +34,7 @@ public class WdWordBook {
     /** 排序权重 */
     private Integer sortNum;
 
-    /** 1参与每日学习 0不参与（单词本本身仍可查看/编辑） */
+    /** 是否参与每日学习：1参与 0不参与（单词本本身仍可查看/编辑） */
     private Integer status;
 
     /** 创建人 */
@@ -49,6 +49,6 @@ public class WdWordBook {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

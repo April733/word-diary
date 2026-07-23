@@ -41,6 +41,10 @@
         <p class="card-foot">
           {{ $t('login.noAccount') }}
           <button type="button" class="link-btn" @click="tab = 'register'">{{ $t('login.goRegister') }}</button>
+          <span class="foot-sep">·</span>
+          <router-link class="link-btn terms-link" to="/terms">{{ $t('login.termsLink') }}</router-link>
+          <span class="foot-sep">·</span>
+          <router-link class="link-btn terms-link" to="/report">{{ $t('login.reportLink') }}</router-link>
         </p>
       </template>
 
@@ -83,6 +87,13 @@
               </t-button>
             </div>
           </t-form-item>
+          <label class="agree-row">
+            <t-checkbox v-model="agreeTerms" />
+            <span class="agree-text">
+              {{ $t('login.agreeTermsPrefix') }}
+              <router-link class="terms-link" to="/terms" target="_blank">{{ $t('login.termsLink') }}</router-link>
+            </span>
+          </label>
           <t-button class="primary-btn" theme="primary" block size="large" :loading="loading" @click="handleRegisterClick">
             {{ $t('login.registerBtn') }}
           </t-button>
@@ -177,6 +188,7 @@ const userStore = useUserStore()
 const { t, locale } = useI18n()
 const registerFormRef = ref<FormInstanceFunctions>()
 const tab = ref('login')
+const agreeTerms = ref(false)
 const loading = ref(false)
 const codeSending = ref(false)
 const codeCooldown = ref(0)
@@ -444,6 +456,10 @@ onBeforeUnmount(() => {
 
 /** 点击注册：先校验表单，通过后再提交 */
 async function handleRegisterClick() {
+  if (!agreeTerms.value) {
+    MessagePlugin.warning(t('login.errorAgreeTerms'))
+    return
+  }
   const form = registerFormRef.value
   if (!form) {
     await handleRegister()
@@ -478,6 +494,10 @@ async function handleLogin() {
 async function handleRegister() {
   if (!phoneRegisterAllowed.value) {
     registerType.value = 'email'
+  }
+  if (!agreeTerms.value) {
+    MessagePlugin.warning(t('login.errorAgreeTerms'))
+    return
   }
   // 二次前端兜底校验
   const missingFields = []
@@ -805,10 +825,42 @@ async function handleForgotPassword() {
   font-size: 13px;
   cursor: pointer;
   opacity: 0.75;
+  text-decoration: none;
 }
 
 .link-btn:hover {
   opacity: 1;
+  text-decoration: underline;
+}
+
+.foot-sep {
+  margin: 0 6px;
+  opacity: 0.45;
+}
+
+.agree-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.agree-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: color-mix(in srgb, #315C34 70%, #F6F0E6);
+  padding-top: 2px;
+}
+
+.terms-link {
+  color: #315C34;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.terms-link:hover {
   text-decoration: underline;
 }
 

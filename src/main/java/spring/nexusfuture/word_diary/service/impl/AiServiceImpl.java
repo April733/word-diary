@@ -14,7 +14,7 @@ import spring.nexusfuture.word_diary.common.TextMetrics;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.config.AiChatClientRouter;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
-import spring.nexusfuture.word_diary.dto.AiParseResult;
+import spring.nexusfuture.word_diary.dto.response.AiParseResult;
 import spring.nexusfuture.word_diary.dto.ResolvedAiEndpoint;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
 import spring.nexusfuture.word_diary.mapper.WdAiCallLogMapper;
@@ -253,6 +253,39 @@ public class AiServiceImpl implements AiService {
                     saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
                             fullResponseText.toString(), lastWithUsage[0], usedModelKey, durationMs);
                 });
+    }
+
+    @Override
+    public String chatOnce(Long userId, String callScene, String inputText,
+                           String systemPrompt, String userPrompt) {
+        long startTime = System.currentTimeMillis();
+        String scene = (callScene == null || callScene.isBlank()) ? SCENE_READING_CHAT : callScene;
+        String rawInput = inputText != null ? inputText : "";
+        String usedModelKey = null;
+        try {
+            SceneCall call = resolveCall(userId, scene);
+            usedModelKey = call.modelKey();
+            ChatResponse chatResponse = call.client().prompt()
+                    .options(OpenAiChatOptions.builder().model(usedModelKey).build())
+                    .system(systemPrompt != null ? systemPrompt : "")
+                    .user(userPrompt != null ? userPrompt : "")
+                    .call()
+                    .chatResponse();
+            int durationMs = (int) (System.currentTimeMillis() - startTime);
+            String content = chatResponse.getResult().getOutput().getText();
+            saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt, content,
+                    chatResponse, usedModelKey, durationMs);
+            return content != null ? content : "";
+        } catch (Exception e) {
+            int durationMs = (int) (System.currentTimeMillis() - startTime);
+            log.error("[ai-once] 失败 scene={}, 耗时={}ms, err={}", scene, durationMs, e.getMessage(), e);
+            try {
+                saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
+                        e.getMessage(), null, usedModelKey, durationMs);
+            } catch (Exception ignored) {
+            }
+            throw e;
+        }
     }
 
     private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey) {}

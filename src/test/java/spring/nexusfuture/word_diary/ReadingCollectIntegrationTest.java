@@ -51,8 +51,6 @@ public class ReadingCollectIntegrationTest {
                 .nickname(username)
                 .password(passwordEncoder.encode("pass123"))
                 .phone(phone)
-                .isMember(0)
-                .memberTier(1)
                 .build();
         userMapper.insert(user);
         Assertions.assertNotNull(user.getId());

@@ -1,6 +1,8 @@
 spring:
   application:
     name: word-diary
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   datasource:
     url: jdbc:mysql://localhost:3306/db-word-diary?useSSL=false&serverTimezone=UTC
     username: root
@@ -16,6 +18,11 @@ spring:
       base-url: ${AI_BASE_URL:https://api.deepseek.com}
       chat:
         options: {}
+
+# 生产环境（SPRING_PROFILES_ACTIVE=prod）由 application-prod.properties 关闭 Swagger：
+# springdoc.api-docs.enabled=false
+# springdoc.swagger-ui.enabled=false
+
 
 # 供应商接入点：仅作首次引导写入 sys_ai_provider（空密钥时补全）
 # 运行时以数据库 / 管理后台为准；模型见 sys_ai_model，场景见 sys_ai_scene

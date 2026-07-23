@@ -49,7 +49,7 @@
           </t-list-item-meta>
           <template #action>
             <t-button variant="text" theme="primary" @click="openEditDialog(word)">修改</t-button>
-            <t-popconfirm content="移入垃圾桶？可在一周内恢复。" @confirm="handleDelete(word.id)">
+            <t-popconfirm content="确定删除该单词？删除后不可恢复。" @confirm="handleDelete(word.id)">
               <t-button variant="text" theme="danger">移除</t-button>
             </t-popconfirm>
           </template>
@@ -318,7 +318,7 @@ async function handleSubmit() {
 async function handleDelete(wordId: number) {
   try {
     await deleteWord(notebookId, wordId)
-    MessagePlugin.success('已移入垃圾桶')
+    MessagePlugin.success('已删除')
     await loadWords()
   } catch (e) {
     MessagePlugin.error('删除失败')
@@ -586,12 +586,23 @@ async function handleBatchSave() {
 }
 
 function statusTheme(status: number) {
-  const map: Record<number, string> = { 0: 'default', 1: 'warning', 2: 'primary', 3: 'success', 4: 'danger' }
-  return map[status] || 'default'
+  if (status === 0) return 'default'
+  if (status === 7) return 'success'
+  if (status >= 1 && status <= 6) return 'primary'
+  return 'default'
 }
 
 function statusLabel(status: number) {
-  const map: Record<number, string> = { 0: '未学习', 1: '已初学', 2: '复习中', 3: '已熟记', 4: '遗忘' }
+  const map: Record<number, string> = {
+    0: '未学习',
+    1: '首次学完',
+    2: '第一轮复习',
+    3: '第二轮复习',
+    4: '第三轮复习',
+    5: '第四轮复习',
+    6: '第五轮复习',
+    7: '已熟记',
+  }
   return map[status] || '未知'
 }
 

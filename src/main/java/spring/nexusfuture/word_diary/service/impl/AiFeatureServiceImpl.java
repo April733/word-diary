@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
-import spring.nexusfuture.word_diary.dto.AiFeaturePreferenceVO;
+import spring.nexusfuture.word_diary.dto.response.AiFeaturePreferenceVO;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.WdUserAiPreference;
 import spring.nexusfuture.word_diary.mapper.SysAiFeatureMapper;
@@ -57,9 +57,20 @@ public class AiFeatureServiceImpl implements AiFeatureService {
             }
         }
 
+        Map<String, SysAiFeature> featureMap = allFeatures.stream()
+                .collect(Collectors.toMap(SysAiFeature::getFeatureKey, f -> f, (a, b) -> a));
+
         // 如果用户没有偏好记录，默认全部启用
         if (preferredKeys.isEmpty()) {
             preferredKeys = allFeatures.stream().map(SysAiFeature::getFeatureKey).toList();
+        } else {
+            // 去掉已停用/已删除功能，避免前端仍展示
+            preferredKeys = preferredKeys.stream()
+                    .filter(featureMap::containsKey)
+                    .collect(Collectors.toCollection(ArrayList::new));
+            if (preferredKeys.isEmpty()) {
+                preferredKeys = allFeatures.stream().map(SysAiFeature::getFeatureKey).toList();
+            }
         }
         // 如果没有排序记录，默认按数据库sort_num排序
         if (featureOrder.isEmpty()) {
@@ -67,12 +78,28 @@ public class AiFeatureServiceImpl implements AiFeatureService {
                     .sorted(Comparator.comparingInt(SysAiFeature::getSortNum))
                     .map(SysAiFeature::getFeatureKey)
                     .toList();
+        } else {
+            featureOrder = featureOrder.stream()
+                    .filter(featureMap::containsKey)
+                    .collect(Collectors.toCollection(ArrayList::new));
+            for (SysAiFeature f : allFeatures) {
+                if (!featureOrder.contains(f.getFeatureKey())) {
+                    featureOrder.add(f.getFeatureKey());
+                }
+            }
+        }
+
+        // preferredKeys 也按 featureOrder 排，保证前后端展示顺序一致
+        {
+            List<String> orderedPreferred = new ArrayList<>();
+            for (String key : featureOrder) {
+                if (preferredKeys.contains(key)) orderedPreferred.add(key);
+            }
+            preferredKeys = orderedPreferred;
         }
 
         // 按用户自定义顺序重新排列 allFeatures
         List<SysAiFeature> orderedFeatures = new ArrayList<>();
-        Map<String, SysAiFeature> featureMap = allFeatures.stream()
-                .collect(Collectors.toMap(SysAiFeature::getFeatureKey, f -> f));
         for (String key : featureOrder) {
             SysAiFeature f = featureMap.get(key);
             if (f != null) {

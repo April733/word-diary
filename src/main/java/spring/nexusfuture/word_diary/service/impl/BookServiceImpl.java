@@ -173,7 +173,11 @@ public class BookServiceImpl implements BookService {
     }
 
     @Override
-    public void updateProgress(Long bookId, Integer chapterIndex, String cfi, BigDecimal percent) {
+    public void updateProgress(Long bookId, Long userId, Integer chapterIndex, String cfi, BigDecimal percent) {
+        WdBook book = bookMapper.selectById(bookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("无权操作");
+        }
         bookMapper.updateProgress(bookId, chapterIndex, cfi, percent, LocalDateTime.now());
     }
 }

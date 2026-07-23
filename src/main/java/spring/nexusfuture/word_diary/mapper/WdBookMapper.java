@@ -27,6 +27,10 @@ public interface WdBookMapper {
     @Update("UPDATE wd_book SET is_deleted=1, update_time=NOW() WHERE id=#{id} AND user_id=#{userId}")
     int deleteById(@Param("id") Long id, @Param("userId") Long userId);
 
+    /** 管理端合规下架：不校验归属 */
+    @Update("UPDATE wd_book SET is_deleted=1, update_time=NOW() WHERE id=#{id} AND is_deleted=0")
+    int softDeleteByIdAdmin(@Param("id") Long id);
+
     @Select("SELECT * FROM wd_book WHERE id=#{id} AND is_deleted=0")
     WdBook selectById(@Param("id") Long id);
 

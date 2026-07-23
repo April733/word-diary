@@ -1,8 +1,8 @@
 package spring.nexusfuture.word_diary.mapper;
 
 import org.apache.ibatis.annotations.*;
-import spring.nexusfuture.word_diary.dto.AdminAiMessageDetailVO;
-import spring.nexusfuture.word_diary.dto.AdminAiMessageListItemVO;
+import spring.nexusfuture.word_diary.dto.response.AdminAiMessageDetailVO;
+import spring.nexusfuture.word_diary.dto.response.AdminAiMessageListItemVO;
 import spring.nexusfuture.word_diary.entity.WdAiMessage;
 
 import java.util.List;
@@ -18,6 +18,9 @@ public interface WdAiMessageMapper {
     /** 更新消息内容（用于将 assistant 回答回填到已存在的消息记录） */
     @Update("UPDATE wd_ai_message SET content = #{content} WHERE id = #{id} AND is_deleted = 0")
     int updateContent(@Param("id") Long id, @Param("content") String content);
+
+    @Select("SELECT * FROM wd_ai_message WHERE id = #{id} AND is_deleted = 0")
+    WdAiMessage selectById(@Param("id") Long id);
 
     @Select("SELECT * FROM wd_ai_message WHERE session_id = #{sessionId} AND is_deleted = 0 ORDER BY id ASC")
     List<WdAiMessage> selectBySessionId(@Param("sessionId") Long sessionId);

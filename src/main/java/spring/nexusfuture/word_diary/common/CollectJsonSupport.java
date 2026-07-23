@@ -3,11 +3,12 @@ package spring.nexusfuture.word_diary.common;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import spring.nexusfuture.word_diary.dto.CollectEntryDTO;
+import spring.nexusfuture.word_diary.dto.response.CollectEntryDTO;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -19,19 +20,155 @@ public final class CollectJsonSupport {
 
     public static final String MARKER = "---COLLECT_JSON---";
 
-    /** 「固定搭配 / Collocations」等小节标题 */
+    /**
+     * @deprecated 解析契约由后台场景壳 / 功能 prompt 约定；代码不再下发输出说明。
+     */
+    public static String structuredAnalyzeInstruction(String locale) {
+        return "";
+    }
+
+    /** 从解析 JSON 取出可收录词条：扫所有值为「词条对象数组」的键，不按 key 名硬编码。 */
+    @SuppressWarnings("unchecked")
+    public static List<CollectEntryDTO> extractEntriesFromAnalyzeJson(String text, ObjectMapper mapper) {
+        Map<String, Object> root = parseAnalyzeJson(text, mapper);
+        if (root == null) return Collections.emptyList();
+
+        List<CollectEntryDTO> out = new ArrayList<>();
+        for (Object raw : root.values()) {
+            if (!(raw instanceof List<?> list) || list.isEmpty()) continue;
+            List<Map<String, Object>> maps = new ArrayList<>();
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> m)) continue;
+                Map<String, Object> copy = new LinkedHashMap<>((Map<String, Object>) m);
+                if (!copy.containsKey("word") && !copy.containsKey("wordProto")) continue;
+                maps.add(copy);
+            }
+            if (!maps.isEmpty()) {
+                out.addAll(normalizeEntryMaps(maps));
+            }
+        }
+        if (!out.isEmpty()) return out;
+
+        if (text != null && text.trim().startsWith("[")) {
+            try {
+                List<Map<String, Object>> arr = mapper.readValue(text.trim(),
+                        new TypeReference<List<Map<String, Object>>>() {});
+                return normalizeEntryMaps(arr);
+            } catch (Exception ignored) {
+                return Collections.emptyList();
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    public static Map<String, Object> parseAnalyzeJson(String text, ObjectMapper mapper) {
+        if (text == null || text.isBlank()) return null;
+        String json = extractJsonObject(text);
+        if (json == null) return null;
+        Map<String, Object> parsed = tryReadAnalyzeMap(mapper, json);
+        if (parsed != null) return parsed;
+        // 容忍尾逗号
+        String noTrail = json.replaceAll(",\\s*([}\\]])", "$1");
+        parsed = tryReadAnalyzeMap(mapper, noTrail);
+        if (parsed != null) return parsed;
+        if (text.contains(MARKER)) {
+            try {
+                String part = text.substring(text.indexOf(MARKER) + MARKER.length()).trim();
+                String sub = extractJsonObject(part);
+                if (sub != null) {
+                    parsed = tryReadAnalyzeMap(mapper, sub);
+                    if (parsed != null) return parsed;
+                }
+            } catch (Exception ignored) {
+                /* fall through */
+            }
+        }
+        log.warn("解析结构化 analyze JSON 失败, head={}", json.length() > 120 ? json.substring(0, 120) : json);
+        return null;
+    }
+
+    private static String extractJsonObject(String text) {
+        if (text == null) return null;
+        String json = text.trim();
+        if (json.startsWith("```")) {
+            int start = json.indexOf('{');
+            int end = json.lastIndexOf('}');
+            if (start >= 0 && end > start) return json.substring(start, end + 1);
+            return null;
+        }
+        int start = json.indexOf('{');
+        int end = json.lastIndexOf('}');
+        if (start >= 0 && end > start) return json.substring(start, end + 1);
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> tryReadAnalyzeMap(ObjectMapper mapper, String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            Object tree = mapper.readValue(json, Object.class);
+            if (tree instanceof String s) {
+                String inner = extractJsonObject(s);
+                if (inner != null) tree = mapper.readValue(inner, Object.class);
+            }
+            if (tree instanceof Map<?, ?> map && !map.isEmpty()) {
+                return (Map<String, Object>) map;
+            }
+        } catch (Exception ignored) {
+            /* try next strategy */
+        }
+        return null;
+    }
+
+    private static List<CollectEntryDTO> normalizeEntryMaps(List<Map<String, Object>> maps) {
+        List<CollectEntryDTO> out = new ArrayList<>();
+        for (Map<String, Object> m : maps) {
+            if (m == null) continue;
+            String word = firstNonBlank(m.get("word"), m.get("wordProto"));
+            String meaning = firstNonBlank(m.get("meaning"), m.get("partSpeechMean"));
+            if (word == null || meaning == null) continue;
+            String type = m.get("entryType") != null ? String.valueOf(m.get("entryType")).trim() : "word";
+            if (!"phrase".equalsIgnoreCase(type) && word.contains(" ")) {
+                type = "phrase";
+            }
+            out.add(CollectEntryDTO.builder()
+                    .entryType("phrase".equalsIgnoreCase(type) ? "phrase" : "word")
+                    .wordProto(word.trim())
+                    .partSpeechMean(meaning.trim())
+                    .usPhonetic(asStr(m.get("usPhonetic")))
+                    .ukPhonetic(asStr(m.get("ukPhonetic")))
+                    .rootAffix(asStr(m.get("rootAffix")))
+                    .build());
+        }
+        return out;
+    }
+
+    private static String firstNonBlank(Object a, Object b) {
+        String s = asStr(a);
+        if (s != null && !s.isBlank()) return s;
+        s = asStr(b);
+        return s != null && !s.isBlank() ? s : null;
+    }
+
+    private static String asStr(Object o) {
+        return o == null ? null : String.valueOf(o).trim();
+    }
+
+    /** 「固定搭配 / Collocations」等小节标题（允许「固定搭配：」直角引号版式） */
     private static final Pattern COLLOCATION_HEADING = Pattern.compile(
-            "(?i)^#{0,6}\\s*(?:\\*\\*)?(固定搭配|固搭|短语(?:用法)?|常用搭配|词组|collocations?|fixed\\s+phrases?|phrasal\\s+verbs?)(?:\\*\\*)?\\s*[:：]?\\s*$");
+            "(?i)^#{0,6}\\s*[「\"“]?(?:\\*\\*)?(固定搭配|固搭|短语(?:用法|讲解|解析)?|常用搭配|词组|分解解释|搭配讲解|"
+                    + "collocations?|fixed\\s+phrases?|phrasal\\s+verbs?)(?:\\*\\*)?\\s*[:：]?[」\"”]?\\s*$");
 
     /** 「单词 / Words」等小节标题 */
     private static final Pattern WORD_HEADING = Pattern.compile(
-            "(?i)^#{0,6}\\s*(?:\\*\\*)?(单词|单词讲解|词汇|words?|vocabulary)(?:\\*\\*)?\\s*[:：]?\\s*$");
+            "(?i)^#{0,6}\\s*[「\"“]?(?:\\*\\*)?(单词|单词讲解|词汇|words?|vocabulary)(?:\\*\\*)?\\s*[:：]?[」\"”]?\\s*$");
 
     /** 任一已知小节标题（用于结束当前小节；含无 ## 的「翻译：」） */
     private static final Pattern ANY_SECTION_HEADING = Pattern.compile(
-            "(?i)^#{0,6}\\s*(?:\\*\\*)?(翻译|释义|整体释义|单词|单词讲解|词汇|固搭|固定搭配|语法|语法结构|句式|词根词缀|例句|"
-                    + "words?|vocabulary|collocations?|fixed\\s+phrases?|phrasal\\s+verbs?|grammar|translation)"
-                    + "(?:\\*\\*)?\\s*[:：]?\\s*$");
+            "(?i)^#{0,6}\\s*[「\"“]?(?:\\*\\*)?(翻译|释义|整体释义|解析|单词|单词讲解|词汇|固搭|固定搭配|语法|语法结构|句式|词根词缀|例句|"
+                    + "分解解释|短语讲解|短语解析|搭配讲解|"
+                    + "words?|vocabulary|collocations?|fixed\\s+phrases?|phrasal\\s+verbs?|grammar|translation|analysis|breakdown)"
+                    + "(?:\\*\\*)?\\s*[:：]?[」\"”]?\\s*$");
 
     /** 其它 markdown 标题（用于结束搭配/单词小节） */
     private static final Pattern OTHER_HEADING = Pattern.compile("^#{1,6}\\s+\\S");
@@ -42,6 +179,14 @@ public final class CollectJsonSupport {
     private static final Pattern LEMMA_BULLET = Pattern.compile(
             "^\\s*(?:[-*•]|\\d+[.)])\\s*(?:\\*\\*)?([^:*：—–\\n]{1,120}?)(?:\\*\\*)?\\s*[:：—–\\-]\\s*(.{1,300})$");
 
+    /** 无列表符：get involved in：参与… */
+    private static final Pattern LEMMA_PLAIN = Pattern.compile(
+            "(?i)^(?:\\*\\*)?([a-z][a-z0-9'’./…\\-]*(?:\\s+(?:\\.\\.\\.|…|[a-z][a-z0-9'’./…\\-]*)){0,8})(?:\\*\\*)?\\s*[:：—–\\-]\\s*(.{1,300})$");
+
+    /** 无冒号：- **keep records of** 做…的记录 */
+    private static final Pattern LEMMA_SPACE_CJK = Pattern.compile(
+            "(?i)^\\s*(?:[-*•]|\\d+[.)])?\\s*(?:\\*\\*)?([a-z][a-z0-9'’./…\\-]*(?:\\s+(?:\\.\\.\\.|…|[a-z][a-z0-9'’./…\\-]*)){0,8})(?:\\*\\*)?\\s+([\\u4e00-\\u9fff].{0,300})$");
+
     /** 美/英音标 + 词性释义 */
     private static final Pattern WORD_PHONETIC_MEANING = Pattern.compile(
             "(?i)^(?:美|US)\\s*(/[^/\\n]{1,40}/)\\s*[,，]?\\s*(?:英|UK)\\s*(/[^/\\n]{1,40}/)\\s*[;；]?\\s*(.*)$");
@@ -50,170 +195,171 @@ public final class CollectJsonSupport {
 
     private CollectJsonSupport() {}
 
-    /** @deprecated 使用 {@link #collectInstruction(String)}，按用户语言输出收录说明 */
+    /** @deprecated 收录说明应由后台 prompt 配置；代码不再下发。 */
     @Deprecated
     public static String collectInstruction() {
-        return collectInstruction("zh-CN");
+        return "";
     }
 
+    /** @deprecated 收录说明应由后台 prompt 配置；代码不再下发。 */
     public static String collectInstruction(String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        return switch (loc) {
-            case "en" -> collectInstructionEn();
-            case "id" -> collectInstructionId();
-            case "vi" -> collectInstructionVi();
-            case "th" -> collectInstructionTh();
-            default -> collectInstructionZh();
-        };
+        return "";
     }
 
-    private static String collectInstructionZh() {
-        return """
-
-                【收录】讲解结束后另起一行输出 %s，再输出一行 JSON（勿用代码块）：
-                {"entries":[{"entryType":"word|phrase","wordProto":"原形","partSpeechMean":"n. 释义；v. 释义","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"词根或组成"}]}
-                规则：仅收录正文实际讲解的单词/搭配（勿为未讲解的常见词造条）；word 须含美英 IPA；partSpeechMean 须与单词小节一致，多词性写成 n. …；v. …（勿只留语境义）；勿输出 sentenceExample。
-                """.formatted(MARKER);
-    }
-
-    /**
-     * 单词讲解：只讲难点 + 音标释义格式（追加到 system prompt）。
-     * 与「把选段里每个词都列一遍」相反——宁少勿滥。
-     */
+    /** @deprecated 单词筛选/音标格式应由后台功能 prompt 配置。 */
     public static String phoneticDisplayInstruction(String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        return switch (loc) {
-            case "en" -> """
-
-                    [Words — selection + format]
-                    Explain ONLY hard/low-frequency words a B1–B2 learner may not know (e.g. solicitor).
-                    SKIP: proper names, numbers, and common words (make, move, people, better, building, railway, possible…).
-                    Prefer 1–5 words for a short passage; do not dump every token.
-                    Format: - **word**: US /…/, UK /…/; n. meaning
-                    """;
-            case "id", "vi", "th" -> """
-
-                    [Words] Only difficult words (skip names & high-frequency words). Prefer 1–5 items.
-                    Format: - **word**: US /…/, UK /…/; n. meaning (in the user's language)
-                    """;
-            default -> """
-
-                    【单词·筛选+格式】只讲学习者可能不认识的重难点词（如 solicitor）。
-                    禁止讲解：专有名词（人名/地名）、基础高频词（make/move/people/better/building/railway/possible/suggested 等常见词）。
-                    短段落通常 1～5 个即可，宁少勿滥，不要把选段里每个词都列一遍。
-                    格式：- **solicitor**: 美 /…/，英 /…/；n. 律师。禁「名词，意为…」。
-                    """;
-        };
+        return "";
     }
 
-    /** 仅音标/词性格式（已有明确目标词时用，不再重复「筛词」规则） */
+    /** @deprecated 音标格式应由后台功能 prompt 配置。 */
     public static String phoneticFormatInstruction(String locale) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        return switch (loc) {
-            case "en", "id", "vi", "th" -> """
-
-                    [Word format] - **word**: US /…/, UK /…/; n. meaning (user language)
-                    """;
-            default -> """
-
-                    【单词·格式】- **word**: 美 /…/，英 /…/；n. 释义。禁「名词，意为…」。
-                    """;
-        };
-    }
-
-    private static String collectInstructionEn() {
-        return """
-
-                [Collect] After the explanation, output marker %s on a new line, then one JSON line (no code fence):
-                {"entries":[{"entryType":"word|phrase","wordProto":"lemma","partSpeechMean":"n. meaning; v. meaning","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"root or composition"}]}
-                Rules: one entry per explained word/collocation; words need US+UK IPA; partSpeechMean must match the word section (include all POS shown, e.g. n. …; v. …); no sentenceExample.
-                """.formatted(MARKER);
-    }
-
-    private static String collectInstructionId() {
-        return collectInstructionEn();
-    }
-
-    private static String collectInstructionVi() {
-        return collectInstructionEn();
-    }
-
-    private static String collectInstructionTh() {
-        return collectInstructionEn();
-    }
-
-    public static boolean shouldCollect(List<String> featureKeys, String featureKey) {
-        if (featureKeys != null && !featureKeys.isEmpty()) {
-            return featureKeys.stream().anyMatch(CollectJsonSupport::isCollectableFeature);
-        }
-        return isCollectableFeature(featureKey);
-    }
-
-    /** 需要在讲解中强制输出英美音标（单词/词根类功能） */
-    public static boolean shouldRequireWordPhonetics(List<String> featureKeys, String featureKey) {
-        if (featureKeys != null && !featureKeys.isEmpty()) {
-            return featureKeys.stream().anyMatch(CollectJsonSupport::isPhoneticFeature);
-        }
-        return isPhoneticFeature(featureKey);
+        return "";
     }
 
     /**
-     * 可收录词条的功能：单词、搭配、词根、例句等。
-     * 释义 / 句式是句子级分析，不应强制 COLLECT_JSON，否则模型会被带去做单词讲解。
+     * 是否尝试从解析结果抽词条：有勾选功能即尝试；能否抽到由 JSON 形状决定，不按 key 白名单。
      */
-    public static boolean isCollectableFeature(String key) {
-        if (key == null || key.isBlank()) return false;
-        return switch (key.trim()) {
-            case "word", "collocation", "root_affix", "root", "example" -> true;
-            default -> false;
-        };
-    }
-
-    public static boolean isPhoneticFeature(String key) {
-        if (key == null || key.isBlank()) return false;
-        return switch (key.trim()) {
-            case "word", "root_affix", "root", "phonetic" -> true;
-            default -> false;
-        };
-    }
-
-    /** 约束：只做用户勾选的功能（顺序已在上方功能块体现，此处不重复长文） */
-    public static String featureScopeInstruction(String locale, List<String> featureKeys, String featureKey) {
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        if ((featureKeys == null || featureKeys.isEmpty()) && (featureKey == null || featureKey.isBlank())) {
-            return "";
-        }
-        return switch (loc) {
-            case "en", "id", "vi", "th" ->
-                    "\n[Scope] Only selected features; section order must match the feature list above. No extras.\n";
-            default -> "\n【范围】只输出上方已列功能对应小节，顺序与列表一致，勿增删调换。\n";
-        };
+    public static boolean shouldCollect(List<String> featureKeys, String featureKey) {
+        List<String> keys = normalizeFeatureKeys(featureKeys, featureKey);
+        return !keys.isEmpty();
     }
 
     /**
-     * 用户点选的目标词：单词/搭配/词根仅针对这些词讲解。
-     * 翻译/句式仍可用全文语境。
+     * @deprecated 音标要求应由后台功能 prompt 约定；代码不再按 key 硬编码。
+     */
+    public static boolean shouldRequireWordPhonetics(List<String> featureKeys, String featureKey) {
+        return false;
+    }
+
+    /** @deprecated 收录能力不再绑死在特定 feature_key 名上。 */
+    public static boolean isCollectableFeature(String key) {
+        return key != null && !key.isBlank();
+    }
+
+    /** @deprecated 音标要求应由后台功能 prompt 约定。 */
+    public static boolean isPhoneticFeature(String key) {
+        return false;
+    }
+
+    /** 已废弃：范围说明应由后台场景壳配置；保留空实现以免旧调用报错。 */
+    public static String featureScopeInstruction(String locale, List<String> featureKeys, String featureKey) {
+        return "";
+    }
+
+    /** 只保留本次勾选的 feature_key；不改名、不合并字段。 */
+    public static void pruneAnalyzePayload(Map<String, Object> payload, List<String> featureKeys) {
+        if (payload == null) return;
+        normalizeAnalyzeKeyAliases(payload);
+        List<String> keys = normalizeFeatureKeys(featureKeys, null);
+        if (keys.isEmpty()) return;
+        LinkedHashSet<String> allowed = new LinkedHashSet<>(keys);
+        payload.keySet().removeIf(k -> !"raw".equals(k) && !allowed.contains(k));
+    }
+
+    /**
+     * 模型偶发用中文键/复数键；归一到标准 feature_key，避免固搭有数据却展示不出来。
+     */
+    public static void normalizeAnalyzeKeyAliases(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) return;
+        remapAlias(payload, "collocation",
+                "collocations", "phrase", "phrases", "fixed_phrase", "固搭", "固定搭配", "搭配");
+        remapAlias(payload, "word", "words", "vocabulary", "单词", "词汇");
+        remapAlias(payload, "meaning", "translation", "译文", "翻译", "释义");
+        remapAlias(payload, "grammar", "语法");
+        remapAlias(payload, "sentence_pattern", "sentencePattern", "句式");
+        remapAlias(payload, "root_affix", "rootAffix", "词根词缀");
+        remapAlias(payload, "phonetic", "连读音标", "音标");
+    }
+
+    private static void remapAlias(Map<String, Object> payload, String canonical, String... aliases) {
+        if (payload.containsKey(canonical)) {
+            Object cur = payload.get(canonical);
+            if (cur != null && !(cur instanceof List<?> list && list.isEmpty())
+                    && !(cur instanceof String s && s.isBlank())) {
+                return; // 已有有效 canonical
+            }
+        }
+        for (String alt : aliases) {
+            if (!payload.containsKey(alt)) continue;
+            Object v = payload.remove(alt);
+            if (v == null) continue;
+            if (!payload.containsKey(canonical) || isBlankAnalyzeValue(payload.get(canonical))) {
+                payload.put(canonical, v);
+            }
+            return;
+        }
+    }
+
+    private static boolean isBlankAnalyzeValue(Object v) {
+        if (v == null) return true;
+        if (v instanceof String s) return s.isBlank();
+        if (v instanceof List<?> list) return list.isEmpty();
+        return false;
+    }
+
+    /**
+     * 需要用户双击指定目标词的功能：无目标词时不应让模型自行扫原文抽词。
+     */
+    public static boolean requiresTargetWords(String featureKey) {
+        if (featureKey == null || featureKey.isBlank()) return false;
+        String k = featureKey.trim();
+        return "word".equals(k) || "root_affix".equals(k);
+    }
+
+    /** 无目标词时，从下发给模型的功能列表中去掉 word/root_affix（省 token、避免乱抽词）。 */
+    public static List<String> featuresForModel(List<String> featureKeys, List<String> targetWords) {
+        List<String> keys = normalizeFeatureKeys(featureKeys, null);
+        if (targetWords != null && !targetWords.isEmpty()) {
+            return keys;
+        }
+        List<String> out = new ArrayList<>();
+        for (String k : keys) {
+            if (!requiresTargetWords(k)) out.add(k);
+        }
+        return out;
+    }
+
+    /**
+     * 无目标词时，把本次勾选的 word/root_affix 强制写成空数组（即使模型仍返回了词条）。
+     */
+    public static void forceEmptyTargetRequiredArrays(Map<String, Object> payload,
+                                                      List<String> selectedKeys,
+                                                      List<String> targetWords) {
+        if (payload == null) return;
+        if (targetWords != null && !targetWords.isEmpty()) return;
+        List<String> keys = normalizeFeatureKeys(selectedKeys, null);
+        for (String k : keys) {
+            if (requiresTargetWords(k)) {
+                payload.put(k, Collections.emptyList());
+            }
+        }
+    }
+
+    public static List<String> normalizeFeatureKeys(List<String> featureKeys, String featureKey) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (featureKeys != null) {
+            for (String k : featureKeys) {
+                if (k == null || k.isBlank()) continue;
+                for (String part : k.split(",")) {
+                    String t = part.trim();
+                    if (!t.isEmpty()) out.add(t);
+                }
+            }
+        }
+        if (featureKey != null && !featureKey.isBlank()) {
+            for (String part : featureKey.split(",")) {
+                String t = part.trim();
+                if (!t.isEmpty()) out.add(t);
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    /**
+     * @deprecated 目标词说明应由后台场景壳 {target_words} 配置；代码不再下发硬编码字段名文案。
      */
     public static String targetWordsInstruction(String locale, List<String> targetWords) {
-        if (targetWords == null || targetWords.isEmpty()) {
-            return "";
-        }
-        String joined = String.join(", ", targetWords);
-        String loc = locale == null || locale.isBlank() ? "zh-CN" : locale;
-        return switch (loc) {
-            case "en", "id", "vi", "th" -> """
-
-                    [Target words] For word / collocation / root sections, explain ONLY: %s.
-                    Do NOT explain any other words. Translation / grammar may use the full passage.
-                    Collect JSON must only include these targets (and collocations built from them).
-                    """.formatted(joined);
-            default -> """
-
-                    【目标词】单词/搭配/词根小节仅针对用户指定词：%s。
-                    禁止讲解未列出的词。翻译/句式可使用全文语境。
-                    收录 JSON 也仅含这些词（及其相关搭配）。
-                    """.formatted(joined);
-        };
+        return "";
     }
 
     public static List<String> normalizeTargetWords(Object raw) {
@@ -285,6 +431,7 @@ public final class CollectJsonSupport {
         List<CollectEntryDTO> fromProse = new ArrayList<>();
         fromProse.addAll(extractWordsFromProse(display));
         fromProse.addAll(extractPhrasesFromProse(display));
+        fromProse.addAll(extractLooseAnalysisEntries(display));
 
         Map<String, CollectEntryDTO> merged = new LinkedHashMap<>();
         for (CollectEntryDTO e : fromJson) {
@@ -375,10 +522,10 @@ public final class CollectJsonSupport {
             }
             if (!inSection) continue;
 
-            Matcher m = LEMMA_BULLET.matcher(line);
-            if (!m.matches()) continue;
-            String proto = cleanProto(m.group(1));
-            String rawMeaning = cleanMeaning(m.group(2));
+            LemmaHit hit = matchLemmaLine(line);
+            if (hit == null) continue;
+            String proto = hit.proto;
+            String rawMeaning = hit.meaning;
             if (proto.isEmpty() || rawMeaning.isEmpty() || !looksLikeEnglishWord(proto)) continue;
 
             String us = null;
@@ -423,10 +570,10 @@ public final class CollectJsonSupport {
             }
             if (!inSection) continue;
 
-            Matcher m = LEMMA_BULLET.matcher(line);
-            if (!m.matches()) continue;
-            String proto = cleanProto(m.group(1));
-            String meaning = cleanMeaning(m.group(2));
+            LemmaHit hit = matchLemmaLine(line);
+            if (hit == null) continue;
+            String proto = hit.proto;
+            String meaning = hit.meaning;
             if (proto.isEmpty() || meaning.isEmpty() || !looksLikeEnglishPhrase(proto)) continue;
             out.add(CollectEntryDTO.builder()
                     .entryType("phrase")
@@ -437,6 +584,69 @@ public final class CollectJsonSupport {
                     .build());
         }
         return out;
+    }
+
+    /**
+     * 无标准小节时的兜底：从「lemma：中文」行抽取单词/短语。
+     */
+    public static List<CollectEntryDTO> extractLooseAnalysisEntries(String displayText) {
+        if (displayText == null || displayText.isBlank()) {
+            return Collections.emptyList();
+        }
+        List<CollectEntryDTO> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (String rawLine : displayText.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isEmpty() || line.length() > MAX_PROSE_LINE_LEN) continue;
+            if (ANY_SECTION_HEADING.matcher(line).matches() || OTHER_HEADING.matcher(line).matches()) continue;
+            LemmaHit hit = matchLemmaLine(line);
+            if (hit == null || !hasCjkMeaning(hit.meaning)) continue;
+            String proto = hit.proto;
+            String meaning = hit.meaning;
+            if (proto.isEmpty() || meaning.isEmpty()) continue;
+            if (looksLikeEnglishPhrase(proto)) {
+                String key = "phrase:" + proto.toLowerCase(Locale.ROOT);
+                if (!seen.add(key)) continue;
+                out.add(CollectEntryDTO.builder()
+                        .entryType("phrase")
+                        .wordProto(proto)
+                        .partSpeechMean(meaning.startsWith("短语") || meaning.toLowerCase(Locale.ROOT).startsWith("phrase")
+                                ? meaning
+                                : "短语. " + meaning)
+                        .build());
+            } else if (looksLikeEnglishWord(proto)) {
+                String key = "word:" + proto.toLowerCase(Locale.ROOT);
+                if (!seen.add(key)) continue;
+                out.add(CollectEntryDTO.builder()
+                        .entryType("word")
+                        .wordProto(proto)
+                        .partSpeechMean(meaning)
+                        .build());
+            }
+        }
+        return out;
+    }
+
+    private record LemmaHit(String proto, String meaning) {}
+
+    private static LemmaHit matchLemmaLine(String line) {
+        Matcher m = LEMMA_BULLET.matcher(line);
+        if (m.matches()) {
+            return new LemmaHit(cleanProto(m.group(1)), cleanMeaning(m.group(2)));
+        }
+        m = LEMMA_PLAIN.matcher(line);
+        if (m.matches()) {
+            return new LemmaHit(cleanProto(m.group(1)), cleanMeaning(m.group(2)));
+        }
+        m = LEMMA_SPACE_CJK.matcher(line);
+        if (m.matches()) {
+            return new LemmaHit(cleanProto(m.group(1)), cleanMeaning(m.group(2)));
+        }
+        return null;
+    }
+
+    private static boolean hasCjkMeaning(String s) {
+        return s != null && s.codePoints().anyMatch(cp -> cp >= 0x4E00 && cp <= 0x9FFF);
     }
 
     /** 离开当前单词/搭配小节：遇到其它小节标题或 ## 标题 */

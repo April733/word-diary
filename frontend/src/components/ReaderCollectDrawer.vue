@@ -16,7 +16,7 @@
               </button>
             </t-dropdown>
             <span
-              class="trash-badge"
+              class="count-badge"
               :title="$t('reader.collectWordCount', { n: savedWords.length })"
             >{{ savedWords.length }}</span>
           </template>
@@ -24,35 +24,15 @@
             <span class="drawer-title-text">{{ drawerTitle }}</span>
           </template>
         </div>
-        <div v-if="linkedNotebooks.length && viewMode !== 'current'" class="drawer-header-actions">
+        <div v-if="linkedNotebooks.length && viewMode === 'notebook'" class="drawer-header-actions">
           <t-button
-            v-if="viewMode === 'notebook'"
             variant="text"
             size="small"
-            :title="$t('reader.notebookLinkCreate')"
-            @click="emit('open-link-dialog')"
+            :title="$t('reader.collectAddWord')"
+            @click="openAddWord"
           >
             <t-icon name="add" size="18px" />
-            {{ $t('reader.notebookLinkCreateConfirm') }}
-          </t-button>
-          <t-button
-            v-if="viewMode === 'trash'"
-            variant="text"
-            size="small"
-            @click="backToNotebook"
-          >
-            {{ $t('reader.collectBackToList') }}
-          </t-button>
-          <t-button
-            v-else
-            variant="text"
-            size="small"
-            :title="$t('reader.collectTrash')"
-            @click="openTrash"
-          >
-            <t-icon name="delete" size="18px" />
-            {{ $t('reader.collectTrash') }}
-            <span v-if="trashCount > 0" class="trash-badge">{{ trashCount }}</span>
+            {{ $t('reader.collectAddWord') }}
           </t-button>
         </div>
       </div>
@@ -167,7 +147,12 @@
         <div v-if="savedLoading" class="loading-row">
           <t-loading size="small" />
         </div>
-        <p v-else-if="!savedWords.length" class="hint">{{ $t('reader.collectSavedEmpty') }}</p>
+        <div v-else-if="!savedWords.length" class="hint">
+          <p>{{ $t('reader.collectSavedEmpty') }}</p>
+          <t-button theme="primary" size="small" @click="openAddWord">
+            {{ $t('reader.collectAddWord') }}
+          </t-button>
+        </div>
         <div v-else class="entry-table-wrap">
           <table class="entry-table">
             <thead>
@@ -176,7 +161,7 @@
                 <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
                 <th>{{ $t('reader.collectRootAffix') }}</th>
                 <th>{{ $t('reader.collectExample') }}</th>
-                <th style="width: 64px"></th>
+                <th style="width: 112px"></th>
               </tr>
             </thead>
             <tbody>
@@ -227,7 +212,10 @@
                   </t-tooltip>
                   <span v-else>—</span>
                 </td>
-                <td>
+                <td class="row-actions">
+                  <t-button variant="text" theme="primary" size="small" @click="openEditWord(word)">
+                    {{ $t('reader.collectEditWord') }}
+                  </t-button>
                   <t-popconfirm
                     :content="$t('reader.collectRemoveConfirm')"
                     @confirm="removeWord(word.id)"
@@ -242,80 +230,47 @@
           </table>
         </div>
       </template>
-
-      <!-- 垃圾桶 -->
-      <template v-else>
-        <p class="hint">{{ $t('reader.collectTrashHint') }}</p>
-        <div v-if="trashLoading" class="loading-row">
-          <t-loading size="small" />
-        </div>
-        <p v-else-if="!trashWords.length" class="hint">{{ $t('reader.collectTrashEmpty') }}</p>
-        <div v-else class="entry-table-wrap">
-          <table class="entry-table">
-            <thead>
-              <tr>
-                <th>{{ $t('reader.collectWord') }}</th>
-                <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
-                <th>{{ $t('reader.collectRootAffix') }}</th>
-                <th>{{ $t('reader.collectExample') }}</th>
-                <th style="width: 100px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="word in trashWords" :key="word.id">
-                <td>
-                  <div class="proto-row">
-                    <t-tag
-                      size="small"
-                      variant="light"
-                      :theme="word.entryType === 'phrase' ? 'warning' : 'primary'"
-                    >
-                      {{ word.entryType === 'phrase' ? $t('reader.collectPhrase') : $t('reader.collectWordTag') }}
-                    </t-tag>
-                    <span class="proto">{{ word.wordProto }}</span>
-                  </div>
-                  <div v-if="word.retainDaysLeft != null" class="retain-hint">
-                    {{ $t('reader.collectRetainDays', { days: word.retainDaysLeft }) }}
-                  </div>
-                </td>
-                <td class="cell-meaning">{{ word.partSpeechMean || '—' }}</td>
-                <td class="cell-muted">{{ word.rootAffix || '—' }}</td>
-                <td class="cell-example">
-                  <t-tooltip
-                    v-if="word.sentenceExample"
-                    :content="stripOriginalPrefix(word.sentenceExample)"
-                    placement="top"
-                    :show-arrow="true"
-                  >
-                    <span class="example-ellipsis">{{ ellipsisText(word.sentenceExample) }}</span>
-                  </t-tooltip>
-                  <span v-else>—</span>
-                </td>
-                <td>
-                  <t-button
-                    variant="text"
-                    theme="primary"
-                    size="small"
-                    :loading="restoringId === word.id"
-                    @click="restoreFromTrash(word.id)"
-                  >
-                    {{ $t('reader.collectRestore') }}
-                  </t-button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </template>
     </div>
+
+    <t-dialog
+      v-model:visible="showWordDialog"
+      :header="editingWordId == null ? $t('reader.collectAddWord') : $t('reader.collectEditWord')"
+      :confirm-btn="{ content: $t('common.confirm'), loading: wordSaving }"
+      @confirm="submitWordForm"
+    >
+      <t-form :data="wordForm" label-width="80px">
+        <t-form-item :label="$t('reader.collectWord')" name="wordProto" :required-mark="true">
+          <t-input v-model="wordForm.wordProto" :placeholder="$t('reader.collectWordPlaceholder')" />
+        </t-form-item>
+        <t-form-item :label="$t('reader.collectUsPhonetic')" name="usPhonetic">
+          <t-input v-model="wordForm.usPhonetic" :placeholder="$t('reader.collectUsPhoneticPlaceholder')" />
+        </t-form-item>
+        <t-form-item :label="$t('reader.collectUkPhonetic')" name="ukPhonetic">
+          <t-input v-model="wordForm.ukPhonetic" :placeholder="$t('reader.collectUkPhoneticPlaceholder')" />
+        </t-form-item>
+        <t-form-item :label="$t('reader.collectMeaning')" name="partSpeechMean" :required-mark="true">
+          <t-input v-model="wordForm.partSpeechMean" :placeholder="$t('reader.collectMeaningPlaceholder')" />
+        </t-form-item>
+        <t-form-item :label="$t('reader.collectExample')" name="sentenceExample">
+          <t-textarea
+            v-model="wordForm.sentenceExample"
+            :placeholder="$t('reader.collectExamplePlaceholder')"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+          />
+        </t-form-item>
+        <t-form-item :label="$t('reader.collectRootAffix')" name="rootAffix">
+          <t-input v-model="wordForm.rootAffix" :placeholder="$t('reader.collectRootAffixPlaceholder')" />
+        </t-form-item>
+      </t-form>
+    </t-dialog>
   </t-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
-import { collectBookWords, deleteWord, getWordTrash, getWords, restoreWord } from '../api'
+import { addWord, collectBookWords, deleteWord, getWords, updateWord } from '../api'
 import type { CollectEntry } from '../utils/collectBasket'
 import { ellipsisText, pickSentenceForLemma, stripOriginalPrefix } from '../utils/selectedText'
 
@@ -328,7 +283,6 @@ interface SavedWord {
   sentenceExample?: string
   usPhonetic?: string
   ukPhonetic?: string
-  retainDaysLeft?: number
 }
 
 const props = defineProps<{
@@ -351,16 +305,23 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const viewMode = ref<'current' | 'notebook' | 'trash'>('current')
+const viewMode = ref<'current' | 'notebook'>('current')
 const checkedKeys = ref<Set<string>>(new Set())
 const notebookId = ref<number | undefined>()
 const saving = ref(false)
 const savedWords = ref<SavedWord[]>([])
 const savedLoading = ref(false)
-const trashWords = ref<SavedWord[]>([])
-const trashLoading = ref(false)
-const trashCount = ref(0)
-const restoringId = ref<number | null>(null)
+const showWordDialog = ref(false)
+const editingWordId = ref<number | null>(null)
+const wordSaving = ref(false)
+const wordForm = reactive({
+  wordProto: '',
+  usPhonetic: '',
+  ukPhonetic: '',
+  partSpeechMean: '',
+  sentenceExample: '',
+  rootAffix: '',
+})
 
 const visibleModel = computed({
   get: () => props.visible,
@@ -405,9 +366,6 @@ const activeNotebookName = computed(() => {
 })
 
 const drawerTitle = computed(() => {
-  if (viewMode.value === 'trash') {
-    return t('reader.collectTrashTitle', { name: activeNotebookName.value || '' })
-  }
   if (viewMode.value === 'notebook' && activeNotebookName.value) {
     return activeNotebookName.value
   }
@@ -441,64 +399,80 @@ async function loadSavedWords(nbId: number) {
   }
 }
 
-async function loadTrash(nbId: number) {
-  trashLoading.value = true
-  try {
-    const res = await getWordTrash(nbId)
-    trashWords.value = (res.data?.data || []) as SavedWord[]
-    trashCount.value = trashWords.value.length
-  } catch {
-    trashWords.value = []
-    MessagePlugin.error(t('reader.collectTrashLoadFail'))
-  } finally {
-    trashLoading.value = false
-  }
-}
-
-async function refreshTrashCount(nbId: number) {
-  try {
-    const res = await getWordTrash(nbId)
-    trashCount.value = (res.data?.data || []).length
-  } catch {
-    trashCount.value = 0
-  }
-}
-
-function openTrash() {
-  if (!notebookId.value) return
-  viewMode.value = 'trash'
-  void loadTrash(notebookId.value)
-}
-
-function backToNotebook() {
-  viewMode.value = 'notebook'
-  if (notebookId.value) void loadSavedWords(notebookId.value)
-}
-
 async function removeWord(wordId: number) {
   if (!notebookId.value) return
   try {
     await deleteWord(notebookId.value, wordId)
     MessagePlugin.success(t('reader.collectRemoved'))
     savedWords.value = savedWords.value.filter(w => w.id !== wordId)
-    trashCount.value += 1
   } catch (e: any) {
     MessagePlugin.error(e?.response?.data?.message || t('reader.collectRemoveFail'))
   }
 }
 
-async function restoreFromTrash(wordId: number) {
+function resetWordForm() {
+  wordForm.wordProto = ''
+  wordForm.usPhonetic = ''
+  wordForm.ukPhonetic = ''
+  wordForm.partSpeechMean = ''
+  wordForm.sentenceExample = ''
+  wordForm.rootAffix = ''
+}
+
+function openAddWord() {
   if (!notebookId.value) return
-  restoringId.value = wordId
+  editingWordId.value = null
+  resetWordForm()
+  showWordDialog.value = true
+}
+
+function openEditWord(word: SavedWord) {
+  editingWordId.value = word.id
+  wordForm.wordProto = word.wordProto ?? ''
+  wordForm.usPhonetic = word.usPhonetic ?? ''
+  wordForm.ukPhonetic = word.ukPhonetic ?? ''
+  wordForm.partSpeechMean = word.partSpeechMean ?? ''
+  wordForm.sentenceExample = word.sentenceExample ?? ''
+  wordForm.rootAffix = word.rootAffix ?? ''
+  showWordDialog.value = true
+}
+
+async function submitWordForm() {
+  if (!notebookId.value) return false
+  if (!wordForm.wordProto.trim()) {
+    MessagePlugin.warning(t('reader.collectWordRequired'))
+    return false
+  }
+  if (!wordForm.partSpeechMean.trim()) {
+    MessagePlugin.warning(t('reader.collectMeaningRequired'))
+    return false
+  }
+  wordSaving.value = true
   try {
-    await restoreWord(notebookId.value, wordId)
-    MessagePlugin.success(t('reader.collectRestored'))
-    trashWords.value = trashWords.value.filter(w => w.id !== wordId)
-    trashCount.value = Math.max(0, trashCount.value - 1)
+    const data = {
+      wordProto: wordForm.wordProto.trim(),
+      usPhonetic: wordForm.usPhonetic.trim(),
+      ukPhonetic: wordForm.ukPhonetic.trim(),
+      partSpeechMean: wordForm.partSpeechMean.trim(),
+      sentenceExample: wordForm.sentenceExample.trim(),
+      rootAffix: wordForm.rootAffix.trim(),
+    }
+    if (editingWordId.value == null) {
+      await addWord(notebookId.value, data)
+      MessagePlugin.success(t('reader.collectAddWordSuccess'))
+    } else {
+      await updateWord(notebookId.value, editingWordId.value, data)
+      MessagePlugin.success(t('reader.collectEditWordSuccess'))
+    }
+    showWordDialog.value = false
+    resetWordForm()
+    editingWordId.value = null
+    await loadSavedWords(notebookId.value)
   } catch (e: any) {
-    MessagePlugin.error(e?.response?.data?.message || t('reader.collectRestoreFail'))
+    MessagePlugin.error(e?.response?.data?.message || e?.message || t('reader.collectSaveFail'))
+    return false
   } finally {
-    restoringId.value = null
+    wordSaving.value = false
   }
 }
 
@@ -637,7 +611,6 @@ watch(() => props.visible, (open) => {
   }
   if (viewMode.value === 'notebook' && notebookId.value) {
     void loadSavedWords(notebookId.value)
-    void refreshTrashCount(notebookId.value)
   } else if (viewMode.value === 'current') {
     checkedKeys.value = new Set(props.currentEntries.map(e => e.basketKey))
   }
@@ -674,9 +647,6 @@ watch(notebookId, (id) => {
   if (!id || !props.visible) return
   if (viewMode.value === 'notebook') {
     void loadSavedWords(id)
-    void refreshTrashCount(id)
-  } else if (viewMode.value === 'trash') {
-    void loadTrash(id)
   }
 })
 </script>
@@ -746,7 +716,11 @@ watch(notebookId, (id) => {
   align-items: center;
   gap: 4px;
 }
-.trash-badge {
+.row-actions {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.count-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -767,6 +741,9 @@ watch(notebookId, (id) => {
   font-size: 13px;
   margin: 0 0 12px;
   flex-shrink: 0;
+}
+.hint p {
+  margin: 0 0 12px;
 }
 .loading-row {
   display: flex;
@@ -829,11 +806,6 @@ watch(notebookId, (id) => {
   color: var(--td-text-color-secondary);
   cursor: default;
   vertical-align: bottom;
-}
-.retain-hint {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--td-warning-color);
 }
 .proto-block {
   display: flex;

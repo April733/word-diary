@@ -2,9 +2,10 @@ package spring.nexusfuture.word_diary.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import spring.nexusfuture.word_diary.dto.CollectEntryDTO;
+import spring.nexusfuture.word_diary.dto.response.CollectEntryDTO;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -13,30 +14,114 @@ class CollectJsonSupportTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void shouldCollect_onlyVocabFeatures() {
+    void shouldCollect_whenAnyFeatureSelected() {
         assertTrue(CollectJsonSupport.shouldCollect(List.of("meaning", "word"), null));
         assertTrue(CollectJsonSupport.shouldCollect(List.of("collocation"), null));
         assertTrue(CollectJsonSupport.shouldCollect(null, "word"));
-        assertFalse(CollectJsonSupport.shouldCollect(List.of("meaning"), null));
-        assertFalse(CollectJsonSupport.shouldCollect(null, "meaning"));
-        assertFalse(CollectJsonSupport.shouldCollect(List.of("sentence_pattern"), null));
+        assertTrue(CollectJsonSupport.shouldCollect(List.of("meaning"), null));
+        assertTrue(CollectJsonSupport.shouldCollect(List.of("sentence_pattern"), null));
         assertFalse(CollectJsonSupport.shouldCollect(List.of(), null));
         assertFalse(CollectJsonSupport.shouldCollect(null, null));
         assertFalse(CollectJsonSupport.shouldCollect(null, ""));
     }
 
     @Test
-    void shouldRequireWordPhonetics_forWordNotMeaning() {
-        assertTrue(CollectJsonSupport.shouldRequireWordPhonetics(List.of("word"), null));
+    void shouldRequireWordPhonetics_alwaysFalse_adminOwnsPrompt() {
+        assertFalse(CollectJsonSupport.shouldRequireWordPhonetics(List.of("word"), null));
         assertFalse(CollectJsonSupport.shouldRequireWordPhonetics(List.of("meaning"), null));
         assertFalse(CollectJsonSupport.shouldRequireWordPhonetics(List.of("collocation"), null));
     }
 
     @Test
-    void featureScopeInstruction_listsSelectedOnly() {
-        String zh = CollectJsonSupport.featureScopeInstruction("zh-CN", List.of("meaning"), null);
-        assertTrue(zh.contains("meaning"));
-        assertTrue(zh.contains("严禁") || zh.contains("只"));
+    void featureScopeInstruction_isEmpty_adminOwnsText() {
+        assertEquals("", CollectJsonSupport.featureScopeInstruction("zh-CN", List.of("meaning"), null));
+    }
+
+    @Test
+    void normalizeAnalyzeKeyAliases_mapsChineseCollocationKey() {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("固定搭配", List.of(Map.of("word", "include examples of", "meaning", "举…的例子")));
+        payload.put("翻译", "译文");
+        CollectJsonSupport.normalizeAnalyzeKeyAliases(payload);
+        assertTrue(payload.containsKey("collocation"));
+        assertTrue(payload.containsKey("meaning"));
+        assertFalse(payload.containsKey("固定搭配"));
+        assertFalse(payload.containsKey("翻译"));
+    }
+
+    @Test
+    void featuresForModel_dropsWordWithoutTargets() {
+        List<String> keys = List.of("word", "meaning", "collocation", "root_affix");
+        assertEquals(List.of("meaning", "collocation"),
+                CollectJsonSupport.featuresForModel(keys, List.of()));
+        assertEquals(keys, CollectJsonSupport.featuresForModel(keys, List.of("run")));
+    }
+
+    @Test
+    void forceEmptyTargetRequiredArrays_clearsWordWhenNoTargets() {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("meaning", "译文");
+        payload.put("word", List.of(Map.of("word", "run", "meaning", "v. 经营")));
+        payload.put("root_affix", List.of(Map.of("word", "elderly", "rootAffix", "…")));
+        CollectJsonSupport.forceEmptyTargetRequiredArrays(
+                payload, List.of("word", "meaning", "root_affix"), List.of());
+        assertEquals("译文", payload.get("meaning"));
+        assertEquals(List.of(), payload.get("word"));
+        assertEquals(List.of(), payload.get("root_affix"));
+    }
+
+    @Test
+    void pruneAnalyzePayload_keepsOnlySelectedKeys_noRename() {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("meaning", "译文");
+        payload.put("phonetic", "- **reviewer**: /riːˈvjuːər/");
+        payload.put("grammar", "主谓结构");
+        payload.put("word", List.of(
+                Map.of("entryType", "word", "word", "reviewer", "meaning", "n. 评论家")
+        ));
+        payload.put("collocation", List.of(
+                Map.of("entryType", "phrase", "word", "include examples of", "meaning", "举例说明")
+        ));
+
+        CollectJsonSupport.pruneAnalyzePayload(payload,
+                List.of("meaning", "word", "collocation", "grammar"));
+
+        assertEquals("译文", payload.get("meaning"));
+        assertEquals("主谓结构", payload.get("grammar"));
+        assertFalse(payload.containsKey("phonetic"), "未勾选连读音标时应删除 phonetic");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> words = (List<Map<String, Object>>) payload.get("word");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> phrases = (List<Map<String, Object>>) payload.get("collocation");
+        assertEquals(1, words.size());
+        assertEquals(1, phrases.size());
+    }
+
+    @Test
+    void pruneAnalyzePayload_collocationOnlyKeepsThatKey() {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("word", List.of(
+                Map.of("entryType", "word", "word", "reviewer", "meaning", "n. 评论家")
+        ));
+        payload.put("collocation", List.of(
+                Map.of("entryType", "phrase", "word", "examples of", "meaning", "…的例子")
+        ));
+        CollectJsonSupport.pruneAnalyzePayload(payload, List.of("collocation"));
+        assertFalse(payload.containsKey("word"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> phrases = (List<Map<String, Object>>) payload.get("collocation");
+        assertEquals(1, phrases.size());
+    }
+
+    @Test
+    void extractEntries_fromKeyBasedWordAndCollocation() throws Exception {
+        String json = """
+                {"word":[{"word":"reviewer","meaning":"n. 评论家"}],"collocation":[{"word":"examples of","meaning":"…的例子"}]}
+                """;
+        var entries = CollectJsonSupport.extractEntriesFromAnalyzeJson(json, mapper);
+        assertEquals(2, entries.size());
+        assertEquals("word", entries.get(0).getEntryType());
+        assertEquals("phrase", entries.get(1).getEntryType());
     }
 
     @Test
@@ -73,14 +158,10 @@ class CollectJsonSupportTest {
     }
 
     @Test
-    void collectInstruction_containsMarker() {
-        String instruction = CollectJsonSupport.collectInstruction();
-        assertTrue(instruction.contains(CollectJsonSupport.MARKER));
-        assertTrue(instruction.contains("entryType"));
-        assertTrue(instruction.contains("wordProto"));
-        assertTrue(instruction.contains("rootAffix"));
-        assertFalse(instruction.contains("\"sentenceExample\""));
-        assertTrue(instruction.contains("固定搭配") || instruction.contains("phrase"));
+    void collectInstruction_empty_adminOwnsText() {
+        assertEquals("", CollectJsonSupport.collectInstruction());
+        assertEquals("", CollectJsonSupport.collectInstruction("zh-CN"));
+        assertEquals("", CollectJsonSupport.collectInstruction("en"));
     }
 
     @Test
@@ -146,6 +227,47 @@ class CollectJsonSupportTest {
         assertEquals(
                 "n. 方法; 途径; v. 接近; 处理",
                 CollectJsonSupport.preferRicherMeaning("n. 方法；途径", "n. 方法; 途径; v. 接近; 处理"));
+    }
+
+    @Test
+    void extractPhrasesFromProse_readsCornerQuotedHeadingAndPlainLines() {
+        String prose = """
+                「固定搭配：」
+                - **arrange it to suit you**：按你的时间安排
+                - **keep records of** 做…的记录
+                arrange it well：妥善安排
+                「语法：」
+                主语 + 谓语
+                """;
+        List<CollectEntryDTO> phrases = CollectJsonSupport.extractPhrasesFromProse(prose);
+        assertTrue(phrases.stream().anyMatch(e -> "arrange it to suit you".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(phrases.stream().anyMatch(e -> "keep records of".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(phrases.stream().anyMatch(e -> "arrange it well".equalsIgnoreCase(e.getWordProto())));
+    }
+
+    @Test
+    void parseEntriesEnriched_recoversPhrasesWhenJsonOnlyHasWords() {
+        String raw = """
+                「解析」
+                「固定搭配」
+                - **arrange it to suit you**：按你的时间安排
+                - **keep records of**：做…的记录
+                - **keep them up to date**：使它们保持最新
+                「语法」
+                说明。
+
+                %s
+                {"entries":[{"entryType":"word","wordProto":"suit","partSpeechMean":"v. 适合","usPhonetic":"/suːt/","ukPhonetic":"/suːt/"},{"entryType":"word","wordProto":"record","partSpeechMean":"n. 记录","usPhonetic":"/ˈrekərd/","ukPhonetic":"/ˈrekɔːd/"}]}
+                """.formatted(CollectJsonSupport.MARKER);
+
+        List<CollectEntryDTO> entries = CollectJsonSupport.parseEntriesEnriched(raw, mapper);
+        assertTrue(entries.stream().anyMatch(e ->
+                "word".equals(e.getEntryType()) && "suit".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(entries.stream().anyMatch(e ->
+                "phrase".equals(e.getEntryType()) && "arrange it to suit you".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(entries.stream().anyMatch(e ->
+                "phrase".equals(e.getEntryType()) && "keep them up to date".equalsIgnoreCase(e.getWordProto())));
+        assertTrue(entries.size() >= 5);
     }
 
     @Test
@@ -223,21 +345,10 @@ class CollectJsonSupportTest {
     }
 
     @Test
-    void phoneticDisplayInstruction_requiresUsAndUk() {
-        String zh = CollectJsonSupport.phoneticDisplayInstruction("zh-CN");
-        assertTrue(zh.contains("美"));
-        assertTrue(zh.contains("英"));
-        assertTrue(zh.contains("IPA") || zh.contains("/"));
-        String en = CollectJsonSupport.phoneticDisplayInstruction("en");
-        assertTrue(en.contains("US") || en.toLowerCase().contains("american"));
-        assertTrue(en.contains("UK") || en.toLowerCase().contains("british"));
-    }
-
-    @Test
-    void collectInstruction_requiresPhonetics() {
-        String instruction = CollectJsonSupport.collectInstruction("zh-CN");
-        assertTrue(instruction.contains("usPhonetic"));
-        assertTrue(instruction.contains("ukPhonetic"));
-        assertTrue(instruction.contains("IPA") || instruction.contains("美英"));
+    void phoneticAndCollectInstruction_empty_adminOwnsText() {
+        assertEquals("", CollectJsonSupport.phoneticDisplayInstruction("zh-CN"));
+        assertEquals("", CollectJsonSupport.phoneticDisplayInstruction("en"));
+        assertEquals("", CollectJsonSupport.phoneticFormatInstruction("zh-CN"));
+        assertEquals("", CollectJsonSupport.collectInstruction("zh-CN"));
     }
 }

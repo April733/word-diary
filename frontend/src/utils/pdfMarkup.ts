@@ -34,7 +34,12 @@ export interface TextGeometry {
 }
 
 export const DEFAULT_MARKUP_COLOR = '#E53935'
-export const DEFAULT_STROKE = 0.004
+export const DEFAULT_STROKE = 0.0025
+/** 与输入框 `.pdf-inline-note` 一致，确认后也保持小字号 */
+export const TEXT_NOTE_FONT_SIZE = 14
+export const TEXT_NOTE_LINE_HEIGHT = 1.35
+export const TEXT_NOTE_PAD = 4
+export const TEXT_NOTE_MAX_WIDTH_RATIO = 0.42
 
 export function parseGeometry<T>(json: string): T | null {
   try {
@@ -76,7 +81,7 @@ export function drawMarkup(
       return
     }
     const sw = (g.strokeWidth ?? DEFAULT_STROKE) * width
-    ctx.lineWidth = Math.max(1.5, sw)
+    ctx.lineWidth = Math.max(1, sw)
     ctx.beginPath()
     g.points.forEach(([nx, ny], i) => {
       const [x, y] = fromNorm(nx, ny, width, height)
@@ -91,7 +96,7 @@ export function drawMarkup(
       return
     }
     const sw = (g.strokeWidth ?? DEFAULT_STROKE) * width
-    ctx.lineWidth = Math.max(1.5, sw)
+    ctx.lineWidth = Math.max(1, sw)
     const [x, y] = fromNorm(g.x, g.y, width, height)
     ctx.strokeRect(x, y, g.w * width, g.h * height)
   } else if (markup.markupType === 'text') {
@@ -101,26 +106,23 @@ export function drawMarkup(
       return
     }
     const [x, y] = fromNorm(g.x, g.y, width, height)
-    const fontSize = Math.max(13, width * 0.02)
-    ctx.font = `600 ${fontSize}px sans-serif`
+    const fontSize = TEXT_NOTE_FONT_SIZE
+    const pad = TEXT_NOTE_PAD
+    ctx.font = `${fontSize}px sans-serif`
     ctx.textBaseline = 'top'
     const text = markup.noteText || ''
-    const pad = 4
-    const maxTw = width * 0.42
+    const maxTw = width * TEXT_NOTE_MAX_WIDTH_RATIO
     const lines = wrapText(ctx, text, maxTw - pad * 2)
-    const lineH = fontSize * 1.3
+    const lineH = fontSize * TEXT_NOTE_LINE_HEIGHT
     const widths = lines.map((line) => ctx.measureText(line).width)
     const contentW = Math.max(fontSize * 2, ...(widths.length ? widths : [0]))
     const tw = Math.min(maxTw, contentW + pad * 2)
     const th = lines.length * lineH + pad * 2
-    // 半透明白底 + 红字，保证可读
+    // 半透明白底 + 红字，无边框
     ctx.globalAlpha = 0.55
     ctx.fillStyle = '#FFFFFF'
     ctx.fillRect(x, y, tw, th)
     ctx.globalAlpha = 1
-    ctx.strokeStyle = color
-    ctx.lineWidth = 1
-    ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1)
     ctx.fillStyle = color
     lines.forEach((line, i) => {
       ctx.fillText(line, x + pad, y + pad + i * lineH)
@@ -147,12 +149,36 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines.length ? lines : ['笔记']
 }
 
-/** 橡皮擦命中检测：返回命中的批注 id，未命中则 null */
+/** 估算文本批注框的归一化宽高（与绘制字号一致） */
+export function estimateTextBoxNorm(
+  text: string,
+  pageWidth: number,
+  pageHeight: number
+): { w: number; h: number } {
+  const fontSize = TEXT_NOTE_FONT_SIZE
+  const pad = TEXT_NOTE_PAD
+  const maxTwPx = pageWidth * TEXT_NOTE_MAX_WIDTH_RATIO
+  const avgChar = fontSize * 0.55
+  const maxCharsPerLine = Math.max(1, Math.floor((maxTwPx - pad * 2) / avgChar))
+  const raw = text || '笔记'
+  const lineCount = Math.min(6, Math.max(1, Math.ceil(raw.length / maxCharsPerLine)))
+  const charsOnLongest = Math.min(raw.length, maxCharsPerLine)
+  const contentW = Math.max(fontSize * 2, charsOnLongest * avgChar)
+  const twPx = Math.min(maxTwPx, contentW + pad * 2)
+  const thPx = lineCount * fontSize * TEXT_NOTE_LINE_HEIGHT + pad * 2
+  return {
+    w: twPx / Math.max(pageWidth, 1),
+    h: thPx / Math.max(pageHeight, 1),
+  }
+}
+
+/** 橡皮擦 / 拖动命中检测：返回命中的批注 id，未命中则 null */
 export function hitTestMarkup(
   markups: PdfMarkupDto[],
   nx: number,
   ny: number,
-  pageWidth: number
+  pageWidth: number,
+  pageHeight = pageWidth
 ): number | null {
   const threshold = Math.max(0.012, DEFAULT_STROKE * 3)
   // 后画的优先（列表末尾）
@@ -177,11 +203,7 @@ export function hitTestMarkup(
     } else if (m.markupType === 'text') {
       const g = parseGeometry<TextGeometry>(m.geometryJson)
       if (!g) continue
-      const text = m.noteText || ''
-      // 按字数估算命中区域，短笔记也至少可点中
-      const boxW = Math.min(0.42, Math.max(0.08, 0.012 * Math.max(text.length, 2)))
-      const lineCount = Math.max(1, Math.ceil(text.length / 28))
-      const boxH = Math.min(0.2, 0.028 * lineCount)
+      const { w: boxW, h: boxH } = estimateTextBoxNorm(m.noteText || '', pageWidth, pageHeight)
       const pad = threshold
       if (
         nx >= g.x - pad &&
@@ -193,6 +215,5 @@ export function hitTestMarkup(
       }
     }
   }
-  void pageWidth
   return null
 }

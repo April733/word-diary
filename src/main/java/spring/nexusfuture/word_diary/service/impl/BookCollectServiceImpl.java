@@ -3,10 +3,10 @@ package spring.nexusfuture.word_diary.service.impl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
-import spring.nexusfuture.word_diary.common.LearnStatus;
-import spring.nexusfuture.word_diary.dto.BookCollectReq;
-import spring.nexusfuture.word_diary.dto.BookCollectResultVO;
-import spring.nexusfuture.word_diary.dto.CollectEntryDTO;
+import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.dto.request.BookCollectReq;
+import spring.nexusfuture.word_diary.dto.response.BookCollectResultVO;
+import spring.nexusfuture.word_diary.dto.response.CollectEntryDTO;
 import spring.nexusfuture.word_diary.entity.*;
 import spring.nexusfuture.word_diary.mapper.*;
 import spring.nexusfuture.word_diary.service.BookCollectService;
@@ -27,14 +27,12 @@ public class BookCollectServiceImpl implements BookCollectService {
     private final WdBookMapper bookMapper;
     private final WdWordBookMapper notebookMapper;
     private final WdWordMapper wordMapper;
-    private final WdLearnPlanMapper planMapper;
 
     public BookCollectServiceImpl(WdBookMapper bookMapper, WdWordBookMapper notebookMapper,
-                                  WdWordMapper wordMapper, WdLearnPlanMapper planMapper) {
+                                  WdWordMapper wordMapper) {
         this.bookMapper = bookMapper;
         this.notebookMapper = notebookMapper;
         this.wordMapper = wordMapper;
-        this.planMapper = planMapper;
     }
 
     @Override
@@ -109,18 +107,10 @@ public class BookCollectServiceImpl implements BookCollectService {
                     .sourceSnippet(emptyToNull(sentence))
                     .sourceLocation(emptyToNull(req.getSourceLocation()))
                     .isPublic(0)
+                    .status(WordStudyStatus.UN_STUDY.getCode())
+                    .statusData(java.time.LocalDateTime.now())
                     .build();
             wordMapper.insert(word);
-
-            WdLearnPlan plan = WdLearnPlan.builder()
-                    .userId(userId)
-                    .notebookId(req.getNotebookId())
-                    .wordId(word.getId())
-                    .learnStatus(LearnStatus.NOT_LEARNED)
-                    .currentLevel(0)
-                    .reviewTimes(0)
-                    .build();
-            planMapper.insert(plan);
             added++;
         }
 

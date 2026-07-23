@@ -14,9 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 全局 AI 提示词构建器。
- * 优先使用 sys_ai_scene_prompt 中启用的配置；未配置时回退代码内置多语言模板。
- * 功能分析细节来自 sys_ai_feature.prompt。
+ * AI 提示词构建器。
+ * 阅读解析：场景壳来自 sys_ai_scene_prompt(feature)，功能细节来自 sys_ai_feature.prompt（均后台可配）。
  */
 @Component
 public class AiPromptBuilder {
@@ -59,7 +58,7 @@ public class AiPromptBuilder {
     // ==================== 中文 ====================
 
     private static PromptTemplate buildZhCnTemplate() {
-        String globalConstraint = "【重要全局规则】请始终使用中文回复用户。无论用户输入何种语言，所有释义、例句翻译、解析说明都必须用中文。英文原文和音标除外。";
+        String globalConstraint = "【语言】中文（原文与音标除外）。";
         String readingAssistantSystem = "你是一个专业的英语阅读与语言学习助手。用户正在阅读英文材料，请用中文回答与语言学习相关的问题。";
         String readingAssistantContext = "用户当前选中的上下文是：\"%s\"";
         String readingAssistantUserPrefix = "请用中文回答以下用户问题：\n%s";
@@ -89,9 +88,9 @@ public class AiPromptBuilder {
         String wordParseUserPrefix = "请补全以下单词/短语的信息：\n";
         return new PromptTemplate("中文", globalConstraint, readingAssistantSystem,
                 readingAssistantContext, readingAssistantUserPrefix, wordParseSystem, wordParseUserPrefix,
-                "你是一个专业的英语阅读助手。",
-                "你是一个专业的英语阅读助手。用户选择了以下分析功能，请**仅**针对这些功能给出结果，不要擅自增加未选功能：\n",
-                "请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。只覆盖用户勾选的功能。各小节标题用 Markdown 加粗，如 **固定搭配**、**语法结构**；列表中的词条也加粗，如 - **proposed**: …。",
+                "你是英语阅读助手。",
+                "你是英语阅读助手。仅分析下列功能：\n",
+                "直接输出结果，勿开场/总结。",
                 "请对以下选中的文本进行「%s」分析：\n%s",
                 "请对以下选中的文本进行「%s」分析：\n%s");
     }
@@ -323,119 +322,68 @@ public class AiPromptBuilder {
     }
 
     /**
-     * 功能预设 system prompt（基于 locale 和 featureKey）。
-     * 场景壳来自 sys_ai_scene_prompt(feature)；功能细节来自 sys_ai_feature.prompt。
+     * 功能预设 system prompt。
+     * 场景壳 = sys_ai_scene_prompt(feature)；功能细节 = sys_ai_feature.prompt。不追加任何代码内文案。
      */
     public String buildFeaturePrompt(String locale, String featureKey, String context) {
-        SysAiFeature feature = loadFeatureForLocale(featureKey, locale);
-        String featurePrompt = adaptFeaturePromptForLocale(
-                feature != null && feature.getPrompt() != null ? feature.getPrompt() : "", locale);
-
-        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
-        String base;
-        if (fromDb != null) {
-            base = applyPlaceholders(fromDb, context, featurePrompt, locale);
-        } else {
-            PromptTemplate t = getTemplateByLocale(locale);
-            StringBuilder prompt = new StringBuilder();
-            prompt.append(t.globalConstraint()).append("\n");
-            prompt.append(t.featureAssistantIntro()).append(featurePrompt).append("\n");
-            if (context != null && !context.isEmpty()) {
-                prompt.append(String.format(t.readingAssistantContext(), context)).append("\n");
-            }
-            prompt.append(t.featureDirectInstruction());
-            base = prompt.toString();
-        }
-        return base + markdownFormatHint(locale) + replyLanguageReinforcement(locale);
-    }
-
-    /**
-     * 功能预设 user prompt（基于 locale 和 featureKey）。
-     */
-    public String buildFeatureUserPrompt(String locale, String featureKey, String context) {
-        SysAiFeature feature = loadFeatureForLocale(featureKey, locale);
-        String featureName = feature != null && feature.getFeatureName() != null
-                ? feature.getFeatureName() : featureKey;
-        PromptTemplate t = getTemplateByLocale(locale);
-        return String.format(t.featureUserFormat(), featureName, context);
+        return buildMultiFeaturePrompt(locale,
+                featureKey == null ? List.of() : List.of(featureKey), context, null);
     }
 
     /**
      * 多选功能 system prompt。
-     * 严格按 featureKeys 顺序逐个查 sys_ai_feature.prompt 再拼接；该顺序即输出章节顺序。
+     * 严格按 featureKeys 顺序读取库表 prompt，填入场景壳 {feature_prompts}。
      */
     public String buildMultiFeaturePrompt(String locale, List<String> featureKeys, String context) {
-        StringBuilder featureDescs = new StringBuilder();
-        String orderLine = compactOrderLine(locale, featureKeys);
-        featureDescs.append(orderLine).append('\n');
-        int i = 1;
-        for (String key : featureKeys) {
-            SysAiFeature feature = loadFeatureForLocale(key, locale);
-            if (feature == null) continue;
-            String name = feature.getFeatureName() != null ? feature.getFeatureName() : key;
-            String prompt = adaptFeaturePromptForLocale(
-                    feature.getPrompt() != null ? feature.getPrompt().trim() : "", locale);
-            featureDescs.append(i++).append('.').append(name).append('(').append(key).append("): ");
-            if (!prompt.isEmpty()) {
-                // 压成单段，去掉过多空行
-                featureDescs.append(prompt.replaceAll("\\s*\n\\s*", " ").trim());
-            }
-            featureDescs.append('\n');
-        }
+        return buildMultiFeaturePrompt(locale, featureKeys, context, null);
+    }
 
+    public String buildMultiFeaturePrompt(String locale, List<String> featureKeys, String context,
+                                          List<String> targetWords) {
+        String featureBlock = assembleFeaturePromptsFromDb(locale, featureKeys);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
-        String base;
         if (fromDb != null) {
-            base = applyPlaceholders(fromDb, context, featureDescs.toString(), locale);
-        } else {
-            PromptTemplate t = getTemplateByLocale(locale);
-            StringBuilder prompt = new StringBuilder();
-            prompt.append(t.globalConstraint()).append('\n');
-            prompt.append(t.multiFeatureIntro());
-            prompt.append(featureDescs);
-            if (context != null && !context.isEmpty()) {
-                prompt.append(String.format(t.readingAssistantContext(), context)).append('\n');
-            }
-            prompt.append(t.featureDirectInstruction());
-            base = prompt.toString();
+            return applyPlaceholders(fromDb, context, featureBlock, locale, targetWords);
         }
-        // 样式提示合并进短格式说明；末尾再强化回复语言（覆盖功能细节里残留的「中文」）
-        return base + markdownFormatHint(locale) + replyLanguageReinforcement(locale);
+        // 未配置场景壳时：只下发后台功能提示词，不再拼代码里的中文壳
+        return featureBlock;
     }
 
     /**
-     * 多选功能 user prompt（基于 locale 和 featureKeys 列表）。
+     * 功能 / 多选 user prompt：仅为用户选中原文。
+     * 无目标词时 word/root_affix 不会进入 featureKeys（由接口层剥离），此处不再解释「空」。
      */
     public String buildMultiFeatureUserPrompt(String locale, List<String> featureKeys, String context) {
-        StringBuilder featureNames = new StringBuilder();
-        int i = 1;
-        for (String key : featureKeys) {
-            SysAiFeature feature = loadFeatureForLocale(key, locale);
-            String name = feature != null && feature.getFeatureName() != null
-                    ? feature.getFeatureName() : key;
-            if (featureNames.length() > 0) featureNames.append(" → ");
-            featureNames.append(i++).append('.').append(name);
-        }
-        PromptTemplate t = getTemplateByLocale(locale);
-        return String.format(t.multiFeatureUserFormat(), featureNames, context);
+        return context == null ? "" : context.trim();
     }
 
-    private String compactOrderLine(String locale, List<String> featureKeys) {
+    /**
+     * 功能预设 user prompt：仅为选中原文。
+     */
+    public String buildFeatureUserPrompt(String locale, String featureKey, String context) {
+        return buildMultiFeatureUserPrompt(locale,
+                featureKey == null ? List.of() : List.of(featureKey), context);
+    }
+
+    /** 按勾选顺序拼接 sys_ai_feature.prompt（后台「AI 功能」里配置的原文）。 */
+    private String assembleFeaturePromptsFromDb(String locale, List<String> featureKeys) {
         if (featureKeys == null || featureKeys.isEmpty()) return "";
-        StringBuilder ordered = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         int i = 1;
         for (String key : featureKeys) {
-            SysAiFeature feature = loadFeatureForLocale(key, locale);
-            String name = feature != null && feature.getFeatureName() != null
-                    ? feature.getFeatureName() : key;
-            if (ordered.length() > 0) ordered.append(" → ");
-            ordered.append(i++).append('.').append(name);
+            if (key == null || key.isBlank()) continue;
+            String k = key.trim();
+            SysAiFeature feature = loadFeatureForLocale(k, locale);
+            if (feature == null) continue; // 停用或不存在 → 不进提示词
+            String name = feature.getFeatureName() != null ? feature.getFeatureName() : k;
+            String prompt = feature.getPrompt() != null ? feature.getPrompt().trim() : "";
+            sb.append(i++).append('.').append(name).append('(').append(k).append("):\n");
+            if (!prompt.isEmpty()) {
+                sb.append(prompt).append('\n');
+            }
+            sb.append('\n');
         }
-        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
-        if (AiFeatureI18nSupport.isChinese(loc)) {
-            return "【顺序】按此输出：" + ordered + "。标题用「翻译：」「单词：」等，词条 **加粗**。";
-        }
-        return "[Order] Output sections as: " + ordered + ". Title each section; bold lemmas.";
+        return sb.toString().trim();
     }
 
     /**
@@ -472,28 +420,6 @@ public class AiPromptBuilder {
         return f;
     }
 
-    /**
-     * 功能细节 prompt 多为中文编写；非中文 locale 时把「中文」改成目标语言名，
-     * 避免盖过场景壳里的 {global_constraint}。
-     */
-    private String adaptFeaturePromptForLocale(String prompt, String locale) {
-        if (prompt == null || prompt.isBlank()) return "";
-        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
-        if (AiFeatureI18nSupport.isChinese(loc)) return prompt;
-        String lang = getTemplateByLocale(loc).localeName();
-        return prompt
-                .replace("英文词性缩写 + 中文释义", "English POS abbrev. + " + lang + " meaning")
-                .replace("英文词性缩写 + 用户语言释义", "English POS abbrev. + " + lang + " meaning")
-                .replace("n./v./adj. + 中文", "n./v./adj. + " + lang)
-                .replace("n./v./adj. + 用户语言", "n./v./adj. + " + lang)
-                .replace("中文释义", lang + " meaning")
-                .replace("用户语言释义", lang + " meaning")
-                .replace("中文翻译", lang + " translation")
-                .replace("用中文", "in " + lang)
-                .replace("用户语言", lang)
-                .replace("中文", lang);
-    }
-
     /** 放在 prompt 末尾，优先于功能细节里残留的语言要求。 */
     private String replyLanguageReinforcement(String locale) {
         String loc = AiFeatureI18nSupport.normalizeLocale(locale);
@@ -507,8 +433,7 @@ public class AiPromptBuilder {
     }
 
     /**
-     * 仅按精确 locale 加载库配置；未配置时返回 null，由调用方回退代码内置多语言模板。
-     * 不再把其它语言回退到 zh-CN 库配置（否则会把「始终用中文回复」带进英文等场景）。
+     * 仅按精确 locale 加载库配置；未配置时返回 null，由调用方回退。
      */
     private String loadScenePrompt(String sceneKey, String locale) {
         try {
@@ -518,32 +443,33 @@ public class AiPromptBuilder {
                 return row.getSystemPrompt();
             }
         } catch (Exception ignored) {
-            // 表未建或查询失败时回退代码模板
+            // 表未建或查询失败时回退
         }
         return null;
     }
 
-    /** 阅读解析输出样式：小节与词条加粗，前端可渲染为紫色标题 */
-    private static String markdownFormatHint(String locale) {
-        String loc = AiFeatureI18nSupport.normalizeLocale(locale);
-        if (AiFeatureI18nSupport.isChinese(loc)) {
-            return "\n【版式】小节标题「翻译：」「单词：」「固定搭配：」「语法：」（不用 ##）；列表词条 **加粗**。\n";
-        }
-        return "\n[Format] Section titles like Translation:/Words:/Collocations: (no ##); bold lemmas.\n";
-    }
-
     /**
      * 替换场景提示词占位符。
-     * 支持：{context}、{feature_prompts}、{language}（展示名）、{locale}（代码）、{global_constraint}（按请求语言注入全局规则）。
+     * 支持：{context}、{feature_prompts}、{target_words}、{language}、{locale}、{global_constraint}。
      */
     private String applyPlaceholders(String template, String context, String featurePrompts, String locale) {
+        return applyPlaceholders(template, context, featurePrompts, locale, null);
+    }
+
+    private String applyPlaceholders(String template, String context, String featurePrompts, String locale,
+                                     List<String> targetWords) {
         String loc = AiFeatureI18nSupport.normalizeLocale(locale);
         PromptTemplate t = getTemplateByLocale(loc);
         String ctx = context == null ? "" : context;
         String feats = featurePrompts == null ? "" : featurePrompts;
+        // 有目标词才填入；没有则留空。无目标词时 word 功能不会下发给模型，不必在此解释。
+        String targets = (targetWords != null && !targetWords.isEmpty())
+                ? String.join(", ", targetWords)
+                : "";
         return template
                 .replace("{context}", ctx)
                 .replace("{feature_prompts}", feats)
+                .replace("{target_words}", targets)
                 .replace("{language}", t.localeName())
                 .replace("{locale}", loc)
                 .replace("{global_constraint}", t.globalConstraint());

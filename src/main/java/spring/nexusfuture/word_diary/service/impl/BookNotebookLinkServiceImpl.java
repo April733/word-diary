@@ -2,7 +2,7 @@ package spring.nexusfuture.word_diary.service.impl;
 
 import org.springframework.stereotype.Service;
 import spring.nexusfuture.word_diary.common.BizException;
-import spring.nexusfuture.word_diary.dto.BookNotebookLinkVO;
+import spring.nexusfuture.word_diary.dto.response.BookNotebookLinkVO;
 import spring.nexusfuture.word_diary.entity.WdBook;
 import spring.nexusfuture.word_diary.entity.WdWordBook;
 import spring.nexusfuture.word_diary.mapper.WdBookMapper;

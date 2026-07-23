@@ -1,6 +1,7 @@
 package spring.nexusfuture.word_diary.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -37,6 +38,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<R<Void>> handleNoResource(NoResourceFoundException e) {
         log.debug("静态资源不存在: {}", e.getResourcePath());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(R.fail(404, "not found"));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<R<Void>> handleDataIntegrity(DataIntegrityViolationException e) {
+        log.error("数据写入失败", e);
+        String detail = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage();
+        if (detail != null && detail.toLowerCase().contains("feature_key")) {
+            return ResponseEntity.status(500).body(R.fail(500,
+                    "保存失败：feature_key 过长，请确认 wd_ai_message.feature_key 已扩展为 varchar(255)"));
+        }
+        if (detail != null && (detail.contains("Data too long") || detail.contains("too long"))) {
+            return ResponseEntity.status(500).body(R.fail(500, "保存失败：字段超长，请检查数据库列长度"));
+        }
+        return ResponseEntity.status(500).body(R.fail(500, "保存失败，请稍后重试或联系管理员"));
     }
 
     @ExceptionHandler(Exception.class)

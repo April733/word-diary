@@ -16,15 +16,22 @@
         <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = true" />
 
         <div v-if="showAnswer" class="study-actions">
-          <t-button theme="danger" size="large" @click="handleAnswer(0)">{{ $t('study.forget') }}</t-button>
-          <t-button theme="warning" size="large" @click="handleAnswer(2)">{{ $t('study.fuzzy') }}</t-button>
-          <t-button theme="primary" size="large" @click="handleAnswer(1)">{{ $t('study.know') }}</t-button>
+          <button type="button" class="act act--pass" @click="handleAnswer(0)">
+            {{ $t('study.forget') }}
+          </button>
+          <button type="button" class="act act--know" @click="handleAnswer(1)">
+            {{ $t('study.know') }}
+          </button>
         </div>
 
         <div class="nav-actions">
-          <t-button variant="outline" :disabled="index <= 0" @click="prevWord">{{ $t('study.prev') }}</t-button>
+          <button type="button" class="nav-btn" :disabled="index <= 0" @click="prevWord">
+            {{ $t('study.prev') }}
+          </button>
           <span class="nav-text">{{ index + 1 }} / {{ words.length }}</span>
-          <t-button variant="outline" :disabled="index >= words.length - 1" @click="nextWord">{{ $t('study.next') }}</t-button>
+          <button type="button" class="nav-btn" :disabled="index >= words.length - 1" @click="nextWord">
+            {{ $t('study.next') }}
+          </button>
         </div>
       </div>
 
@@ -69,9 +76,8 @@ async function handleAnswer(feedback: number) {
   const word = currentWord.value
   if (!word) return
   try {
-    await submitBrowseAnswer({ planId: word.planId, feedback })
+    await submitBrowseAnswer({ wordId: word.wordId, feedback })
     showAnswer.value = false
-    MessagePlugin.success(t('study.browseRecorded'))
     if (index.value < words.value.length - 1) {
       index.value++
     }
@@ -135,11 +141,48 @@ function nextWord() {
 }
 
 .study-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
-  justify-content: center;
-  margin-top: 32px;
-  flex-wrap: wrap;
+  max-width: 520px;
+  margin: 28px auto 0;
+}
+
+.act {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  height: 48px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: background 0.15s ease, transform 0.12s ease, border-color 0.15s ease;
+}
+
+.act:active {
+  transform: scale(0.98);
+}
+
+.act--pass {
+  background: var(--brand-white);
+  color: var(--brand-ink);
+  border: 1.5px solid color-mix(in srgb, var(--brand-lizard) 70%, var(--brand-ink));
+}
+
+.act--pass:hover {
+  background: color-mix(in srgb, var(--brand-lizard) 28%, var(--brand-white));
+}
+
+.act--know {
+  background: var(--brand-ink);
+  color: var(--brand-white);
+  border: 1.5px solid var(--brand-ink);
+}
+
+.act--know:hover {
+  background: var(--brand-ink-hover);
+  border-color: var(--brand-ink-hover);
 }
 
 .nav-actions {
@@ -147,11 +190,36 @@ function nextWord() {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  margin-top: 32px;
+  margin-top: 24px;
+}
+
+.nav-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--brand-ink) 70%, var(--brand-lizard));
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-lizard) 22%, transparent);
+  color: var(--brand-ink);
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .nav-text {
   color: #6b7280;
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+  text-align: center;
 }
 </style>

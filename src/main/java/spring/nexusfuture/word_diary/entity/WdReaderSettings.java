@@ -8,13 +8,13 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 阅读器偏好设置表（wd_reader_settings）：保存用户字体、配色与翻页方式等阅读器偏好。
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-/**
- * 阅读器偏好设置表
- */
 public class WdReaderSettings {
 
     /** 主键 */
@@ -23,7 +23,7 @@ public class WdReaderSettings {
     /** 用户ID */
     private Long userId;
 
-    /** 字体大小 */
+    /** 字体大小（px） */
     private Integer fontSize;
 
     /** 行高 */
@@ -35,7 +35,7 @@ public class WdReaderSettings {
     /** 文字颜色 */
     private String textColor;
 
-    /** 排版模式，如 paginated（分页）/ scrolled（滚动） */
+    /** 排版/翻页模式：paginated 分页 / scrolled 滚动（如 scrolled-doc） */
     private String flow;
 
     /** 创建人 */
@@ -50,6 +50,6 @@ public class WdReaderSettings {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

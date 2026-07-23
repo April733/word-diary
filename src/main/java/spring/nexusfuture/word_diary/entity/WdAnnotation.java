@@ -7,13 +7,13 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+/**
+ * 阅读标注/笔记表（wd_annotation）：保存 EPUB 等阅读器中的高亮选区与用户笔记。
+ */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-/**
- * 阅读标注/笔记表
- */
 public class WdAnnotation {
 
     /** 主键 */
@@ -55,6 +55,6 @@ public class WdAnnotation {
     /** 更新时间 */
     private LocalDateTime updateTime;
 
-    /** 是否删除 1已删除 0未删除 */
+    /** 是否删除：1已删除 0未删除 */
     private Integer isDeleted;
 }

@@ -1,5 +1,8 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { aiRegionHeaders } from '../utils/aiRegion'
+
+/** soft: 弱网可入队的写操作，失败不计入「服务宕机」探活，避免阅读中弹全屏遮罩 */
+export type SoftRequestConfig = AxiosRequestConfig & { soft?: boolean }
 
 const api = axios.create({
   baseURL: '/api',
@@ -18,6 +21,10 @@ api.interceptors.request.use(config => {
 
 api.interceptors.response.use(
   res => {
+    // 任一 API 成功，清掉传输失败计数，避免闪断后误弹「服务升级」
+    import('../utils/serviceStatus').then(({ noteApiTransportSuccess }) => {
+      noteApiTransportSuccess()
+    }).catch(() => { /* ignore */ })
     const body = res.data
     // 业务失败偶发以 HTTP 200 + code!=200 返回，统一当成错误
     if (body && typeof body.code === 'number' && body.code !== 200) {
@@ -33,7 +40,7 @@ api.interceptors.response.use(
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       window.location.href = '/login'
-    } else {
+    } else if (!(err.config as SoftRequestConfig | undefined)?.soft) {
       // 延迟导入，避免与工具模块循环依赖
       import('../utils/serviceStatus').then(({ noteApiTransportFailure }) => {
         noteApiTransportFailure(err)
@@ -50,7 +57,6 @@ export const updateUserLocale = (locale: string) => api.put('/user/locale', { lo
 export const updateUserAiRegion = (region: string) => api.put('/user/ai-region', { region })
 export const checkPhone = (phone: string) => api.get('/user/check-phone', { params: { phone } })
 export const checkEmail = (email: string) => api.get('/user/check-email', { params: { email } })
-export const checkInviteCode = (code: string) => api.get('/user/check-invite-code', { params: { code } })
 export const sendSms = (phone: string) => api.post('/user/send-sms', { phone })
 export const sendMailCode = (email: string) => api.post('/user/send-mail-code', { email })
 export const sendResetSms = (phone: string) => api.post('/user/send-reset-sms', { phone })
@@ -74,11 +80,8 @@ export const deleteNotebook = (id: number) => api.delete(`/notebooks/${id}`)
 // Words
 export const addWord = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words`, data)
 export const getWords = (notebookId: number) => api.get(`/notebooks/${notebookId}/words`)
-export const getWordTrash = (notebookId: number) => api.get(`/notebooks/${notebookId}/words/trash`)
 export const updateWord = (notebookId: number, wordId: number, data: any) => api.put(`/notebooks/${notebookId}/words/${wordId}`, data)
 export const deleteWord = (notebookId: number, wordId: number) => api.delete(`/notebooks/${notebookId}/words/${wordId}`)
-export const restoreWord = (notebookId: number, wordId: number) =>
-  api.post(`/notebooks/${notebookId}/words/${wordId}/restore`)
 export const aiParseWords = (notebookId: number, data: any) =>
   api.post(`/notebooks/${notebookId}/words/ai-parse`, data, { timeout: 120000 })
 
@@ -98,28 +101,29 @@ export const aiParseWordsStream = (notebookId: number, data: any): Promise<Respo
 
 export const batchAddWords = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words/batch-add`, data)
 
-// Study
-export const getStudyToday = () => api.get('/study/today')
-export const openStudySession = () => api.post('/study/session/open')
+// Study — 今日学习
+export const getStudyToday = () => api.get('/study-today')
+export const openStudySession = () => api.post('/study-today/session/open')
 export const getStudySessionQueue = (params?: { phase?: string }) =>
-  api.get('/study/session/queue', { params })
-export const submitStudyAnswer = (data: { planId: number; queueItemId: number; feedback: number; phase: string }) =>
-  api.post('/study/answer', data)
-export const getStudySettings = () => api.get('/study/settings')
-export const updateStudySettings = (data: { dailyNewLimit?: number; reviewUnlockHour?: number; autoSpreadNew?: boolean }) =>
-  api.put('/study/settings', data)
+  api.get('/study-today/session/queue', { params })
+export const submitStudyAnswer = (data: {
+  wordId: number
+  feedback: number
+  phase: string
+}) => api.post('/study-today/answer', data)
+export const getStudySettings = () => api.get('/study-today/settings')
+export const updateStudySettings = (data: { dailyNewLimit?: number; reviewUnlockHour?: number }) =>
+  api.put('/study-today/settings', data)
+export const getTodayCompleted = () => api.get('/study-today/completed')
+
+// Study — 背单词计划
 export const getBrowseWords = (params?: { notebookId?: number; page?: number; pageSize?: number }) =>
-  api.get('/study/browse/words', { params })
-export const submitBrowseAnswer = (data: { planId: number; feedback: number }) =>
-  api.post('/study/browse/answer', data)
-export const getNewWords = () => api.get('/study/new-words')
-export const getTodayReview = () => api.get('/study/today-review')
-export const getTodayCompleted = () => api.get('/study/today-completed')
-export const firstLearn = (planId: number, result: number) => api.post(`/study/first-learn/${planId}`, { result })
-export const review = (planId: number, result: number) => api.post(`/study/review/${planId}`, { result })
-export const getStats = () => api.get('/study/stats')
+  api.get('/study-plan/browse/words', { params })
+export const submitBrowseAnswer = (data: { wordId: number; feedback: number }) =>
+  api.post('/study-plan/browse/answer', data)
+export const getStats = () => api.get('/study-plan/stats')
 export const getPlanWords = (params?: { status?: 'pending' | 'learning' | 'mastered' | 'all' }) =>
-  api.get('/study/plan/words', { params })
+  api.get('/study-plan/words', { params })
 
 export default api
 
@@ -150,7 +154,8 @@ export const uploadBook = (file: File) => {
 export const getBooks = () => api.get('/books')
 export const getBookDetail = (bookId: number) => api.get(`/books/${bookId}`)
 export const deleteBook = (bookId: number) => api.delete(`/books/${bookId}`)
-export const updateProgress = (bookId: number, data: any) => api.post(`/books/${bookId}/progress`, data)
+export const updateProgress = (bookId: number, data: any, config?: SoftRequestConfig) =>
+  api.post(`/books/${bookId}/progress`, data, config)
 export const getBookFileUrl = (bookId: number) => `/api/books/${bookId}/file`
 /** COS 预签名直链（大 PDF 直连，避免经后端中转超时） */
 export const getBookPresignedFileUrl = (bookId: number) => api.get(`/books/${bookId}/file-url`)
@@ -159,10 +164,12 @@ export const getBookPresignedFileUrl = (bookId: number) => api.get(`/books/${boo
 export const getAnnotations = (bookId: number) => api.get(`/books/${bookId}/annotations`)
 export const getChapterAnnotations = (bookId: number, chapterIndex: number) =>
   api.get(`/books/${bookId}/annotations/chapter/${chapterIndex}`)
-export const addAnnotation = (bookId: number, data: any) => api.post(`/books/${bookId}/annotations`, data)
-export const updateAnnotation = (bookId: number, id: number, data: any) =>
-  api.put(`/books/${bookId}/annotations/${id}`, data)
-export const deleteAnnotation = (bookId: number, id: number) => api.delete(`/books/${bookId}/annotations/${id}`)
+export const addAnnotation = (bookId: number, data: any, config?: SoftRequestConfig) =>
+  api.post(`/books/${bookId}/annotations`, data, config)
+export const updateAnnotation = (bookId: number, id: number, data: any, config?: SoftRequestConfig) =>
+  api.put(`/books/${bookId}/annotations/${id}`, data, config)
+export const deleteAnnotation = (bookId: number, id: number, config?: SoftRequestConfig) =>
+  api.delete(`/books/${bookId}/annotations/${id}`, config)
 
 // PDF Canvas 批注（与 EPUB CFI 笔记分离）
 export const getPdfMarkups = (bookId: number) => api.get(`/books/${bookId}/pdf-markups`)
@@ -174,14 +181,14 @@ export const addPdfMarkup = (bookId: number, data: {
   geometryJson: string
   color?: string
   noteText?: string
-}) => api.post(`/books/${bookId}/pdf-markups`, data)
+}, config?: SoftRequestConfig) => api.post(`/books/${bookId}/pdf-markups`, data, config)
 export const updatePdfMarkup = (bookId: number, id: number, data: {
   geometryJson?: string
   color?: string
   noteText?: string
-}) => api.put(`/books/${bookId}/pdf-markups/${id}`, data)
-export const deletePdfMarkup = (bookId: number, id: number) =>
-  api.delete(`/books/${bookId}/pdf-markups/${id}`)
+}, config?: SoftRequestConfig) => api.put(`/books/${bookId}/pdf-markups/${id}`, data, config)
+export const deletePdfMarkup = (bookId: number, id: number, config?: SoftRequestConfig) =>
+  api.delete(`/books/${bookId}/pdf-markups/${id}`, config)
 
 // Reader Settings
 export const getReaderSettings = () => api.get('/books/reader-settings')
@@ -197,12 +204,44 @@ export const getAiMessages = (sessionId: number) => api.get(`/books/ai-sessions/
 export const getAiMessagesPaged = (sessionId: number, offset: number, limit: number) =>
   api.get(`/books/ai-sessions/${sessionId}/messages/paged`, { params: { offset, limit } })
 export const deleteAiSession = (sessionId: number) => api.delete(`/books/ai-sessions/${sessionId}`)
+export const updateAiMessage = (messageId: number, content: string) =>
+  api.put(`/books/ai-messages/${messageId}`, { content })
 
 // Admin contact & issue reporting
 export const reportIssue = (data: { username?: string; description: string; errorDetail?: string; subject?: string }) =>
   api.post('/books/report-issue', data)
 export const reportIssuePublic = (data: { username: string; description: string; errorDetail?: string; subject?: string }) =>
   api.post('/user/report-issue-public', data)
+
+/** 帮助中心：发送联系邮箱验证码（公开） */
+export const sendAbuseNoticeMailCode = (email: string) =>
+  api.post('/abuse-notices/send-mail-code', { email })
+
+/** 投诉 / 建议（公开可匿名；须邮箱验证码；登录时带 Token 会绑定账号） */
+export const submitAbuseNotice = (data: {
+  noticeType: 'suggestion' | 'complaint' | 'copyright' | 'illegal'
+  complainantName: string
+  complainantEmail: string
+  emailCode: string
+  complainantPhone?: string
+  organization?: string
+  rightDescription?: string
+  ownershipProof?: string
+  targetUrl?: string
+  targetBookId?: number
+  targetDescription?: string
+  detail: string
+  goodFaith?: boolean
+}) => api.post('/abuse-notices', data)
+
+export const listMyAbuseNotices = (params?: { page?: number; size?: number }) =>
+  api.get('/abuse-notices/mine', { params })
+
+export const getMyAbuseNotice = (id: number) =>
+  api.get(`/abuse-notices/mine/${id}`)
+
+export const claimMyAbuseNotice = (noticeNo: string) =>
+  api.post('/abuse-notices/mine/claim', { noticeNo })
 
 // Book ↔ Notebook links & collect
 export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)

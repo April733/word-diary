@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.UnsupportedEncodingException;
 
+/** 邮件发送：验证码、用户问题报告等。 */
 @Slf4j
 @Service
 public class MailService {
@@ -33,6 +34,11 @@ public class MailService {
         this.mailSender = mailSender;
     }
 
+    /**
+     * 启动时打印邮件配置，便于排查。
+     *
+     * @return 无
+     */
     @PostConstruct
     public void init() {
         log.info("===== MailService 配置加载 =====");
@@ -43,14 +49,31 @@ public class MailService {
         log.info("=================================");
     }
 
+    /**
+     * 是否启用邮件发送。
+     *
+     * @return true 表示会实际发信；false 则各发送方法直接跳过
+     */
     public boolean isMailEnabled() {
         return mailEnabled;
     }
 
+    /**
+     * 管理后台收件邮箱。
+     *
+     * @return 管理员收件地址
+     */
     public String getAdminTo() {
         return adminTo;
     }
 
+    /**
+     * 向用户邮箱发送登录/注册验证码。
+     *
+     * @param to 收件邮箱
+     * @param code 验证码明文
+     * @return 无（失败仅打日志，不抛给调用方）
+     */
     public void sendVerifyCode(String to, String code) {
         if (!mailEnabled) {
             log.warn("邮件服务未启用，跳过发送验证码。to={}", to);
@@ -75,6 +98,14 @@ public class MailService {
         }
     }
 
+    /**
+     * 将用户问题报告发送至管理员邮箱。
+     *
+     * @param username 用户名
+     * @param description 问题描述
+     * @param errorDetail 错误详情（可空）
+     * @return 无（失败仅打日志，不抛给调用方）
+     */
     public void sendBugReport(String username, String description, String errorDetail) {
         if (!mailEnabled) {
             log.warn("邮件服务未启用，跳过发送。报告内容: user={}, description={}", username, description);

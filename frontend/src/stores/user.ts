@@ -9,7 +9,6 @@ interface UserInfo {
   username: string
   nickname: string
   token: string
-  isMember: number
   preferredLocale?: string
   preferredAiRegion?: string
 }

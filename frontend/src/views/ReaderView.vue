@@ -52,9 +52,8 @@
               :class="{ active: currentChapter === i, 'has-note': tocItemHasNote(i) }"
               :style="item.level !== undefined ? { paddingLeft: (item.level * 12 + 8) + 'px' } : {}"
               :title="tocItemHasNote(i) ? $t('reader.tocHasNote') : undefined"
-              @click="goToChapter(i, item.href)"
             >
-              <span class="toc-item-label">{{ item.label }}</span>
+              <span class="toc-item-label" @click="goToChapter(i, item.href)">{{ item.label }}</span>
               <span v-if="tocItemHasNote(i)" class="toc-note-dot" aria-hidden="true" />
             </div>
           </div>
@@ -108,10 +107,18 @@
         </div>
       </main>
 
-      <div class="resize-handle resize-handle-right" @mousedown="startResizeAi" />
+      <div class="resize-handle resize-handle-right" v-if="showAi" @mousedown="startResizeAi" />
 
       <!-- 右侧：AI 对话框 -->
-      <aside class="sidebar-ai" data-guide="ai-panel" :style="{ width: aiWidth + 'px' }">
+      <div class="sidebar-ai-wrapper" :class="{ collapsed: !showAi }" :style="aiWrapperStyle">
+        <button
+          class="ai-toggle-btn"
+          @click="toggleAi"
+          :title="showAi ? $t('reader.collapseAi') : $t('reader.expandAi')"
+        >
+          <t-icon :name="showAi ? 'chevron-right' : 'chevron-left'" size="14px" />
+        </button>
+        <aside class="sidebar-ai" data-guide="ai-panel" v-show="showAi">
         <!-- 未选文字时的引导状态 -->
         <div v-if="!selectedContext && aiMessages.length === 0" class="ai-empty-state">
           <div class="ai-empty-icon">
@@ -190,16 +197,19 @@
                 <t-icon name="setting" size="16px" />
               </t-button>
             </div>
-            <t-button
-              size="small"
-              variant="outline"
-              class="ai-feature-send"
-              :loading="aiLoading && activeFeatureKey === 'multi'"
-              :disabled="!selectedContext || selectedFeatureKeysForQuery.length === 0 || (aiLoading && activeFeatureKey !== 'multi')"
-              @click="sendAiFeatures"
-            >
-              <template v-if="!(aiLoading && activeFeatureKey === 'multi')">{{ $t('reader.aiAnalyze') }}</template>
-            </t-button>
+            <div class="ai-feature-send-row">
+              <t-button
+                size="small"
+                theme="primary"
+                variant="outline"
+                class="ai-feature-send"
+                :loading="aiLoading && activeFeatureKey === 'multi'"
+                :disabled="!selectedContext || selectedFeatureKeysForQuery.length === 0 || (aiLoading && activeFeatureKey !== 'multi')"
+                @click="sendAiFeatures"
+              >
+                <template v-if="!(aiLoading && activeFeatureKey === 'multi')">{{ $t('reader.aiAnalyze') }}</template>
+              </t-button>
+            </div>
           </div>
 
           <!-- AI 消息区 -->
@@ -213,10 +223,10 @@
             <div v-if="aiMessages.length === 0" class="ai-empty">
               {{ $t('reader.aiHint1') }}
             </div>
-            <div v-for="(msg, i) in aiMessages" :key="i" class="ai-msg" :class="msg.role">
-              <div class="ai-msg-content" v-html="renderMarkdown(msg.content)"></div>
+            <div v-for="(msg, i) in aiMessages" :key="msg.id ?? i" class="ai-msg" :class="msg.role">
+              <div class="ai-msg-content" v-html="renderMarkdown(displayAiMessageBody(msg))"></div>
               <div
-                v-if="msg.role === 'assistant' && msg.content"
+                v-if="msg.role === 'assistant' && (msg.content || msg.analyzeResult || looksLikeAnalyzeJson(msg.content))"
                 class="ai-msg-actions"
               >
                 <t-button
@@ -247,8 +257,7 @@
             v-model="aiInput"
             :placeholder="$t('reader.aiInputPlaceholder')"
             :autosize="{ minRows: 2, maxRows: 2 }"
-            @keydown.enter.exact.prevent="sendAiMessage"
-            @keydown.enter.ctrl="sendAiMessage"
+            @keydown="onAiComposerKeydown"
           />
           <t-button
             class="ai-composer-send"
@@ -264,6 +273,7 @@
           </t-button>
         </div>
       </aside>
+      </div>
     </div>
 
     <!-- 笔记编辑弹窗 -->
@@ -438,8 +448,8 @@ import ePub from 'epubjs'
 import type { Book, Rendition, Location } from 'epubjs'
 import axios from 'axios'
 import {
-  getBookDetail, getBookFileUrl, updateProgress,
-  getChapterAnnotations, addAnnotation, updateAnnotation, deleteAnnotation, getAnnotations,
+  getBookDetail, getBookFileUrl,
+  getChapterAnnotations, getAnnotations,
   getReaderSettings, saveReaderSettings,
   getAiFeatures, getAiFeaturePreferences, saveAiFeaturePreferences,
   getAiSessions, getAiMessagesPaged,
@@ -452,6 +462,7 @@ import {
   extractContextFromUserAiMessage,
   hydrateAiMessageList,
   makeBasketKey,
+  parseAnalyzeResultFromStored,
   parseCollectEntriesFromText,
   resolveActiveNotebookId,
   saveActiveNotebookId,
@@ -459,13 +470,25 @@ import {
   type CollectEntry
 } from '../utils/collectBasket'
 import { normalizeSelectedText, pickSentenceForLemma, tokenizeContextSegments } from '../utils/selectedText'
+import {
+  formatAnalyzeResultMarkdown,
+  normalizeDisplayFeatureKeys,
+  renderAiMarkdown
+} from '../utils/aiMarkdown'
+import {
+  isTransportError,
+  syncAnnotationCreate,
+  syncAnnotationDelete,
+  syncAnnotationUpdate,
+  syncProgress,
+} from '../utils/offlineSync'
 import { aiRegionHeaders } from '../utils/aiRegion'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
 
 const route = useRoute()
 const router = useRouter()
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const bookId = Number(route.params.id)
 
 const book = ref<any>(null)
@@ -475,6 +498,7 @@ const currentChapter = ref(0)
 const notedPages = ref<number[]>([])
 const notedChapterIndexes = ref<Set<number>>(new Set())
 const showToc = ref(true)
+const showAi = ref(true)
 
 // 三栏宽度与拖拽调整
 const tocWidth = ref(200)
@@ -488,6 +512,11 @@ const isResizing = ref(false)
 const tocWrapperStyle = computed(() => {
   if (!showToc.value) return { width: '32px' }
   return { width: tocWidth.value + 'px' }
+})
+
+const aiWrapperStyle = computed(() => {
+  if (!showAi.value) return { width: '32px' }
+  return { width: aiWidth.value + 'px' }
 })
 
 function startResizeToc(e: MouseEvent) {
@@ -539,15 +568,11 @@ function startResizeAi(e: MouseEvent) {
 }
 
 function toggleToc() {
-  const collapsedWidth = 32
-  if (showToc.value) {
-    const released = Math.max(0, tocWidth.value - collapsedWidth)
-    aiWidth.value = Math.min(MAX_AI_WIDTH, aiWidth.value + released)
-  } else {
-    const returned = Math.max(0, tocWidth.value - collapsedWidth)
-    aiWidth.value = Math.max(MIN_AI_WIDTH, aiWidth.value - returned)
-  }
   showToc.value = !showToc.value
+}
+
+function toggleAi() {
+  showAi.value = !showAi.value
 }
 
 const loading = ref(false)
@@ -558,7 +583,11 @@ const viewerRef = ref<HTMLElement | null>(null)
 const readerContainer = ref<HTMLElement | null>(null)
 
 // PDF 相关（逻辑在 PdfReader 组件内，此处仅做桥接）
-const pdfReaderRef = ref<{ goToPage: (pageNum: number) => void } | null>(null)
+const pdfReaderRef = ref<{
+  goToPage: (pageNum: number) => void
+  getCurrentPage?: () => number
+} | null>(null)
+
 const pdfTotalPages = ref(0)
 
 // 选中文字
@@ -595,12 +624,6 @@ const targetWords = computed(() => {
   }
   return out
 })
-
-const WORD_TARGET_FEATURES = new Set(['word', 'collocation', 'root_affix', 'root'])
-
-const needsTargetWords = computed(() =>
-  selectedFeatureKeysForQuery.value.some((k) => WORD_TARGET_FEATURES.has(k))
-)
 
 watch(selectedContext, () => {
   const segs = tokenizeContextSegments(selectedContext.value || '')
@@ -740,12 +763,25 @@ const activeNotebook = computed(() =>
   linkedNotebooks.value.find(n => n.notebookId === activeNotebookId.value)
 )
 
+type AiAnalyzeResult = Record<string, unknown>
+
 type AiMessage = {
+  id?: number
   role: string
   content: string
+  /** 本次解析勾选的功能（顺序 = 展示顺序） */
+  featureKeys?: string[]
+  analyzeResult?: AiAnalyzeResult
   collectEntries?: CollectEntry[]
   collectSourceSnippet?: string
   collectSourceLocation?: string
+}
+
+function attachMessageId(answerIndex: number, messageId?: number) {
+  if (messageId == null) return
+  const msg = aiMessages.value[answerIndex]
+  if (!msg) return
+  aiMessages.value[answerIndex] = { ...msg, id: messageId }
 }
 
 watch(activeNotebookId, (id) => {
@@ -795,17 +831,46 @@ function collectableEntriesOf(msg: AiMessage): CollectEntry[] {
   return list.filter(e => e.entryType === 'word' || e.entryType === 'phrase')
 }
 
-/** 合并 AI 已挂载词条 + 正文「单词/固定搭配」小节兜底（模型漏写 COLLECT_JSON 时） */
+/** 合并 analyzeResult 分包词条 / collectEntries；旧 Markdown 正文仅作兜底 */
 function mergeCollectEntriesFromMessage(msg: AiMessage, snippet = ''): CollectEntry[] {
   const map = new Map<string, CollectEntry>()
+  const snip = snippet || msg.collectSourceSnippet || ''
   for (const e of collectableEntriesOf(msg)) {
     map.set(e.basketKey, e)
   }
-  for (const e of parseCollectEntriesFromText(msg.content || '', snippet || msg.collectSourceSnippet || '')) {
-    if (e.entryType !== 'word' && e.entryType !== 'phrase') continue
-    if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+  if (msg.analyzeResult) {
+    for (const e of collectEntriesFromKeyBasedResult(msg.analyzeResult, snip)) {
+      if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+    }
+  }
+  if (!msg.analyzeResult && msg.content) {
+    for (const e of parseCollectEntriesFromText(msg.content, snip)) {
+      if (e.entryType !== 'word' && e.entryType !== 'phrase') continue
+      if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+    }
   }
   return [...map.values()]
+}
+
+/** 任意 feature_key 下的词条数组均可收录；不按 key 名硬编码分流 */
+function collectEntriesFromKeyBasedResult(result: AiAnalyzeResult, snippet: string): CollectEntry[] {
+  const out: CollectEntry[] = []
+  for (const raw of Object.values(result || {})) {
+    if (!Array.isArray(raw) || !raw.length) continue
+    const rows = raw.filter((e) => e && typeof e === 'object' && (('word' in (e as object)) || ('wordProto' in (e as object))))
+    if (!rows.length) continue
+    out.push(
+      ...normalizeCollectEntries(
+        rows.map((e: any) => {
+          const word = String(e?.word || e?.wordProto || '')
+          const entryType = e?.entryType || (word.includes(' ') ? 'phrase' : 'word')
+          return { ...e, entryType }
+        }),
+        snippet
+      )
+    )
+  }
+  return out
 }
 
 function collectableCount(msg: AiMessage): number {
@@ -875,24 +940,27 @@ async function onNotebookLinksChanged() {
 }
 
 function normalizeCollectEntries(rawEntries: any[], snippet: string): CollectEntry[] {
-  return rawEntries
-    .filter(e => e?.wordProto && e?.partSpeechMean)
-    .map(e => {
-      const wordProto = String(e.wordProto).trim()
-      const example = snippet ? pickSentenceForLemma(snippet, wordProto) : ''
-      return {
-        basketKey: makeBasketKey(e),
-        entryType: e.entryType === 'phrase' ? 'phrase' as const : 'word' as const,
-        wordProto,
-        partSpeechMean: String(e.partSpeechMean).trim(),
-        usPhonetic: e.usPhonetic,
-        ukPhonetic: e.ukPhonetic,
-        sentenceExample: example || snippet || undefined,
-        rootAffix: e.rootAffix,
-        sourceSnippet: snippet || undefined
-      }
+  const out: CollectEntry[] = []
+  for (const e of rawEntries || []) {
+    const wordProto = String(e?.word || e?.wordProto || '').trim()
+    const partSpeechMean = String(e?.meaning || e?.partSpeechMean || '').trim()
+    if (!wordProto || !partSpeechMean) continue
+    const entryType: CollectEntry['entryType'] =
+      e.entryType === 'phrase' || wordProto.includes(' ') ? 'phrase' : 'word'
+    const example = snippet ? pickSentenceForLemma(snippet, wordProto) : ''
+    out.push({
+      basketKey: makeBasketKey({ entryType, wordProto }),
+      entryType,
+      wordProto,
+      partSpeechMean,
+      usPhonetic: e.usPhonetic != null ? String(e.usPhonetic) : undefined,
+      ukPhonetic: e.ukPhonetic != null ? String(e.ukPhonetic) : undefined,
+      sentenceExample: example || snippet || undefined,
+      rootAffix: e.rootAffix != null ? String(e.rootAffix) : undefined,
+      sourceSnippet: snippet || undefined
     })
-    .filter(e => e.entryType === 'word' || e.entryType === 'phrase')
+  }
+  return out
 }
 
 function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[], snippetOverride?: string) {
@@ -909,11 +977,94 @@ function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[], s
   }
 }
 
+function attachAnalyzeResultToMessage(
+  answerIndex: number,
+  payload: AiAnalyzeResult | string,
+  snippetOverride?: string,
+  featureKeys?: string[]
+) {
+  const msg = aiMessages.value[answerIndex]
+  if (!msg) return
+  const snippet = (snippetOverride ?? selectedContext.value) || ''
+  const keys = normalizeDisplayFeatureKeys(featureKeys ?? msg.featureKeys)
+  let source: AiAnalyzeResult = {}
+  if (typeof payload === 'string') {
+    const parsed = parseAnalyzeResultFromStored(payload)
+    if (parsed) {
+      source = { ...parsed }
+    } else {
+      try {
+        const once = JSON.parse(payload)
+        if (typeof once === 'string') {
+          const twice = parseAnalyzeResultFromStored(once)
+          if (twice) source = { ...twice }
+          else source = { raw: once }
+        } else if (once && typeof once === 'object' && !Array.isArray(once)) {
+          source = { ...once }
+        } else {
+          source = { raw: payload }
+        }
+      } catch {
+        source = { raw: payload }
+      }
+    }
+  } else {
+    source = { ...(payload || {}) }
+  }
+  normalizeAnalyzeKeyAliases(source)
+  // 后端解析失败时可能只有 raw：再试一次从 raw 还原结构化
+  if (typeof source.raw === 'string') {
+    const fromRaw = repairAnalyzeJson(String(source.raw)) || parseAnalyzeResultFromStored(source.raw)
+    if (fromRaw) {
+      normalizeAnalyzeKeyAliases(fromRaw)
+      const { raw: _drop, ...rest } = source
+      source = { ...fromRaw, ...rest }
+      delete source.raw
+    }
+  }
+
+  const pruned: AiAnalyzeResult = {}
+  if (keys.length) {
+    for (const k of keys) {
+      if (source[k] != null && source[k] !== '') pruned[k] = source[k]
+    }
+  }
+  if (!Object.keys(pruned).filter((k) => k !== 'raw').length) {
+    Object.assign(pruned, source)
+  }
+  delete pruned.raw
+
+  const entries = collectEntriesFromKeyBasedResult(pruned, snippet)
+  const hasDisplay = Object.keys(pruned).some(
+    (k) => pruned[k] != null && pruned[k] !== '' && !(Array.isArray(pruned[k]) && !(pruned[k] as any[]).length)
+  )
+  // 始终清掉 content 里的 JSON；有结构就走 analyzeResult，避免右侧刷原始 JSON
+  aiMessages.value[answerIndex] = {
+    ...msg,
+    featureKeys: keys.length ? keys : msg.featureKeys,
+    content: hasDisplay ? '' : '',
+    analyzeResult: hasDisplay ? pruned : undefined,
+    collectEntries: entries.length ? entries : msg.collectEntries,
+    collectSourceSnippet: snippet || msg.collectSourceSnippet
+  }
+  // 若仍无结构，把原始文本放 content，但展示层还会再尝试 parse
+  if (!hasDisplay) {
+    const fallback =
+      typeof payload === 'string'
+        ? payload
+        : typeof (payload as any)?.raw === 'string'
+          ? String((payload as any).raw)
+          : msg.content || ''
+    aiMessages.value[answerIndex].content = fallback
+  }
+}
+
 type SseHandlers = {
   onChunk?: (text: string) => void
   onError?: (msg: string) => void
   onDone?: (data: any) => void
   onCollectEntries?: (entries: any[]) => void
+  onAnalyzeResult?: (payload: AiAnalyzeResult) => void
 }
 
 function parseSseEventBlock(eventBlock: string): { eventType: string; dataLines: string[] } {
@@ -921,17 +1072,24 @@ function parseSseEventBlock(eventBlock: string): { eventType: string; dataLines:
   const dataLines: string[] = []
   for (const line of eventBlock.split('\n')) {
     if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
-    else if (line.startsWith('data:')) dataLines.push(line.substring('data:'.length))
+    else if (line.startsWith('data:')) {
+      // SSE：data: 后可选一个前导空格，需去掉
+      let data = line.substring('data:'.length)
+      if (data.startsWith(' ')) data = data.slice(1)
+      dataLines.push(data)
+    }
   }
   return { eventType, dataLines }
 }
 
 function dispatchSseEvent(eventType: string, dataLines: string[], handlers: SseHandlers) {
+  const rawData = dataLines.join('\n')
+
   if (eventType === 'chunk' && dataLines.length > 0) {
-    handlers.onChunk?.(dataLines.join('\n'))
+    handlers.onChunk?.(rawData)
   }
   if (eventType === 'error' && dataLines.length > 0) {
-    handlers.onError?.(dataLines.join('\n'))
+    handlers.onError?.(rawData)
   }
   if (eventType === 'done' && dataLines.length > 0) {
     try {
@@ -942,12 +1100,34 @@ function dispatchSseEvent(eventType: string, dataLines: string[], handlers: SseH
   }
   if (eventType === 'collect-entries' && dataLines.length > 0) {
     try {
-      const payload = JSON.parse(dataLines.join('\n'))
-      handlers.onCollectEntries?.(payload.entries || [])
+      const payload = unwrapSseJson(rawData)
+      handlers.onCollectEntries?.(payload?.entries || [])
     } catch (e) {
       console.warn('[Reader] collect-entries parse failed', e)
     }
   }
+  if (eventType === 'analyze-result' && dataLines.length > 0) {
+    try {
+      const payload = unwrapSseJson(rawData)
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        handlers.onAnalyzeResult?.(payload as AiAnalyzeResult)
+      }
+    } catch (e) {
+      console.warn('[Reader] analyze-result parse failed', e)
+    }
+  }
+}
+
+/** SSE data 可能已是对象 JSON，也可能被多包一层字符串 */
+function unwrapSseJson(rawData: string): any {
+  let cur: any = JSON.parse(rawData)
+  // 兼容旧后端：writeValueAsString + APPLICATION_JSON 导致双重编码
+  for (let i = 0; i < 2 && typeof cur === 'string'; i++) {
+    const t = cur.trim()
+    if (!(t.startsWith('{') || t.startsWith('['))) break
+    cur = JSON.parse(t)
+  }
+  return cur
 }
 
 function processSseEventBlock(eventBlock: string, handlers: SseHandlers) {
@@ -959,26 +1139,15 @@ function processSseEventBlock(eventBlock: string, handlers: SseHandlers) {
 // 拖拽排序相关
 const dragIndex = ref<number | null>(null)
 
-// 弹窗中按用户自定义顺序显示的功能列表（可拖拽排序）
-const orderedAllFeatures = computed(() => {
-  const order = featureOrder.value.length > 0 ? featureOrder.value : allAiFeatures.value.map(f => f.featureKey)
-  const featureMap = new Map(allAiFeatures.value.map(f => [f.featureKey, f]))
-  const result: typeof allAiFeatures.value = []
-  for (const key of order) {
-    const f = featureMap.get(key)
-    if (f) result.push(f)
-  }
-  // 补充新添加的功能
-  for (const f of allAiFeatures.value) {
-    if (!order.includes(f.featureKey)) result.push(f)
-  }
-  return result
-})
+// 弹窗功能列表：后端 allFeatures 已按 featureOrder 排好
+const orderedAllFeatures = computed(() => allAiFeatures.value)
 
-// 根据偏好过滤后的功能列表（按用户自定义顺序）
+// 标签栏：按 preferredKeys 顺序取后台下发的功能
 const preferredAiFeatures = computed(() => {
-  const keys = new Set(preferredFeatureKeys.value)
-  return orderedAllFeatures.value.filter(f => keys.has(f.featureKey))
+  const map = new Map(allAiFeatures.value.map((f) => [f.featureKey, f]))
+  return preferredFeatureKeys.value
+    .map((k) => map.get(k))
+    .filter((f): f is NonNullable<typeof f> => !!f)
 })
 
 // 页码信息
@@ -1011,17 +1180,18 @@ async function loadAiFeatures() {
   aiFeaturesLoading.value = true
   try {
     const prefRes = await getAiFeaturePreferences(locale.value)
-    console.log('[Reader] getAiFeaturePreferences 响应:', prefRes.data)
     const data = prefRes.data.data
-    console.log('[Reader] 偏好数据:', { allFeaturesCount: data.allFeatures?.length, preferredKeys: data.preferredKeys, featureOrder: data.featureOrder })
+    // 后端已按 featureOrder 排好 allFeatures / preferredKeys，前端直接用
     allAiFeatures.value = data.allFeatures || []
-    preferredFeatureKeys.value = data.preferredKeys || []
-    featureOrder.value = data.featureOrder || []
-  // 初始化查询多选框默认全选用户偏好的功能（仅当前页面有效，不保存到数据库）
-  selectedFeatureKeysForQuery.value = [...preferredFeatureKeys.value]
+    preferredFeatureKeys.value = data.preferredKeys?.length
+      ? data.preferredKeys
+      : allAiFeatures.value.map((f) => f.featureKey)
+    featureOrder.value = data.featureOrder?.length
+      ? data.featureOrder
+      : allAiFeatures.value.map((f) => f.featureKey)
+    selectedFeatureKeysForQuery.value = [...preferredFeatureKeys.value]
   } catch (e) {
     console.error('[Reader] 加载AI功能偏好失败，降级加载全部功能:', e)
-    // 降级：加载全部功能
     try {
       const res = await getAiFeatures(locale.value)
       aiFeatures.value = res.data.data || []
@@ -1046,13 +1216,10 @@ watch(locale, () => {
   void loadAiFeatures()
 })
 
-/** 功能标签：接口已按 locale 解析 featureName；缺省再回退 i18n */
+/** 功能标签：只用后台下发的 featureName（接口已按 locale 解析） */
 function featureLabel(f: { featureKey: string; featureName?: string }) {
   const name = f.featureName?.trim()
-  if (name) return name
-  const key = `reader.aiFeature_${f.featureKey}`
-  const translated = t(key)
-  return translated === key ? f.featureKey : translated
+  return name || f.featureKey
 }
 
 /** 进入阅读器时恢复该书最近会话历史（无会话列表 / 新对话入口） */
@@ -1126,7 +1293,6 @@ function toggleFeatureKeyForQuery(key: string) {
   } else {
     selectedFeatureKeysForQuery.value.push(key)
   }
-  console.log('[Reader] toggleFeatureKeyForQuery:', key, '当前选中:', selectedFeatureKeysForQuery.value)
 }
 
 /** 勾选/取消勾选功能（偏好设置弹窗内使用，仅修改弹窗内状态） */
@@ -1143,19 +1309,14 @@ function toggleFeatureKey(key: string, checked: boolean) {
 /** 自动保存 AI 功能偏好（弹窗内排序/勾选变更后，由用户点击保存按钮统一提交） */
 let autoSavePending = false
 function autoSaveAiPreferences() {
-  if (autoSavePending) {
-    console.log('[Reader] autoSaveAiPreferences 跳过（pending中）')
-    return
-  }
+  if (autoSavePending) return
   autoSavePending = true
-  console.log('[Reader] 保存AI功能偏好，请求参数:', { featureKeys: selectedFeatureKeys.value, featureOrder: featureOrder.value })
   saveAiFeaturePreferences({
     featureKeys: selectedFeatureKeys.value,
     featureOrder: featureOrder.value
-  }).then((res) => {
+  }).then(() => {
     preferredFeatureKeys.value = [...selectedFeatureKeys.value]
     selectedFeatureKeysForQuery.value = [...selectedFeatureKeys.value]
-    console.log('[Reader] AI功能偏好已保存，响应:', res.data, '当前 selectedFeatureKeys:', selectedFeatureKeys.value)
   }).catch(e => {
     console.error('[Reader] 自动保存AI功能偏好失败:', e)
   }).finally(() => {
@@ -1771,8 +1932,8 @@ function mountRendition(initialCfi?: string) {
       }
 
       const percent = epubBook?.locations?.percentageFromCfi(cfi) || 0
-      // 保存进度（chapterIndex 用 spineIndex 保持后端一致）
-      updateProgress(bookId, {
+      // 保存进度（chapterIndex 用 spineIndex 保持后端一致；弱网入队稍后同步）
+      void syncProgress(bookId, {
         chapterIndex: spineIndex,
         cfi: cfi,
         percent: Math.round(percent * 100) / 100
@@ -2071,12 +2232,12 @@ async function saveNoteDialog() {
   noteDialog.value.saving = true
   try {
     if (noteDialog.value.id) {
-      await updateAnnotation(bookId, noteDialog.value.id, {
+      await syncAnnotationUpdate(bookId, noteDialog.value.id, {
         note: noteDialog.value.note,
         color: noteDialog.value.color
       })
     } else {
-      await addAnnotation(bookId, {
+      await syncAnnotationCreate(bookId, `local-${Date.now()}`, {
         bookId,
         chapterIndex: currentChapter.value,
         cfiStart: selectedCfi.start,
@@ -2088,11 +2249,18 @@ async function saveNoteDialog() {
     }
     MessagePlugin.success(t('reader.noteSaveSuccess'))
     noteDialog.value.visible = false
-    // 刷新笔记数据和高亮
-    await loadChapterNotes(currentChapter.value)
-    void loadEpubNotedChapters()
+    // 刷新笔记数据和高亮（弱网时可能仍是旧数据，队列会在恢复后补齐）
+    try {
+      await loadChapterNotes(currentChapter.value)
+      void loadEpubNotedChapters()
+    } catch { /* ignore */ }
   } catch (e: any) {
-    MessagePlugin.error(t('reader.noteSaveError'))
+    if (!isTransportError(e)) {
+      MessagePlugin.error(t('reader.noteSaveError'))
+    } else {
+      MessagePlugin.success(t('reader.noteSaveSuccess'))
+      noteDialog.value.visible = false
+    }
   } finally {
     noteDialog.value.saving = false
   }
@@ -2111,12 +2279,18 @@ function editNoteDialog(note: any) {
 
 async function handleDeleteNote(id: number) {
   try {
-    await deleteAnnotation(bookId, id)
+    await syncAnnotationDelete(bookId, id)
     MessagePlugin.success(t('reader.noteDeleteSuccess'))
-    await loadChapterNotes(currentChapter.value)
-    void loadEpubNotedChapters()
+    try {
+      await loadChapterNotes(currentChapter.value)
+      void loadEpubNotedChapters()
+    } catch { /* ignore */ }
   } catch (e: any) {
-    MessagePlugin.error(t('reader.noteDeleteError'))
+    if (!isTransportError(e)) {
+      MessagePlugin.error(t('reader.noteDeleteError'))
+    } else {
+      MessagePlugin.success(t('reader.noteDeleteSuccess'))
+    }
   }
 }
 
@@ -2155,6 +2329,14 @@ async function submitReport() {
 }
 
 // AI 对话
+function onAiComposerKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return
+  // Enter / Ctrl+Enter 发送；Shift+Enter 换行
+  if (e.shiftKey) return
+  e.preventDefault()
+  void sendAiMessage()
+}
+
 async function sendAiMessage() {
   const question = aiInput.value.trim()
   if (!question) return
@@ -2203,23 +2385,34 @@ async function sendAiMessage() {
     const contextSnapshot = selectedContext.value || ''
     let buffer = ''
     const sseHandlers: SseHandlers = {
-      onChunk: async (text) => {
+      onChunk: (text) => {
         fullAnswer += text
-        aiMessages.value[answerIndex].content = stripCollectMarker(fullAnswer)
-        await nextTick()
+        const msg = aiMessages.value[answerIndex]
+        if (!msg) return
+        // 替换对象，确保 v-html 随流式内容刷新
+        aiMessages.value[answerIndex] = {
+          ...msg,
+          content: stripCollectMarker(fullAnswer)
+        }
         scrollAiBottom()
       },
-      onError: async (errMsg) => {
+      onError: (errMsg) => {
         console.error('[AI] SSE error:', errMsg)
-        aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
+        const msg = aiMessages.value[answerIndex]
+        if (msg) {
+          aiMessages.value[answerIndex] = {
+            ...msg,
+            content: t('login.error') + ': ' + errMsg
+          }
+        }
         showReportDialogWithError(errMsg)
-        await nextTick()
         scrollAiBottom()
       },
       onDone: (doneData) => {
         if (doneData.sessionId && isFirstMessage) {
           currentSessionId.value = doneData.sessionId
         }
+        attachMessageId(answerIndex, doneData.messageId)
       },
       onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries, contextSnapshot)
     }
@@ -2251,13 +2444,7 @@ async function sendAiMessage() {
 
 /** 发送 AI 多选功能请求 */
 async function sendAiFeatures() {
-  console.log('[Reader] sendAiFeatures called, selectedContext:', selectedContext.value, 'selectedFeatureKeysForQuery:', selectedFeatureKeysForQuery.value)
   if (!selectedContext.value || selectedFeatureKeysForQuery.value.length === 0) {
-    console.warn('[Reader] sendAiFeatures 被阻止，selectedContext为空:', !selectedContext.value, '或没有选中功能:', selectedFeatureKeysForQuery.value.length === 0)
-    return
-  }
-  if (needsTargetWords.value && targetWords.value.length === 0) {
-    MessagePlugin.warning(t('reader.targetWordsRequired'))
     return
   }
   // 如果 aiLoading 卡住，强制重置
@@ -2274,7 +2461,11 @@ async function sendAiFeatures() {
 
   const targetSuffix = targets.length ? ` · ${targets.join(', ')}` : ''
   const contextSnapshot = selectedContext.value || ''
-  aiMessages.value.push({ role: 'user', content: `【${featureNames}】${contextSnapshot}${targetSuffix}` })
+  aiMessages.value.push({
+    role: 'user',
+    content: `【${featureNames}】${contextSnapshot}${targetSuffix}`,
+    featureKeys: [...orderedFeatureKeys]
+  })
   aiLoading.value = true
   activeFeatureKey.value = 'multi'
 
@@ -2286,7 +2477,7 @@ async function sendAiFeatures() {
   try {
     const token = localStorage.getItem('token')
     // 解析：写入同一 session 便于回查；模型侧不带历史（由后端保证）
-    const response = await fetch('/api/books/ai-chat', {
+    const response = await fetch('/api/books/ai-analyze', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2309,17 +2500,12 @@ async function sendAiFeatures() {
     if (!reader) throw new Error('不支持流式')
 
     const decoder = new TextDecoder()
-    let fullAnswer = ''
-    aiMessages.value.push({ role: 'assistant', content: '' })
+    aiMessages.value.push({ role: 'assistant', content: '', featureKeys: [...orderedFeatureKeys] })
     const answerIndex = aiMessages.value.length - 1
     let buffer = ''
     const sseHandlers: SseHandlers = {
-      onChunk: async (text) => {
-        fullAnswer += text
-        aiMessages.value[answerIndex].content = stripCollectMarker(fullAnswer)
-        await nextTick()
-        scrollAiBottom()
-      },
+      // 解析不刷 JSON 碎片；等 analyze-result 直接 word/meaning 展示
+      onChunk: () => {},
       onError: async (errMsg) => {
         console.error('[AI] SSE error:', errMsg)
         aiMessages.value[answerIndex].content = t('login.error') + ': ' + errMsg
@@ -2331,8 +2517,15 @@ async function sendAiFeatures() {
         if (doneData.sessionId && isFirstMessage) {
           currentSessionId.value = doneData.sessionId
         }
+        attachMessageId(answerIndex, doneData.messageId)
       },
-      onCollectEntries: (entries) => attachCollectEntriesToMessage(answerIndex, entries, contextSnapshot)
+      onCollectEntries: (entries) => {
+        attachCollectEntriesToMessage(answerIndex, entries, contextSnapshot)
+      },
+      onAnalyzeResult: (payload) => {
+        attachAnalyzeResultToMessage(answerIndex, payload, contextSnapshot, orderedFeatureKeys)
+        scrollAiBottom()
+      }
     }
 
     while (true) {
@@ -2373,79 +2566,153 @@ function truncate(text: string, len: number) {
   return text.length > len ? text.substring(0, len) + '...' : text
 }
 
-/** 简单 markdown 渲染：对齐阅读器历史样式（蓝标题 / 蓝词条 / 黑正文） */
+/** AI 回复渲染：统一走 aiMarkdown（紫色小节 / 词条） */
 function renderMarkdown(text: string): string {
-  if (!text) return ''
-  const sectionNames =
-    '翻译|释义|整体释义|单词|单词讲解|固搭|固定搭配|语法|语法结构|句式|词根词缀|例句|连读音标|音标|Phonetic|Translation|Collocation|Grammar|Word'
+  return renderAiMarkdown(text)
+}
 
-  // 统一换行，避免 \r\n 导致「单词：」等小节标题匹配失败
-  let html = text
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+function looksLikeAnalyzeJson(text?: string): boolean {
+  return !!parseAnalyzeResultFromStored(text || '')
+}
 
-  // 代码块
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-  // 行内代码
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  // ## 标题 → 小节（去掉井号，避免露出 ##）
-  html = html.replace(/(^|\n)#{1,6}\s+([^\n]+)/g, '$1<span class="ai-section">$2</span>')
-  // 先把 **翻译：** / **单词** 提成小节（冒号常在粗体内；用 span 避免当普通加粗）
-  html = html.replace(
-    new RegExp(`\\*\\*[ \\t]*(${sectionNames})([：:])?[ \\t]*\\*\\*`, 'g'),
-    '<span class="ai-section">$1$2</span>'
-  )
-  // 粗体 **text**
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  // 斜体 *text*
-  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+/** 优先 analyzeResult；content 若是解析 JSON 也格式化。绝对禁止把 JSON 原文刷到右侧。 */
+function displayAiMessageBody(msg: AiMessage): string {
+  // 用户消息原样展示
+  if (msg.role !== 'assistant') {
+    return msg.content || ''
+  }
 
-  // 已变成 <strong>翻译：</strong> 的小节 → 改成 span，去掉加粗
-  html = html.replace(
-    new RegExp(`<strong>[ \\t]*(${sectionNames})([：:])?[ \\t]*<\\/strong>`, 'g'),
-    '<span class="ai-section">$1$2</span>'
-  )
-  // 纯文本小节行：翻译： / 单词（允许行首尾空白）
-  html = html.replace(
-    new RegExp(`(^|\\n)[ \\t]*(${sectionNames})([：:])?[ \\t]*(?=\\n|$)`, 'g'),
-    '$1<span class="ai-section">$2$3</span>'
-  )
-  // 其它短行「XXX：」也当小节
-  html = html.replace(/(^|\n)[ \t]*([^\n<>]{1,16}?[：:])[ \t]*(?=\n|$)/g, (full, lead, title) => {
-    if (/[。.!?]/.test(title)) return full
-    if (title.includes('ai-section') || title.includes('<strong') || title.includes('<span')) return full
-    return `${lead}<span class="ai-section">${title}</span>`
-  })
+  const raw = msg.content || ''
+  let result: Record<string, unknown> | null =
+    msg.analyzeResult && typeof msg.analyzeResult === 'object' && !Array.isArray(msg.analyzeResult)
+      ? { ...(msg.analyzeResult as Record<string, unknown>) }
+      : null
 
-  // 模型常把整段译文包在 **…** 里 → 含中文的普通加粗还原为正文（不影响词条 ai-term）
-  html = html.replace(/<strong>([^<]*[\u4e00-\u9fff][^<]*)<\/strong>/g, '$1')
+  if (result) {
+    normalizeAnalyzeKeyAliases(result)
+    const onlyRaw =
+      typeof result.raw === 'string' &&
+      Object.keys(result).every((k) => k === 'raw' || result![k] == null || result![k] === '')
+    if (onlyRaw) {
+      const rawText = String(result.raw)
+      result = repairAnalyzeJson(rawText) || parseAnalyzeResultFromStored(rawText)
+      if (!result) {
+        const t0 = rawText.trim()
+        if (t0.startsWith('{') || t0.startsWith('[')) {
+          return '解析结果暂时无法展示，请重新点一次「解析」。'
+        }
+        return rawText
+      }
+    }
+  }
+  if (!result) {
+    result = repairAnalyzeJson(raw) || parseAnalyzeResultFromStored(raw)
+  }
+  if (result) {
+    normalizeAnalyzeKeyAliases(result)
+    delete result.raw
+    let md = formatAnalyzeResultMarkdown(result, msg.featureKeys, allAiFeatures.value)
+    if (!md.trim()) {
+      md = formatAnalyzeResultMarkdown(result, null, allAiFeatures.value)
+    }
+    if (!md.trim()) {
+      md = fallbackFormatAnalyzeObject(result)
+    }
+    if (md.trim()) return md
+  }
 
-  // 列表：- **词条**：释义  /  - 词条：释义  → 蓝词条
-  html = html.replace(
-    /(^|\n)(\s*)([-•])(\s*)<strong(?:\s+class="[^"]*")?>([^<]+)<\/strong>(\s*[：:])/g,
-    '$1$2<span class="ai-bullet">$3</span>$4<strong class="ai-term">$5</strong>$6'
-  )
-  html = html.replace(
-    /(^|\n)(\s*)([-•])(\s*)(?!<)([A-Za-z][^\n：:<]{0,47}?)(\s*[：:])/g,
-    '$1$2<span class="ai-bullet">$3</span>$4<strong class="ai-term">$5</strong>$6'
-  )
-  // 无列表符的词条行：possible /ˈpɒsəbl/ adj. 可能的
-  html = html.replace(
-    /(^|\n)(?!<)([A-Za-z][A-Za-z'\-]{0,40})\s+(\/[^/\n]{1,40}\/)\s+([^\n]+)/g,
-    '$1<span class="ai-word-line"><strong class="ai-term">$2</strong> <em>$3</em> $4</span>'
-  )
+  const t = raw.trim()
+  if (t.startsWith('{') || t.startsWith('[')) {
+    return '解析结果暂时无法展示，请重新点一次「解析」。'
+  }
+  return raw
+}
 
-  // 标题后多余空行压成一行，避免「翻译」和正文隔太远
-  html = html.replace(/(<span class="ai-section">[^<]*<\/span>)\n+/g, '$1\n')
-  html = html.replace(/\n{3,}/g, '\n\n')
-  html = html.replace(/\n/g, '<br>')
-  // block 标题后再跟 <br> 会多出一截空白
-  html = html.replace(/(<span class="ai-section">[^<]*<\/span>)<br>/g, '$1')
-  html = html.replace(/(<span class="ai-word-line">[\s\S]*?<\/span>)<br>/g, '$1')
-  return html
+/** 模型中文键/复数键 → 标准 feature_key */
+function normalizeAnalyzeKeyAliases(obj: Record<string, unknown>) {
+  const pairs: Array<[string, string[]]> = [
+    ['collocation', ['collocations', 'phrase', 'phrases', 'fixed_phrase', '固搭', '固定搭配', '搭配']],
+    ['word', ['words', 'vocabulary', '单词', '词汇']],
+    ['meaning', ['translation', '译文', '翻译', '释义']],
+    ['grammar', ['语法']],
+    ['sentence_pattern', ['sentencePattern', '句式']],
+    ['root_affix', ['rootAffix', '词根词缀']],
+    ['phonetic', ['音标', '连读音标']],
+  ]
+  for (const [canonical, aliases] of pairs) {
+    const cur = obj[canonical]
+    const curBlank =
+      cur == null ||
+      cur === '' ||
+      (Array.isArray(cur) && cur.length === 0)
+    if (!curBlank) continue
+    for (const alt of aliases) {
+      if (obj[alt] == null) continue
+      obj[canonical] = obj[alt]
+      delete obj[alt]
+      break
+    }
+  }
+}
+
+/** formatAnalyzeResultMarkdown 仍为空时的最后兜底 */
+function fallbackFormatAnalyzeObject(result: Record<string, unknown>): string {
+  const lines: string[] = []
+  for (const [key, value] of Object.entries(result || {})) {
+    if (key === 'raw' || value == null || value === '') continue
+    if (Array.isArray(value) && value.length === 0) continue
+    const title = allAiFeatures.value.find((f) => f.featureKey === key)?.featureName || key
+    lines.push(`${title}：`)
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      lines.push(String(value), '')
+      continue
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item == null) continue
+        if (typeof item === 'string' || typeof item === 'number') {
+          lines.push(`- ${item}`)
+          continue
+        }
+        if (typeof item === 'object') {
+          const e = item as Record<string, unknown>
+          const word = String(e.word || e.wordProto || '').trim()
+          const meaning = String(e.meaning || e.partSpeechMean || '').trim()
+          lines.push(`- ${word}${word && meaning ? ': ' : ''}${meaning}`.trim())
+        }
+      }
+      lines.push('')
+      continue
+    }
+    if (typeof value === 'object') {
+      lines.push(JSON.stringify(value), '')
+    }
+  }
+  return lines.join('\n').trim()
+}
+
+/** 尽力修复模型偶发的非法 JSON（尾逗号、未转义换行等） */
+function repairAnalyzeJson(text: string): Record<string, unknown> | null {
+  const direct = parseAnalyzeResultFromStored(text)
+  if (direct) return direct
+  if (!text?.trim()) return null
+  let body = text.trim()
+  if (body.startsWith('```')) {
+    body = body.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  }
+  const start = body.indexOf('{')
+  const end = body.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  let slice = body.substring(start, end + 1)
+  // 去掉对象/数组尾逗号
+  slice = slice.replace(/,(\s*[}\]])/g, '$1')
+  try {
+    const obj = JSON.parse(slice)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj as Record<string, unknown>
+  } catch {
+    /* ignore */
+  }
+  return null
 }
 
 </script>
@@ -2569,12 +2836,52 @@ function renderMarkdown(text: string): string {
   justify-content: center;
   color: #888;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  z-index: 10;
+  z-index: 30;
   padding: 0;
   transition: all 0.2s ease;
 }
 
 .toc-toggle-btn:hover {
+  border-color: #b0aae0;
+  color: #5e57b5;
+  box-shadow: 0 2px 6px rgba(94, 87, 181, 0.15);
+}
+
+/* 右侧 AI */
+.sidebar-ai-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  transition: width 0.25s ease;
+  display: flex;
+  /* 高于 PDF 批注工具条（z-index:20），避免折叠按钮被挡住 */
+  z-index: 25;
+}
+
+.sidebar-ai-wrapper.collapsed {
+  width: 32px;
+}
+
+.ai-toggle-btn {
+  position: absolute;
+  left: -12px;
+  top: 16px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  z-index: 30;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.ai-toggle-btn:hover {
   border-color: #b0aae0;
   color: #5e57b5;
   box-shadow: 0 2px 6px rgba(94, 87, 181, 0.15);
@@ -2639,6 +2946,7 @@ function renderMarkdown(text: string): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .toc-note-dot {
@@ -2725,7 +3033,7 @@ function renderMarkdown(text: string): string {
 
 /* 右侧 AI */
 .sidebar-ai {
-  flex-shrink: 0;
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   background: #fff;
@@ -2733,6 +3041,10 @@ function renderMarkdown(text: string): string {
   display: flex;
   flex-direction: column;
   box-shadow: -2px 0 12px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-ai-wrapper.collapsed .sidebar-ai {
+  overflow: hidden;
 }
 
 .ai-messages {
@@ -3085,6 +3397,17 @@ function renderMarkdown(text: string): string {
   flex-shrink: 0;
 }
 
+.ai-feature-send-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.ai-feature-send-row .ai-feature-send {
+  flex: 1;
+  width: auto;
+}
+
 .ai-feature-send {
   margin-top: 2px;
   width: 100%;
@@ -3097,9 +3420,19 @@ function renderMarkdown(text: string): string {
   transition: all 0.2s ease;
 }
 
+.ai-feature-send-row .ai-feature-send:last-child {
+  border-color: #315c34 !important;
+  background: #315c34 !important;
+}
+
 .ai-feature-send:hover:not(:disabled) {
   background: #4f479e !important;
   border-color: #4f479e !important;
+}
+
+.ai-feature-send-row .ai-feature-send:last-child:hover:not(:disabled) {
+  background: #274a2a !important;
+  border-color: #274a2a !important;
 }
 
 .ai-feature-send:disabled {

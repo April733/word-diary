@@ -1,7 +1,7 @@
 package spring.nexusfuture.word_diary.mapper;
 
 import org.apache.ibatis.annotations.*;
-import spring.nexusfuture.word_diary.dto.AdminUserListItemVO;
+import spring.nexusfuture.word_diary.dto.response.AdminUserListItemVO;
 import spring.nexusfuture.word_diary.entity.WdUser;
 
 import java.util.List;
@@ -9,8 +9,8 @@ import java.util.List;
 @Mapper
 public interface WdUserMapper {
 
-    @Insert("INSERT INTO wd_user(username, nickname, password, email, phone, is_member, member_tier, role, create_time, update_time) " +
-            "VALUES(#{username}, #{nickname}, #{password}, #{email}, #{phone}, #{isMember}, #{memberTier}, COALESCE(#{role}, 'user'), NOW(), NOW())")
+    @Insert("INSERT INTO wd_user(username, nickname, password, email, phone, role, create_time, update_time) " +
+            "VALUES(#{username}, #{nickname}, #{password}, #{email}, #{phone}, COALESCE(#{role}, 'user'), NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdUser user);
 
@@ -70,7 +70,6 @@ public interface WdUserMapper {
     @Select("""
             <script>
             SELECT id, username, nickname, email, phone, role,
-                   is_member AS isMember, member_tier AS memberTier,
                    preferred_locale AS preferredLocale,
                    preferred_ai_region AS preferredAiRegion,
                    create_time AS createTime, update_time AS updateTime,

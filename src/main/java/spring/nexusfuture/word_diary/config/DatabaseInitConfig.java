@@ -11,6 +11,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 
 /**
  * 数据库启动初始化：补全缺失字段 / 表 / 种子数据（幂等，可重复执行）
@@ -34,24 +35,30 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     "ALTER TABLE wd_ai_message ADD COLUMN parent_id bigint DEFAULT NULL COMMENT '关联的问题ID' AFTER session_id");
 
             // 修改 wd_ai_message.feature_key 长度（多选功能拼接后可能超过32）
-            var rs3 = conn.getMetaData().getColumns(null, null, "wd_ai_message", "feature_key");
-            if (rs3.next()) {
-                int colSize = rs3.getInt("COLUMN_SIZE");
-                if (colSize < 255) {
-                    stmt.execute("ALTER TABLE wd_ai_message MODIFY COLUMN feature_key varchar(255) DEFAULT NULL COMMENT '触发此消息的AI功能标识'");
-                    log.info("数据库字段初始化完成: wd_ai_message.feature_key 已扩展为 varchar(255)");
-                }
+            // 每次启动都确保 ≥255，避免生产库仍停留在 varchar(32) 导致解析保存 500
+            try {
+                stmt.execute("ALTER TABLE wd_ai_message MODIFY COLUMN feature_key varchar(255) DEFAULT NULL COMMENT '触发此消息的AI功能标识'");
+                log.info("数据库字段检查: wd_ai_message.feature_key → varchar(255)");
+            } catch (Exception e) {
+                log.warn("扩展 wd_ai_message.feature_key 失败（可忽略若已是255）: {}", e.getMessage());
             }
-            rs3.close();
 
             // 管理员角色
             ensureColumn(conn, stmt, "wd_user", "role",
-                    "ALTER TABLE wd_user ADD COLUMN role varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin' AFTER member_tier");
+                    "ALTER TABLE wd_user ADD COLUMN role varchar(16) NOT NULL DEFAULT 'user' COMMENT '角色 user|admin' AFTER phone");
 
-            // 单词垃圾桶：软删时间，满 7 天物理清理
-            ensureColumn(conn, stmt, "wd_word", "deleted_at",
-                    "ALTER TABLE wd_word ADD COLUMN deleted_at datetime DEFAULT NULL COMMENT '移入垃圾桶时间' AFTER is_deleted");
-            stmt.execute("UPDATE wd_word SET deleted_at = update_time WHERE is_deleted = 1 AND deleted_at IS NULL");
+            // SRS 字段迁到 wd_word；从旧 plan 回填后删表
+            migrateLearnPlanOntoWord(conn, stmt);
+
+            // 下线会员等级体系：删表 + 去掉关联列
+            dropMemberTierArtifacts(conn, stmt);
+            // 下线邀请码
+            dropTableIfExists(conn, stmt, "wd_invite_code");
+            try {
+                dropColumnIfExists(conn, stmt, "wd_user", "is_member");
+            } catch (Exception e) {
+                log.warn("清理 wd_user.is_member 失败（可忽略）: {}", e.getMessage());
+            }
 
             // 场景系统提示词表 + 默认种子
             ensureScenePromptTable(conn, stmt);
@@ -62,8 +69,15 @@ public class DatabaseInitConfig implements ApplicationRunner {
             ensureWordFeaturePhonetics(conn, stmt);
             migrateWordFeatureConciseGloss(conn, stmt);
             migrateFeaturePromptLanguageNeutral(conn, stmt);
+            migrateFeaturePromptWordMeaningJson(conn, stmt);
+            migrateWordFeaturePromptV3(conn, stmt);
+            migrateGrammarSentencePatternSplit(conn, stmt);
+            migrateFeatureKeyBasedJsonContract(conn, stmt);
             migrateSplitAiModelAndScene(conn, stmt);
             ensureAiProviderTable(conn, stmt);
+            ensureAbuseNoticeTables(conn, stmt);
+            ensureColumn(conn, stmt, "wd_abuse_notice", "submitter_user_id",
+                    "ALTER TABLE wd_abuse_notice ADD COLUMN submitter_user_id bigint DEFAULT NULL COMMENT '提交账号用户ID' AFTER status");
             // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
             ensureColumn(conn, stmt, "wd_user", "preferred_locale",
                     "ALTER TABLE wd_user ADD COLUMN preferred_locale varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言' AFTER role");
@@ -75,6 +89,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     "ALTER TABLE sys_ai_feature ADD COLUMN name_i18n json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi' AFTER description");
             ensureColumn(conn, stmt, "sys_ai_feature", "description_i18n",
                     "ALTER TABLE sys_ai_feature ADD COLUMN description_i18n json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi' AFTER name_i18n");
+            seedWordFeatureI18nIfMissing(conn);
         } catch (Exception e) {
             log.warn("数据库字段初始化警告: {}", e.getMessage());
         }
@@ -86,6 +101,33 @@ public class DatabaseInitConfig implements ApplicationRunner {
             seedAiScenes(stmt);
         } catch (Exception e) {
             log.warn("sys_ai_scene.region 初始化警告: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * word 功能历史上缺 name_i18n，非中文界面会一直显示「单词」。
+     * 仅在 name_i18n 为空时写入默认翻译（不覆盖后台已同步的译文）。
+     */
+    private void seedWordFeatureI18nIfMissing(Connection conn) {
+        String nameJson = "{\"en\":\"Words\",\"id\":\"Kata\",\"th\":\"คำศัพท์\",\"vi\":\"Từ vựng\"}";
+        String descJson = "{\"en\":\"Explain key difficult words with phonetics, POS and meanings.\","
+                + "\"id\":\"Jelaskan kata sulit penting beserta fonetik, jenis kata, dan arti.\","
+                + "\"th\":\"Explain key difficult words with phonetics, POS and meanings.\","
+                + "\"vi\":\"Giải thích từ khó quan trọng kèm phiên âm, từ loại và nghĩa.\"}";
+        try (var ps = conn.prepareStatement("""
+                UPDATE sys_ai_feature
+                SET name_i18n = ?, description_i18n = ?, update_time = NOW()
+                WHERE feature_key = 'word' AND is_deleted = 0
+                  AND (name_i18n IS NULL OR name_i18n = '' OR name_i18n = '{}')
+                """)) {
+            ps.setString(1, nameJson);
+            ps.setString(2, descJson);
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: sys_ai_feature.word name_i18n 已补齐，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("补齐 sys_ai_feature.word i18n 失败: {}", e.getMessage());
         }
     }
 
@@ -367,6 +409,113 @@ public class DatabaseInitConfig implements ApplicationRunner {
         rs.close();
     }
 
+    /** 删除 sys_member_tier 及 wd_user.member_tier 列（幂等） */
+    private void dropMemberTierArtifacts(Connection conn, Statement stmt) {
+        try {
+            dropColumnIfExists(conn, stmt, "wd_user", "member_tier");
+            dropColumnIfExists(conn, stmt, "wd_invite_code", "member_tier");
+            dropTableIfExists(conn, stmt, "sys_member_tier");
+        } catch (Exception e) {
+            log.warn("清理会员等级相关结构失败（可忽略）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * status + status_data 模型：补列、旧列回填、删 SM-2 字段与旧学习表。
+     */
+    private void migrateLearnPlanOntoWord(Connection conn, Statement stmt) {
+        try {
+            ensureColumn(conn, stmt, "wd_word", "status",
+                    "ALTER TABLE wd_word ADD COLUMN status tinyint NOT NULL DEFAULT 0 COMMENT '学习状态: 0未学 1~6复习阶梯 7熟记' AFTER user_id");
+            ensureColumn(conn, stmt, "wd_word", "status_data",
+                    "ALTER TABLE wd_word ADD COLUMN status_data datetime DEFAULT NULL COMMENT '进入当前status的时间' AFTER status");
+
+            // 若仍有旧 SM-2 列，先回填 status_data / 映射旧 status（仅此路径做 3→7）
+            var rs = conn.getMetaData().getColumns(null, null, "wd_word", "last_study_at");
+            boolean hasLegacy = rs.next();
+            rs.close();
+            if (hasLegacy) {
+                stmt.executeUpdate("""
+                        UPDATE wd_word SET status_data = COALESCE(last_study_at, first_study_time, create_time, NOW())
+                        WHERE status_data IS NULL
+                        """);
+                // 旧模型：3=熟记 → 新 7
+                stmt.executeUpdate("UPDATE wd_word SET status = 7 WHERE status = 3");
+            } else {
+                stmt.executeUpdate("""
+                        UPDATE wd_word SET status_data = COALESCE(status_data, create_time, NOW())
+                        WHERE status_data IS NULL
+                        """);
+            }
+
+            String[] legacyCols = {
+                    "current_level", "first_study_time", "next_review_time", "review_times",
+                    "interval_days", "ease_factor", "rep_count", "lapse_count",
+                    "last_feedback", "last_study_at", "priority_score"
+            };
+            for (String col : legacyCols) {
+                dropColumnIfExists(conn, stmt, "wd_word", col);
+            }
+
+            var tables = conn.getMetaData().getTables(null, null, "wd_learn_plan", new String[]{"TABLE"});
+            boolean planExists = tables.next();
+            tables.close();
+            if (planExists) {
+                int n = stmt.executeUpdate("""
+                        UPDATE wd_word w
+                        INNER JOIN (
+                          SELECT p.*
+                          FROM wd_learn_plan p
+                          INNER JOIN (
+                            SELECT word_id, MAX(id) AS max_id
+                            FROM wd_learn_plan
+                            WHERE is_deleted = 0
+                            GROUP BY word_id
+                          ) latest ON latest.word_id = p.word_id AND latest.max_id = p.id
+                          WHERE p.is_deleted = 0
+                        ) p ON p.word_id = w.id
+                        SET w.status = CASE
+                              WHEN COALESCE(p.learn_status, 0) = 3 THEN 7
+                              WHEN COALESCE(p.learn_status, 0) = 4 THEN 0
+                              WHEN COALESCE(p.learn_status, 0) IN (1, 2) THEN p.learn_status
+                              ELSE 0 END,
+                            w.status_data = COALESCE(p.last_study_at, p.first_study_time, w.create_time, NOW()),
+                            w.update_time = NOW()
+                        """);
+                log.info("已从 wd_learn_plan 回填 wd_word status/status_data: {} 行", n);
+            }
+
+            dropTableIfExists(conn, stmt, "wd_learn_plan");
+            dropTableIfExists(conn, stmt, "wd_study_queue");
+            dropTableIfExists(conn, stmt, "wd_study_daily");
+            dropTableIfExists(conn, stmt, "wd_learn_record");
+        } catch (Exception e) {
+            log.warn("迁移学习计划到 wd_word 失败（可忽略）: {}", e.getMessage());
+        }
+    }
+
+    private void dropTableIfExists(Connection conn, Statement stmt, String table) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, table, new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (!exists) {
+            return;
+        }
+        stmt.execute("DROP TABLE IF EXISTS `" + table + "`");
+        log.info("数据库表清理完成: {} 已删除", table);
+    }
+
+    private void dropColumnIfExists(Connection conn, Statement stmt, String table, String column) throws Exception {
+        var rs = conn.getMetaData().getColumns(null, null, table, column);
+        boolean exists = rs.next();
+        rs.close();
+        if (!exists) {
+            return;
+        }
+        stmt.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + column + "`");
+        log.info("数据库字段清理完成: {}.{} 已删除", table, column);
+    }
+
     private void ensureAiProviderTable(Connection conn, Statement stmt) throws Exception {
         var tables = conn.getMetaData().getTables(null, null, "sys_ai_provider", new String[]{"TABLE"});
         boolean exists = tables.next();
@@ -402,6 +551,73 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 ('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
                 ('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写')
                 """);
+    }
+
+    private void ensureAbuseNoticeTables(Connection conn, Statement stmt) throws Exception {
+        var noticeTable = conn.getMetaData().getTables(null, null, "wd_abuse_notice", new String[]{"TABLE"});
+        boolean noticeExists = noticeTable.next();
+        noticeTable.close();
+        if (!noticeExists) {
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `wd_abuse_notice` (
+                      `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                      `notice_no` varchar(32) NOT NULL COMMENT '通知编号（对外回执）',
+                      `notice_type` varchar(16) NOT NULL COMMENT 'copyright|illegal|complaint|suggestion',
+                      `status` tinyint NOT NULL DEFAULT 0 COMMENT '0待审 1合格待处理 2已处理 3驳回 4关闭',
+                      `submitter_user_id` bigint DEFAULT NULL COMMENT '提交账号用户ID',
+                      `complainant_name` varchar(128) NOT NULL COMMENT '投诉人姓名/名称',
+                      `complainant_email` varchar(128) NOT NULL COMMENT '投诉人邮箱',
+                      `complainant_phone` varchar(32) DEFAULT '' COMMENT '投诉人电话',
+                      `organization` varchar(256) DEFAULT '' COMMENT '权利人/机构名称',
+                      `right_description` text COMMENT '权利说明（版权投诉）',
+                      `ownership_proof` text COMMENT '权属证明说明',
+                      `target_url` varchar(1024) DEFAULT '' COMMENT '涉事链接',
+                      `target_book_id` bigint DEFAULT NULL COMMENT '涉事电子书ID',
+                      `target_description` text NOT NULL COMMENT '涉事内容描述',
+                      `detail` text NOT NULL COMMENT '投诉/举报详情',
+                      `good_faith` tinyint NOT NULL DEFAULT 0 COMMENT '是否勾选善意声明 1是',
+                      `received_at` datetime NOT NULL COMMENT '收到通知时间',
+                      `qualified_at` datetime DEFAULT NULL COMMENT '认定为合格通知时间',
+                      `due_at` datetime DEFAULT NULL COMMENT '处理时限（合格后24-48h）',
+                      `actioned_at` datetime DEFAULT NULL COMMENT '实际处理完成时间',
+                      `action_taken` varchar(32) DEFAULT '' COMMENT 'remove|restrict|reject|none',
+                      `handle_note` text COMMENT '处理说明',
+                      `handler_id` bigint DEFAULT NULL COMMENT '处理人用户ID',
+                      `ip_address` varchar(64) DEFAULT '' COMMENT '提交IP',
+                      `user_agent` varchar(512) DEFAULT '' COMMENT '提交UA',
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      `is_deleted` tinyint NOT NULL DEFAULT 0,
+                      PRIMARY KEY (`id`),
+                      UNIQUE KEY `uk_notice_no` (`notice_no`),
+                      KEY `idx_status_due` (`status`, `due_at`),
+                      KEY `idx_type` (`notice_type`),
+                      KEY `idx_received` (`received_at`),
+                      KEY `idx_book` (`target_book_id`),
+                      KEY `idx_submitter` (`submitter_user_id`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='帮助中心投诉建议通知'
+                    """);
+            log.info("数据库表初始化完成: wd_abuse_notice 已创建");
+        }
+
+        var logTable = conn.getMetaData().getTables(null, null, "wd_abuse_notice_log", new String[]{"TABLE"});
+        boolean logExists = logTable.next();
+        logTable.close();
+        if (!logExists) {
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `wd_abuse_notice_log` (
+                      `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                      `notice_id` bigint NOT NULL COMMENT '通知ID',
+                      `event_type` varchar(32) NOT NULL COMMENT 'received|qualified|reviewing|removed|restricted|rejected|closed|note',
+                      `event_detail` text COMMENT '事件详情/证据摘要',
+                      `operator_id` bigint DEFAULT NULL COMMENT '操作人，NULL=系统/投诉人提交',
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件时间点',
+                      PRIMARY KEY (`id`),
+                      KEY `idx_notice_time` (`notice_id`, `create_time`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='侵权投诉处理时间线（证据留存）'
+                    """);
+            log.info("数据库表初始化完成: wd_abuse_notice_log 已创建");
+        }
     }
 
     private void ensureScenePromptTable(Connection conn, Statement stmt) throws Exception {
@@ -476,12 +692,17 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 '占位符 {global_constraint}/{language}/{locale}/{context}', 1, 2),
                 ('feature', 'zh-CN', '阅读功能分析',
                 '{global_constraint}
-                你是一个专业的英语阅读助手。
-                {feature_prompts}
-                用户当前选中的上下文是："{context}"
-                请直接给出分析结果，不要添加开场白、解释说明或总结。保持简洁。
-                各小节标题用 Markdown 加粗（如 **固定搭配**），列表词条也加粗。',
-                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}', 1, 3)
+你是英语阅读解析助手。
+{feature_prompts}
+用户选中原文："{context}"
+若有目标词：{target_words}
+
+【输出】只返回一个 JSON 对象，不要 Markdown。
+顶层键必须与上方勾选功能的 feature_key 完全一致（如 meaning / word / collocation / grammar / sentence_pattern / phonetic）。
+未勾选的键不要写。
+文本类功能：值为字符串。
+词条类功能（word / collocation / root_affix / example）：值为数组，元素含 word、meaning。',
+                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON', 1, 3)
                 """);
         log.info("数据库种子初始化完成: sys_ai_scene_prompt 默认场景提示词已写入");
     }
@@ -681,6 +902,171 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("迁移 sys_ai_feature 释义格式失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 已废弃：旧版曾追加 translation/tense/entries 等硬编码字段说明。
+     * 契约改由 {@link #migrateFeatureKeyBasedJsonContract} + 后台配置维护，此处不再写入。
+     */
+    private void migrateFeaturePromptWordMeaningJson(Connection conn, Statement stmt) {
+        // no-op
+    }
+
+    /**
+     * 单词功能提示词：纯字段约定，无版本标（遇到旧版/否定套话则覆盖）。
+     */
+    private void migrateWordFeaturePromptV3(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            String prompt = """
+                    usPhonetic/ukPhonetic=美英IPA；meaning=n./v./adj.等+释义；rootAffix=词根词缀（可空）。
+                    entries[]：{"entryType":"word","word":"原形","meaning":"n. 释义","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":""}
+                    """;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                            + "WHERE feature_key = 'word' AND is_deleted = 0 "
+                            + "AND (prompt IS NULL OR prompt LIKE '%【word·%' OR prompt LIKE '%跳过专有%' "
+                            + "OR prompt LIKE '%禁止%' OR prompt LIKE '%重难点%' OR prompt LIKE '%【JSON·word】%')")) {
+                ps.setString(1, prompt.trim());
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: sys_ai_feature.word 提示词已精简，共 {} 行", n);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_feature.word 提示词失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 语法 / 句式提示词拆分并精简（无版本标）。
+     */
+    private void migrateGrammarSentencePatternSplit(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+
+            String grammarPrompt = """
+                    在 JSON 顶层键 "grammar" 填写语法分析（字段内用 \\n 换行），可含时态/语态/其它语法点。
+                    例：{"grammar":"时间状语 in the nineteenth century → 一般过去时\\n谓语：tend → tended\\n语态：主动\\n主谓结构\\n主语：…\\n谓语：…"}
+                    """;
+            String sentencePrompt = """
+                    在 JSON 顶层键 "sentence_pattern" 按三行填写：句式 / 句子类型 / 功能。
+                    例：{"sentence_pattern":"句式：主谓基础陈述句\\n句子类型：简单句\\n功能：陈述客观趋势"}
+                    """;
+
+            int nGrammar = 0;
+            int nSentence = 0;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                            + "WHERE feature_key = 'grammar' AND is_deleted = 0")) {
+                ps.setString(1, grammarPrompt.trim());
+                nGrammar = ps.executeUpdate();
+            }
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                            + "WHERE feature_key = 'sentence_pattern' AND is_deleted = 0")) {
+                ps.setString(1, sentencePrompt.trim());
+                nSentence = ps.executeUpdate();
+            }
+            if (nGrammar > 0 || nSentence > 0) {
+                log.info("数据库迁移完成: grammar/sentence_pattern 提示词已精简 grammar={}, sentence={}",
+                        nGrammar, nSentence);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 grammar/sentence_pattern 失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 阅读解析：按 feature_key 分包返回 JSON；场景壳与各功能 prompt 写入约定（幂等 marker）。
+     */
+    private void migrateFeatureKeyBasedJsonContract(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+
+            String scenePrompt = """
+                    {global_constraint}
+                    你是英语阅读解析助手。
+                    {feature_prompts}
+                    用户选中原文："{context}"
+                    若有目标词：{target_words}
+
+                    【输出】只返回一个 JSON 对象，不要 Markdown。
+                    顶层键必须与上方勾选功能的 feature_key 完全一致；未勾选的键不要写。
+                    文本类功能：值为字符串。
+                    词条类功能：值为对象数组（元素含 word、meaning 等字段，具体以各功能 prompt 为准）。
+                    """;
+
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_scene_prompt SET system_prompt = ?, remark = ?, update_time = NOW() "
+                            + "WHERE scene_key = 'feature' AND locale = 'zh-CN' AND is_deleted = 0 "
+                            + "AND (system_prompt IS NULL OR system_prompt NOT LIKE '%顶层键必须与上方勾选功能的 feature_key%')")) {
+                ps.setString(1, scenePrompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON");
+                int n = ps.executeUpdate();
+                if (n > 0) log.info("数据库迁移完成: feature 场景壳已改为 Key 分包 JSON，共 {} 行", n);
+            }
+
+            record Feat(String key, String prompt) {}
+            // 干净约定：无目标词时接口层根本不下发 word/root_affix，提示词不解释「空」
+            List<Feat> feats = List.of(
+                    new Feat("meaning", "在 JSON 键 \"meaning\" 写整句/段落译文（字符串）。例：{\"meaning\":\"…\"}"),
+                    new Feat("word", "在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}"),
+                    new Feat("collocation", "在 JSON 键 \"collocation\" 写固定搭配数组。元素：word, meaning。例：{\"collocation\":[{\"word\":\"examples of\",\"meaning\":\"…的例子\"}]}"),
+                    new Feat("phonetic", "在 JSON 键 \"phonetic\" 写连读/吞音/重读等发音说明（字符串，非整词释义音标）。例：{\"phonetic\":\"…\"}"),
+                    new Feat("root_affix", "在 JSON 键 \"root_affix\" 写词条数组，含 rootAffix。仅解析场景中的目标词。例：{\"root_affix\":[{\"word\":\"…\",\"meaning\":\"…\",\"rootAffix\":\"…\"}]}"),
+                    new Feat("example", "在 JSON 键 \"example\" 写例句/用法数组。例：{\"example\":[{\"word\":\"…\",\"meaning\":\"例句与说明\"}]}")
+            );
+            // 清掉此前「无目标词则 [] / 学习短语块」等污染文案（可重复执行）
+            String forceSql = "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                    + "WHERE feature_key = ? AND is_deleted = 0 "
+                    + "AND (prompt LIKE '%无目标词则%' OR prompt LIKE '%学习短语块%' "
+                    + "OR prompt LIKE '%不依赖目标词%' OR prompt LIKE '%必须从选中原文提取%' "
+                    + "OR prompt LIKE '%禁止从原文自行抽词%')";
+            int forced = 0;
+            try (var ps = conn.prepareStatement(forceSql)) {
+                for (Feat f : feats) {
+                    if (!"word".equals(f.key()) && !"root_affix".equals(f.key()) && !"collocation".equals(f.key())) {
+                        continue;
+                    }
+                    ps.setString(1, f.prompt());
+                    ps.setString(2, f.key());
+                    forced += ps.executeUpdate();
+                }
+            }
+            String sql = "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                    + "WHERE feature_key = ? AND is_deleted = 0 "
+                    + "AND (prompt IS NULL OR prompt NOT LIKE ?)";
+            int total = forced;
+            try (var ps = conn.prepareStatement(sql)) {
+                for (Feat f : feats) {
+                    ps.setString(1, f.prompt());
+                    ps.setString(2, f.key());
+                    ps.setString(3, "%JSON 键 \"" + f.key() + "\"%");
+                    total += ps.executeUpdate();
+                }
+            }
+            if (total > 0) {
+                log.info("数据库迁移完成: sys_ai_feature Key 分包 prompt 已更新，共 {} 行", total);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 Key 分包 JSON 约定失败: {}", e.getMessage());
         }
     }
 }

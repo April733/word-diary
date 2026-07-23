@@ -1,132 +1,41 @@
 package spring.nexusfuture.word_diary.common;
 
-import spring.nexusfuture.word_diary.entity.WdLearnPlan;
+import spring.nexusfuture.word_diary.entity.WdWord;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 
 /**
- * 动态间隔（SM-2 变体）+ 复习优先级
+ * 固定间隔艾宾浩斯：只维护 {@code status} + {@code statusData}。
+ * <p>
+ * 今日单词「认识」满 2 遍后调用 {@link #applyKnow}：升一阶，status_data=学习日。
+ * 「不认识」不调本类（遍数归零由 Redis passStore.clear；不改 status）。
  */
 public final class StudyAlgorithm {
 
-    private static final BigDecimal MIN_EASE = new BigDecimal("1.30");
-    private static final BigDecimal MAX_EASE = new BigDecimal("3.00");
-    private static final int MASTERED_REP = 8;
-    private static final int MASTERED_INTERVAL_DAYS = 180;
-
     private StudyAlgorithm() {}
 
-    public static int calcPriority(WdLearnPlan plan, LocalDate today) {
-        int score = 0;
-        Integer fb = plan.getLastFeedback();
-        if (fb != null) {
-            if (fb == StudyFeedback.FORGET) score += 1000;
-            else if (fb == StudyFeedback.FUZZY) score += 500;
-        }
-        if (plan.getNextReviewTime() != null) {
-            LocalDate due = plan.getNextReviewTime().toLocalDate();
-            if (due.isBefore(today)) {
-                score += (int) ChronoUnit.DAYS.between(due, today) * 50;
-            }
-        }
-        int lapses = plan.getLapseCount() != null ? plan.getLapseCount() : 0;
-        score += lapses * 20;
-        BigDecimal interval = plan.getIntervalDays() != null ? plan.getIntervalDays() : BigDecimal.ZERO;
-        score += Math.max(0, 30 - interval.intValue()) * 10;
-        return score;
+    /**
+     * 认识满 2 遍后升阶：status+1（0→1→…→7），status_data=学习日。
+     *
+     * @param studyDate 当前学习日（默认每天 7:00 换日）
+     */
+    public static void applyKnow(WdWord word, LocalDate studyDate) {
+        WordStudyStatus next = WordStudyStatus.fromCode(word.getStatus()).nextOnKnow();
+        word.setStatus(next.getCode());
+        word.setStatusData(studyDate.atStartOfDay());
     }
 
     /**
-     * 应用反馈，更新 plan 长期状态（正式每日学习）
-     *
-     * @param isNewPhase true=新词初学，false=复习
+     * @deprecated 今日单词已不再「不认识打回 0」；保留供其它场景如需强制打回时使用。
      */
-    public static void applyFeedback(WdLearnPlan plan, int feedback, LocalDate today, boolean isNewPhase) {
-        BigDecimal ease = plan.getEaseFactor() != null ? plan.getEaseFactor() : new BigDecimal("2.50");
-        BigDecimal interval = plan.getIntervalDays() != null ? plan.getIntervalDays() : BigDecimal.ZERO;
-        int rep = plan.getRepCount() != null ? plan.getRepCount() : 0;
-        int lapses = plan.getLapseCount() != null ? plan.getLapseCount() : 0;
-
-        plan.setLastFeedback(feedback);
-        plan.setLastStudyAt(LocalDateTime.now());
-
-        if (feedback == StudyFeedback.FORGET) {
-            plan.setLearnStatus(LearnStatus.NOT_LEARNED);
-            plan.setIntervalDays(BigDecimal.ZERO);
-            plan.setRepCount(0);
-            plan.setCurrentLevel(0);
-            plan.setNextReviewTime(null);
-            plan.setLapseCount(lapses + 1);
-            ease = ease.subtract(new BigDecimal("0.20"));
-            plan.setEaseFactor(clampEase(ease));
-            plan.setScheduledNewDate(null);
-            plan.setPriorityScore(calcPriority(plan, today));
+    @Deprecated
+    public static void applyFeedback(WdWord word, int feedback, LocalDate studyDate) {
+        if (feedback == StudyFeedback.KNOW) {
+            applyKnow(word, studyDate);
             return;
         }
-
-        if (feedback == StudyFeedback.FUZZY) {
-            ease = ease.subtract(new BigDecimal("0.15"));
-            plan.setEaseFactor(clampEase(ease));
-            if (isNewPhase) {
-                plan.setLearnStatus(LearnStatus.NOT_LEARNED);
-                plan.setNextReviewTime(null);
-            } else {
-                interval = interval.multiply(new BigDecimal("0.5")).max(BigDecimal.ONE);
-                plan.setIntervalDays(interval);
-                plan.setLearnStatus(LearnStatus.REVIEWING);
-                plan.setNextReviewTime(today.atStartOfDay().plusDays(interval.setScale(0, RoundingMode.CEILING).longValue()));
-            }
-            plan.setPriorityScore(calcPriority(plan, today));
-            return;
-        }
-
-        // KNOW
-        ease = ease.add(new BigDecimal("0.10"));
-        plan.setEaseFactor(clampEase(ease));
-        rep += 1;
-        plan.setRepCount(rep);
-        plan.setReviewTimes((plan.getReviewTimes() != null ? plan.getReviewTimes() : 0) + 1);
-
-        if (isNewPhase) {
-            plan.setLearnStatus(LearnStatus.FIRST_LEARNED);
-            plan.setCurrentLevel(1);
-            if (plan.getFirstStudyTime() == null) {
-                plan.setFirstStudyTime(LocalDateTime.now());
-            }
-            interval = BigDecimal.ONE;
-            plan.setIntervalDays(interval);
-            plan.setNextReviewTime(today.atStartOfDay().plusDays(1));
-            plan.setScheduledNewDate(null);
-            plan.setPriorityScore(calcPriority(plan, today));
-            return;
-        }
-
-        if (interval.compareTo(BigDecimal.ONE) <= 0) {
-            interval = new BigDecimal("1");
-        } else {
-            interval = interval.multiply(ease);
-        }
-        plan.setIntervalDays(interval);
-        plan.setLearnStatus(LearnStatus.REVIEWING);
-        plan.setCurrentLevel(rep);
-
-        long days = interval.setScale(0, RoundingMode.CEILING).longValue();
-        if (rep >= MASTERED_REP && days >= MASTERED_INTERVAL_DAYS) {
-            plan.setLearnStatus(LearnStatus.MASTERED);
-            plan.setNextReviewTime(null);
-        } else {
-            plan.setNextReviewTime(today.atStartOfDay().plusDays(Math.max(1, days)));
-        }
-        plan.setPriorityScore(calcPriority(plan, today));
-    }
-
-    private static BigDecimal clampEase(BigDecimal ease) {
-        if (ease.compareTo(MIN_EASE) < 0) return MIN_EASE;
-        if (ease.compareTo(MAX_EASE) > 0) return MAX_EASE;
-        return ease.setScale(2, RoundingMode.HALF_UP);
+        word.setStatus(WordStudyStatus.UN_STUDY.getCode());
+        word.setStatusData(LocalDateTime.now());
     }
 }

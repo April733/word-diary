@@ -11,6 +11,9 @@
       <div class="top-right">
         <AiRegionSwitcher />
         <LocaleSwitcher />
+        <t-button variant="text" class="feedback-link" @click="router.push('/report')">
+          {{ $t('login.reportLink') }}
+        </t-button>
         <t-button variant="text" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
       </div>
     </header>
@@ -38,13 +41,8 @@
         </t-button>
       </section>
 
-      <!-- 今日学习：一行点击进入（与旧版一致） -->
-      <button type="button" class="study-hint" @click="router.push(studyCtaPath)">
-        <span>{{ studyHint }}</span>
-        <span class="go">{{ studyCtaLabel }} →</span>
-      </button>
-
       <nav class="nav">
+        <button type="button" @click="router.push('/study')">{{ $t('study.sessionTitle') }}</button>
         <button type="button" @click="router.push('/plan')">{{ $t('study.planOverviewTitle') }}</button>
         <button type="button" @click="router.push('/notebooks')">{{ $t('nav.wordbook') }}</button>
         <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
@@ -58,7 +56,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '../stores/user'
-import { getStats, getBooks } from '../api'
+import { getBooks } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 import AiRegionSwitcher from '../components/AiRegionSwitcher.vue'
 
@@ -68,13 +66,6 @@ const userStore = useUserStore()
 
 const loading = ref(true)
 const books = ref<any[]>([])
-const stats = ref({
-  totalWords: 0,
-  newWords: 0,
-  pausedWords: 0,
-  todayReviewPending: 0,
-  todayNewPending: 0
-})
 
 function progressOf(b: any) {
   return Math.round(Number(b.progressPercent ?? 0))
@@ -106,44 +97,6 @@ const bookButtonText = computed(() =>
   bookStarted.value ? t('dashboard.continueReading') : t('dashboard.startReading')
 )
 
-const hasStudyWork = computed(() =>
-  stats.value.todayReviewPending > 0
-  || stats.value.todayNewPending > 0
-  || stats.value.newWords > 0
-)
-
-/** 一行提示文案（左侧） */
-const studyHint = computed(() => {
-  if (stats.value.todayReviewPending > 0) {
-    return t('dashboard.todayHeadlineReview', { count: stats.value.todayReviewPending })
-  }
-  if (stats.value.todayNewPending > 0) {
-    return t('dashboard.todayHeadlineNew', { count: stats.value.todayNewPending })
-  }
-  if (stats.value.newWords > 0) {
-    return t('dashboard.todayHeadlineUnlearned', { count: stats.value.newWords })
-  }
-  if (stats.value.totalWords > 0) {
-    return t('dashboard.todayHeadlineDone')
-  }
-  if (stats.value.pausedWords > 0) {
-    return t('dashboard.todayHeadlinePaused', { count: stats.value.pausedWords })
-  }
-  return t('dashboard.studyStripEmpty')
-})
-
-const studyCtaLabel = computed(() => {
-  if (hasStudyWork.value) return t('dashboard.startStudy')
-  if (stats.value.pausedWords > 0) return t('nav.wordbook')
-  return t('study.sessionTitle')
-})
-
-const studyCtaPath = computed(() => {
-  if (hasStudyWork.value) return '/study'
-  if (stats.value.pausedWords > 0) return '/notebooks'
-  return '/study'
-})
-
 function openBook() {
   if (focusBook.value) router.push(`/reader/${focusBook.value.id}`)
 }
@@ -151,21 +104,8 @@ function openBook() {
 onMounted(async () => {
   userStore.loadFromStorage()
   try {
-    const [booksRes, statsRes] = await Promise.all([
-      getBooks().catch(() => null),
-      getStats().catch(() => null)
-    ])
+    const booksRes = await getBooks().catch(() => null)
     books.value = booksRes?.data?.data || []
-    const s = statsRes?.data?.data
-    if (s) {
-      stats.value = {
-        totalWords: s.totalWords || 0,
-        newWords: s.newWords || 0,
-        pausedWords: s.pausedWords || 0,
-        todayReviewPending: s.todayReviewPending || 0,
-        todayNewPending: s.todayNewPending || 0
-      }
-    }
   } finally {
     loading.value = false
   }
@@ -217,8 +157,15 @@ function handleLogout() {
 
 .top-right {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 4px;
+  max-width: min(100%, 420px);
+}
+
+.feedback-link {
+  color: #315C34;
 }
 
 .body {
@@ -259,37 +206,11 @@ function handleLogout() {
   margin-top: 12px;
 }
 
-.study-hint {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  margin-top: 24px;
-  padding: 14px 0;
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
-  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
-  background: transparent;
-  font-size: 15px;
-  font-weight: 600;
-  color: #333;
-  cursor: pointer;
-  text-align: left;
-}
-
-.study-hint .go {
-  flex-shrink: 0;
-  margin-left: 12px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--brand-ink);
-}
-
 .nav {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
 .nav button {

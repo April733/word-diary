@@ -6,8 +6,8 @@ import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
-import spring.nexusfuture.word_diary.dto.AdminAiCallDetailVO;
-import spring.nexusfuture.word_diary.dto.AdminAiCallListItemVO;
+import spring.nexusfuture.word_diary.dto.response.AdminAiCallDetailVO;
+import spring.nexusfuture.word_diary.dto.response.AdminAiCallListItemVO;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
 
 import java.util.List;

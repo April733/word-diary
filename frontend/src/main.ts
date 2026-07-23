@@ -7,6 +7,7 @@ import router from './router'
 import i18n, { setStoredLocale, type SupportedLocale } from './i18n'
 import { useUserStore } from './stores/user'
 import { startHealthWatch } from './utils/serviceStatus'
+import { startOfflineSyncWatch } from './utils/offlineSync'
 import './style.css'
 
 const app = createApp(App)
@@ -31,4 +32,5 @@ document.documentElement.lang = i18n.global.locale.value
 router.isReady().then(() => {
   app.mount('#app')
   startHealthWatch()
+  startOfflineSyncWatch()
 })

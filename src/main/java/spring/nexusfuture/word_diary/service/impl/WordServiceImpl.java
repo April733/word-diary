@@ -3,21 +3,16 @@ package spring.nexusfuture.word_diary.service.impl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
-import spring.nexusfuture.word_diary.common.LearnStatus;
-import spring.nexusfuture.word_diary.dto.AiParseResult;
-import spring.nexusfuture.word_diary.dto.WordAddReq;
-import spring.nexusfuture.word_diary.dto.WordVO;
-import spring.nexusfuture.word_diary.entity.WdLearnPlan;
+import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.dto.response.AiParseResult;
+import spring.nexusfuture.word_diary.dto.request.WordAddReq;
+import spring.nexusfuture.word_diary.dto.response.WordVO;
 import spring.nexusfuture.word_diary.entity.WdWord;
 import spring.nexusfuture.word_diary.entity.WdWordBook;
-import spring.nexusfuture.word_diary.mapper.WdLearnPlanMapper;
-import spring.nexusfuture.word_diary.mapper.WdStudyQueueMapper;
 import spring.nexusfuture.word_diary.mapper.WdWordBookMapper;
 import spring.nexusfuture.word_diary.mapper.WdWordMapper;
 import spring.nexusfuture.word_diary.service.AiService;
 import spring.nexusfuture.word_diary.service.WordService;
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,21 +20,14 @@ import java.util.stream.Collectors;
 @Service
 public class WordServiceImpl implements WordService {
 
-    private static final int TRASH_RETAIN_DAYS = 7;
-
     private final WdWordMapper wordMapper;
     private final WdWordBookMapper bookMapper;
-    private final WdLearnPlanMapper planMapper;
-    private final WdStudyQueueMapper queueMapper;
     private final AiService aiService;
 
     public WordServiceImpl(WdWordMapper wordMapper, WdWordBookMapper bookMapper,
-                           WdLearnPlanMapper planMapper, WdStudyQueueMapper queueMapper,
                            AiService aiService) {
         this.wordMapper = wordMapper;
         this.bookMapper = bookMapper;
-        this.planMapper = planMapper;
-        this.queueMapper = queueMapper;
         this.aiService = aiService;
     }
 
@@ -70,18 +58,10 @@ public class WordServiceImpl implements WordService {
                 .rootAffix(req.getRootAffix())
                 .entryType("word")
                 .isPublic(0)
+                .status(WordStudyStatus.UN_STUDY.getCode())
+                .statusData(java.time.LocalDateTime.now())
                 .build();
         wordMapper.insert(word);
-
-        WdLearnPlan plan = WdLearnPlan.builder()
-                .userId(userId)
-                .notebookId(notebookId)
-                .wordId(word.getId())
-                .learnStatus(LearnStatus.NOT_LEARNED)
-                .currentLevel(0)
-                .reviewTimes(0)
-                .build();
-        planMapper.insert(plan);
     }
 
     @Override
@@ -91,23 +71,7 @@ public class WordServiceImpl implements WordService {
             throw new BizException("单词本不存在");
         }
         List<WdWord> words = wordMapper.selectByNotebookId(notebookId);
-        return words.stream().map(word -> toVo(userId, word, false)).collect(Collectors.toList());
-    }
-
-    @Override
-    public List<WordVO> listTrash(Long userId, Long notebookId) {
-        WdWordBook book = bookMapper.selectById(notebookId);
-        if (book == null || !book.getUserId().equals(userId)) {
-            throw new BizException("单词本不存在");
-        }
-        // 打开时顺带清理过期项（避免自调用导致事务失效）
-        int purged = wordMapper.hardDeleteExpiredTrash();
-        if (purged > 0) {
-            planMapper.hardDeleteOrphanPlans();
-        }
-        return wordMapper.selectTrashByNotebookId(notebookId).stream()
-                .map(word -> toVo(userId, word, true))
-                .collect(Collectors.toList());
+        return words.stream().map(this::toVo).collect(Collectors.toList());
     }
 
     @Override
@@ -118,55 +82,6 @@ public class WordServiceImpl implements WordService {
             throw new BizException("单词不存在");
         }
         wordMapper.deleteById(wordId);
-        planMapper.deleteByWordId(wordId);
-        queueMapper.deletePendingByWordId(wordId);
-    }
-
-    @Override
-    @Transactional
-    public void restore(Long userId, Long notebookId, Long wordId) {
-        WdWordBook book = bookMapper.selectById(notebookId);
-        if (book == null || !book.getUserId().equals(userId)) {
-            throw new BizException("单词本不存在");
-        }
-        WdWord word = wordMapper.selectByIdAny(wordId);
-        if (word == null || !word.getUserId().equals(userId) || !notebookId.equals(word.getNotebookId())) {
-            throw new BizException("单词不存在");
-        }
-        if (word.getIsDeleted() == null || word.getIsDeleted() != 1) {
-            throw new BizException("该词条不在垃圾桶中");
-        }
-        if (word.getDeletedAt() != null
-                && word.getDeletedAt().isBefore(LocalDateTime.now().minusDays(TRASH_RETAIN_DAYS))) {
-            throw new BizException("已超过保留期限，无法恢复");
-        }
-        WdWord conflict = wordMapper.selectByNotebookAndWordProto(notebookId, word.getWordProto());
-        if (conflict != null) {
-            throw new BizException("单词本中已存在「" + word.getWordProto() + "」，无法恢复");
-        }
-        wordMapper.restoreById(wordId);
-        int restored = planMapper.restoreByWordId(wordId);
-        if (restored == 0) {
-            WdLearnPlan plan = WdLearnPlan.builder()
-                    .userId(userId)
-                    .notebookId(notebookId)
-                    .wordId(wordId)
-                    .learnStatus(LearnStatus.NOT_LEARNED)
-                    .currentLevel(0)
-                    .reviewTimes(0)
-                    .build();
-            planMapper.insert(plan);
-        }
-    }
-
-    @Override
-    @Transactional
-    public int purgeExpiredTrash() {
-        int deleted = wordMapper.hardDeleteExpiredTrash();
-        if (deleted > 0) {
-            planMapper.hardDeleteOrphanPlans();
-        }
-        return deleted;
     }
 
     @Override
@@ -198,18 +113,10 @@ public class WordServiceImpl implements WordService {
                         .rootAffix(r.getRootAffix())
                         .entryType("word")
                         .isPublic(0)
+                        .status(WordStudyStatus.UN_STUDY.getCode())
+                        .statusData(java.time.LocalDateTime.now())
                         .build();
                 wordMapper.insert(word);
-
-                WdLearnPlan plan = WdLearnPlan.builder()
-                        .userId(userId)
-                        .notebookId(notebookId)
-                        .wordId(word.getId())
-                        .learnStatus(LearnStatus.NOT_LEARNED)
-                        .currentLevel(0)
-                        .reviewTimes(0)
-                        .build();
-                planMapper.insert(plan);
             } catch (Exception e) {
                 errors.add(r.getWordProto() + ": " + e.getMessage());
             }
@@ -268,9 +175,8 @@ public class WordServiceImpl implements WordService {
         return updated;
     }
 
-    private WordVO toVo(Long userId, WdWord word, boolean trash) {
-        WdLearnPlan plan = trash ? null : planMapper.selectByUserIdAndWordId(userId, word.getId());
-        WordVO.WordVOBuilder b = WordVO.builder()
+    private WordVO toVo(WdWord word) {
+        return WordVO.builder()
                 .id(word.getId())
                 .notebookId(word.getNotebookId())
                 .wordProto(word.getWordProto())
@@ -280,14 +186,9 @@ public class WordServiceImpl implements WordService {
                 .sentenceExample(word.getSentenceExample())
                 .rootAffix(word.getRootAffix())
                 .entryType(word.getEntryType())
-                .learnStatus(plan != null ? plan.getLearnStatus() : LearnStatus.NOT_LEARNED)
-                .currentLevel(plan != null ? plan.getCurrentLevel() : 0);
-        if (trash && word.getDeletedAt() != null) {
-            long daysLeft = ChronoUnit.DAYS.between(LocalDateTime.now(), word.getDeletedAt().plusDays(TRASH_RETAIN_DAYS));
-            b.deletedAt(word.getDeletedAt())
-                    .retainDaysLeft((int) Math.max(0, daysLeft));
-        }
-        return b.build();
+                .learnStatus(word.getStatus() != null ? word.getStatus() : WordStudyStatus.UN_STUDY.getCode())
+                .statusData(word.getStatusData())
+                .build();
     }
 
     private boolean hasGap(WdWord w) {

@@ -6,9 +6,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import spring.nexusfuture.word_diary.dto.BookCollectReq;
-import spring.nexusfuture.word_diary.dto.BookCollectResultVO;
-import spring.nexusfuture.word_diary.dto.CollectEntryDTO;
+import spring.nexusfuture.word_diary.dto.request.BookCollectReq;
+import spring.nexusfuture.word_diary.dto.response.BookCollectResultVO;
+import spring.nexusfuture.word_diary.dto.response.CollectEntryDTO;
 import spring.nexusfuture.word_diary.entity.WdBook;
 import spring.nexusfuture.word_diary.entity.WdWord;
 import spring.nexusfuture.word_diary.entity.WdWordBook;
@@ -26,13 +26,12 @@ class BookCollectServiceImplTest {
     @Mock WdBookMapper bookMapper;
     @Mock WdWordBookMapper notebookMapper;
     @Mock WdWordMapper wordMapper;
-    @Mock WdLearnPlanMapper planMapper;
 
     BookCollectServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new BookCollectServiceImpl(bookMapper, notebookMapper, wordMapper, planMapper);
+        service = new BookCollectServiceImpl(bookMapper, notebookMapper, wordMapper);
         when(bookMapper.selectById(1L)).thenReturn(WdBook.builder().id(1L).userId(9L).build());
         when(notebookMapper.selectById(2L)).thenReturn(
                 WdWordBook.builder().id(2L).userId(9L).bookId(1L).build());
