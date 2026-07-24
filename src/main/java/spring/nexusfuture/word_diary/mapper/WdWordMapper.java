@@ -99,6 +99,42 @@ public interface WdWordMapper {
             "WHERE w.user_id = #{userId} AND w.is_deleted = 0")
     List<WdWord> selectAllInStudyPlan(Long userId);
 
+    /**
+     * 翻译练习词池：在背单词本中 status ≥ minStatus（learned=1，mastered=7）的词。
+     */
+    @Select("""
+            SELECT w.* FROM wd_word w
+            INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1
+            WHERE w.user_id = #{userId} AND w.is_deleted = 0 AND w.status >= #{minStatus}
+              AND (#{notebookId} IS NULL OR w.notebook_id = #{notebookId})
+            ORDER BY w.status DESC, COALESCE(w.status_data, w.update_time) DESC, w.id DESC
+            """)
+    List<WdWord> selectLearnedForTranslation(@Param("userId") Long userId,
+                                             @Param("minStatus") int minStatus,
+                                             @Param("notebookId") Long notebookId);
+
+    @Select("""
+            SELECT COUNT(*) FROM wd_word w
+            INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1
+            WHERE w.user_id = #{userId} AND w.is_deleted = 0 AND w.status >= #{minStatus}
+              AND (#{notebookId} IS NULL OR w.notebook_id = #{notebookId})
+            """)
+    int countLearnedForTranslation(@Param("userId") Long userId,
+                                   @Param("minStatus") int minStatus,
+                                   @Param("notebookId") Long notebookId);
+
+    /** 按原型在用户单词本中找一条（兼容旧翻译练习仅存词面） */
+    @Select("""
+            SELECT w.* FROM wd_word w
+            INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0
+            WHERE w.user_id = #{userId} AND w.is_deleted = 0
+              AND LOWER(w.word_proto) = LOWER(#{wordProto})
+            ORDER BY w.status DESC, w.id DESC
+            LIMIT 1
+            """)
+    WdWord selectByUserAndWordProto(@Param("userId") Long userId,
+                                    @Param("wordProto") String wordProto);
+
     /** 未开启「在背」的单词本中的词数（不计入每日计划） */
     @Select("SELECT COUNT(*) FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 0 " +

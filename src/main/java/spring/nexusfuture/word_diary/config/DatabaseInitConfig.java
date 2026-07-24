@@ -86,6 +86,15 @@ public class DatabaseInitConfig implements ApplicationRunner {
             ensureWritingEssayGradeTable(conn, stmt);
             seedWritingGradeHistoryFromExisting(conn);
             seedWritingGradePromptIfMissing(conn);
+            ensureTranslationPracticeTable(conn, stmt);
+            ensureTranslationGradeTable(conn, stmt);
+            ensureColumn(conn, stmt, "wd_translation_grade", "direction",
+                    "ALTER TABLE wd_translation_grade ADD COLUMN direction varchar(16) DEFAULT NULL COMMENT '批改当时方向 en2zh|zh2en' AFTER user_id");
+            ensureColumn(conn, stmt, "wd_translation_grade", "prompt_text",
+                    "ALTER TABLE wd_translation_grade ADD COLUMN prompt_text mediumtext COMMENT '批改当时题目' AFTER direction");
+            ensureColumn(conn, stmt, "wd_translation_grade", "source_words_json",
+                    "ALTER TABLE wd_translation_grade ADD COLUMN source_words_json mediumtext COMMENT '批改当时目标词JSON' AFTER prompt_text");
+            seedTranslationScenePromptsIfMissing(conn);
             // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
             ensureColumn(conn, stmt, "wd_user", "preferred_locale",
                     "ALTER TABLE wd_user ADD COLUMN preferred_locale varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '偏好语言' AFTER role");
@@ -221,6 +230,10 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     ('reading_chat', '阅读自由问答', 'global', 'deepseek-v4-flash', 3, 1, '海外线路，可改为 Gemini 等'),
                     ('writing_grade', '雅思写作批改', 'cn', 'deepseek-v4-flash', 4, 1, '写作评分+润色范文'),
                     ('writing_grade', '雅思写作批改', 'global', 'deepseek-v4-flash', 4, 1, '海外线路'),
+                    ('translation_generate', '翻译练习出题', 'cn', 'deepseek-v4-flash', 5, 1, '基于已学词出翻译题'),
+                    ('translation_generate', '翻译练习出题', 'global', 'deepseek-v4-flash', 5, 1, '海外线路'),
+                    ('translation_grade', '翻译练习批改', 'cn', 'deepseek-v4-flash', 6, 1, '翻译评分+参考译文'),
+                    ('translation_grade', '翻译练习批改', 'global', 'deepseek-v4-flash', 6, 1, '海外线路'),
                     ('default', '未匹配场景回退', 'cn', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退'),
                     ('default', '未匹配场景回退', 'global', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退')
                     """);
@@ -1218,6 +1231,169 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("写入 writing_grade 场景提示词失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureTranslationPracticeTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_translation_practice", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_translation_practice` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
+                  `direction` varchar(16) NOT NULL COMMENT 'en2zh|zh2en',
+                  `pool_mode` varchar(16) NOT NULL DEFAULT 'learned' COMMENT 'learned|mastered',
+                  `source_words_json` mediumtext COMMENT '目标词JSON',
+                  `theme` varchar(120) DEFAULT NULL COMMENT '雅思主题',
+                  `prompt_text` mediumtext NOT NULL COMMENT '题目',
+                  `reference_answer` mediumtext COMMENT '参考译文',
+                  `body_text` mediumtext COMMENT '用户译文',
+                  `status` varchar(16) NOT NULL DEFAULT 'draft' COMMENT 'draft|graded',
+                  `word_count` int NOT NULL DEFAULT 0 COMMENT '词数/字数',
+                  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+                  `score_json` mediumtext COMMENT '评分详情JSON',
+                  `polished_answer` mediumtext COMMENT 'AI润色译文',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_user_update` (`user_id`, `update_time`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='翻译练习稿'
+                """);
+        log.info("数据库表初始化完成: wd_translation_practice");
+    }
+
+    private void ensureTranslationGradeTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_translation_grade", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_translation_grade` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `practice_id` bigint NOT NULL COMMENT '练习ID',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `direction` varchar(16) DEFAULT NULL COMMENT '批改当时方向 en2zh|zh2en',
+                  `prompt_text` mediumtext COMMENT '批改当时题目',
+                  `source_words_json` mediumtext COMMENT '批改当时目标词JSON',
+                  `body_text` mediumtext COMMENT '批改当时译文',
+                  `word_count` int NOT NULL DEFAULT 0 COMMENT '词数',
+                  `overall_band` decimal(3,1) DEFAULT NULL COMMENT '总分0-9',
+                  `score_json` mediumtext COMMENT '评分详情JSON',
+                  `polished_answer` mediumtext COMMENT 'AI润色',
+                  `reference_answer` mediumtext COMMENT '参考译文',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_practice_id` (`practice_id`, `id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='翻译批改历史'
+                """);
+        log.info("数据库表初始化完成: wd_translation_grade");
+    }
+
+    /** 翻译场景提示词（仅缺省时插入） */
+    private void seedTranslationScenePromptsIfMissing(Connection conn) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            String genPrompt = """
+                    {global_constraint}
+                    You design IELTS-style English translation drills from a learner's known vocabulary.
+                    Audience: non-native English learners.
+                    Create ONE practice item that recycles the given words/phrases with an Academic IELTS theme.
+                    Return ONLY one JSON object with keys:
+                    direction, theme, promptText, referenceAnswer, targetWords.
+                    Prefer the given vocabulary; keep length moderate; avoid rare out-of-list words.
+                    Language lock (overrides global single-language rules):
+                    promptText = direction SOURCE language only; referenceAnswer = direction TARGET language only;
+                    theme may follow {language}. Do not mix coach language into promptText/referenceAnswer.
+                    """;
+            String gradePrompt = """
+                    {global_constraint}
+                    You are an IELTS-oriented translation coach for non-native English learners.
+                    Grade accuracy, fluency, and practice-vocabulary use (0-9, 0.5 steps).
+                    Return ONLY one JSON object with keys:
+                    overallBand, accuracy, fluency, targetWordUse, summary, priorities, annotations,
+                    referenceAnswer.
+                    summary and referenceAnswer should use \\n between sentences.
+                    annotations: only concrete mistakes with non-empty excerpt/issue/fix; omit empties.
+                    Do NOT return polishedAnswer. In Chinese coach replies use 「练习词汇」 not 「目标词」.
+                    STRICT language lock (overrides global single-language / "do not use Chinese" rules):
+                    summary, priorities, issue, fix explanations = {language} only;
+                    referenceAnswer and corrected-translation snippets = exercise TARGET language only
+                    (Chinese for en2zh, Indonesian for en2id, Thai for en2th, Vietnamese for en2vi, English for *2en).
+                    Be specific and actionable.
+                    """;
+            insertScenePromptIfMissing(conn, "translation_generate", "翻译练习出题", genPrompt.trim(),
+                    "占位符 {global_constraint}/{language}");
+            insertScenePromptIfMissing(conn, "translation_grade", "翻译练习批改", gradePrompt.trim(),
+                    "占位符 {global_constraint}/{language}");
+            // 已有环境：同步翻译出题/批改语言锁
+            try (var ps = conn.prepareStatement("""
+                    UPDATE sys_ai_scene_prompt
+                    SET system_prompt = ?, remark = ?, update_time = NOW()
+                    WHERE scene_key = 'translation_grade' AND is_deleted = 0
+                      AND (system_prompt LIKE '%polishedAnswer%'
+                        OR system_prompt LIKE '%目标词%'
+                        OR system_prompt NOT LIKE '%STRICT language lock%')
+                    """)) {
+                ps.setString(1, gradePrompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: translation_grade 提示词语言锁已更新，共 {} 行", n);
+                }
+            }
+            try (var ps = conn.prepareStatement("""
+                    UPDATE sys_ai_scene_prompt
+                    SET system_prompt = ?, remark = ?, update_time = NOW()
+                    WHERE scene_key = 'translation_generate' AND is_deleted = 0
+                      AND system_prompt NOT LIKE '%Language lock%'
+                    """)) {
+                ps.setString(1, genPrompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: translation_generate 提示词语言锁已更新，共 {} 行", n);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("写入翻译场景提示词失败: {}", e.getMessage());
+        }
+    }
+
+    private void insertScenePromptIfMissing(Connection conn, String sceneKey, String sceneName,
+                                            String prompt, String remark) throws Exception {
+        try (var ps = conn.prepareStatement("""
+                INSERT INTO sys_ai_scene_prompt
+                (scene_key, locale, scene_name, system_prompt, remark, status, sort_num, create_time, update_time)
+                SELECT ?, 'zh-CN', ?, ?, ?, 1, 5, NOW(), NOW()
+                FROM DUAL
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM sys_ai_scene_prompt
+                  WHERE scene_key = ? AND locale = 'zh-CN' AND is_deleted = 0
+                )
+                """)) {
+            ps.setString(1, sceneKey);
+            ps.setString(2, sceneName);
+            ps.setString(3, prompt);
+            ps.setString(4, remark);
+            ps.setString(5, sceneKey);
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: {} 场景提示词已写入", sceneKey);
+            }
         }
     }
 }

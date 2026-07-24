@@ -197,7 +197,11 @@ const MIN_SELECT_SIZE = 8
 const containerRef = ref<HTMLElement | null>(null)
 const pageListRef = ref<HTMLElement | null>(null)
 const totalPages = ref(0)
-const scale = ref(1.2)
+const scale = ref(
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 560px), (orientation: portrait)').matches
+    ? 1
+    : 1.2
+)
 const ocrLoading = ref(false)
 
 let pdfDoc: any = null
@@ -210,6 +214,9 @@ const pageAspect = reactive<Record<number, number>>({})
 const releaseTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
 let observer: IntersectionObserver | null = null
+let resizeObserver: ResizeObserver | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+let lastContainerWidth = 0
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let currentPage = 1
 let destroyed = false
@@ -338,7 +345,22 @@ function setMarkupCanvasRef(pageNum: number, el: unknown) {
 }
 
 function getContainerWidth(): number {
-  return (containerRef.value?.clientWidth || 700)
+  const w = containerRef.value?.clientWidth || 0
+  if (w > 0) return w
+  // 布局未就绪时勿用过大兜底，避免窄屏/竖屏渲染成超宽页
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 700
+  return Math.max(280, Math.min(vw, 900))
+}
+
+function isNarrowContainer(width = getContainerWidth()): boolean {
+  return width > 0 && width < 560
+}
+
+/** 首次进入窄屏时铺满宽度；用户主动放大后不在同一次窄屏会话里强行改回 */
+function preferFitWidthIfNarrow() {
+  if (isNarrowContainer() && scale.value > 1) {
+    scale.value = 1
+  }
 }
 
 function markupsForPage(pageNum: number): PdfMarkupDto[] {
@@ -503,6 +525,13 @@ async function loadDocument() {
     }
 
     totalPages.value = pdfDoc.numPages
+    await nextTick()
+    // 等侧栏折叠/竖屏布局完成后再量宽，否则会按错误宽度出图
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
+    preferFitWidthIfNarrow()
+    lastContainerWidth = getContainerWidth()
     initPlaceholders()
     await loadOutline()
     emit('ready', totalPages.value)
@@ -510,6 +539,7 @@ async function loadDocument() {
     await nextTick()
     setupObserver()
     setupScrollListener()
+    setupResizeObserver()
     await restorePosition()
     await loadMarkups()
     emit('loading', false)
@@ -600,6 +630,29 @@ function setupObserver() {
   pages.forEach((el) => observer!.observe(el))
 }
 
+function setupResizeObserver() {
+  if (!containerRef.value) return
+  resizeObserver?.disconnect()
+  lastContainerWidth = getContainerWidth()
+  resizeObserver = new ResizeObserver(() => {
+    if (destroyed) return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (destroyed || !pdfDoc || totalPages.value <= 0) return
+      const w = getContainerWidth()
+      if (!w || Math.abs(w - lastContainerWidth) < 12) return
+      const prev = lastContainerWidth
+      lastContainerWidth = w
+      // 从宽屏切到窄屏/竖屏：自动 fit 宽度
+      if (prev >= 560 && w < 560) {
+        scale.value = 1
+      }
+      void rerenderVisible()
+    }, 140)
+  })
+  resizeObserver.observe(containerRef.value)
+}
+
 function cancelPendingRelease(pageNum: number) {
   const timer = releaseTimers.get(pageNum)
   if (timer) {
@@ -622,7 +675,7 @@ async function renderPage(pageNum: number) {
     const baseViewport = page.getViewport({ scale: 1 })
     pageAspect[pageNum] = baseViewport.height / baseViewport.width
 
-    const maxWidth = getContainerWidth() - 32
+    const maxWidth = Math.max(120, getContainerWidth() - (isNarrowContainer() ? 16 : 32))
     const renderScale = (maxWidth / baseViewport.width) * scale.value
     const viewport = page.getViewport({ scale: renderScale })
 
@@ -1619,6 +1672,9 @@ onBeforeUnmount(() => {
   stopOfflineSynced?.()
   window.removeEventListener('keydown', onKeyDown)
   if (saveTimer) clearTimeout(saveTimer)
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
   for (const timer of releaseTimers.values()) clearTimeout(timer)
   releaseTimers.clear()
   observer?.disconnect()
@@ -1773,6 +1829,29 @@ onBeforeUnmount(() => {
   width: max-content;
   min-width: 100%;
   box-sizing: border-box;
+}
+
+@media (max-width: 560px), (orientation: portrait) {
+  .pdf-page-list {
+    padding: 8px 0 20px;
+    gap: 6px;
+  }
+
+  .pdf-toolbar {
+    right: 4px;
+    width: 40px;
+    padding: 6px 2px;
+  }
+
+  .pdf-toolbar :deep(.t-button) {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+  }
+
+  .pdf-zoom-bar {
+    top: 6px;
+  }
 }
 
 .pdf-page-list.is-annotating {

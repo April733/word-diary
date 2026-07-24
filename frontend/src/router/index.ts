@@ -91,6 +91,24 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/translation',
+      name: 'Translation',
+      component: () => import('../views/TranslationListView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/translation/new',
+      name: 'TranslationNew',
+      component: () => import('../views/TranslationEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/translation/:id',
+      name: 'TranslationEdit',
+      component: () => import('../views/TranslationEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/reader/:id',
       name: 'Reader',
       component: () => import('../views/ReaderView.vue'),

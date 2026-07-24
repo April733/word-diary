@@ -1,13 +1,23 @@
 <template>
   <div class="page">
     <header class="page-header">
-      <div>
+      <div class="header-left">
         <t-button variant="text" @click="router.push('/')">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
         <h1>{{ $t('wordbook.titleManage') }}</h1>
       </div>
-      <t-button theme="primary" @click="showAddDialog = true">{{ $t('wordbook.create') }}</t-button>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('common.appName') }}</span>
+      </div>
+      <div class="header-actions">
+        <t-button variant="text" size="small" class="nav-link" @click="router.push('/plan')">
+          {{ $t('wordbook.reciteProgress') }}
+        </t-button>
+        <t-button variant="text" size="small" class="nav-link" @click="showAddDialog = true">
+          {{ $t('wordbook.createShort') }}
+        </t-button>
+      </div>
     </header>
 
     <div class="page-body">
@@ -31,10 +41,40 @@
               :title="$t('wordbook.studyEnabled')"
               @change="(v: boolean) => handleToggleStudy(book.id, v)"
             />
-            <t-button variant="text" @click="router.push(`/notebooks/${book.id}`)">{{ $t('wordbook.view') }}</t-button>
-            <t-button variant="text" @click="openEdit(book)">{{ $t('wordbook.rename') }}</t-button>
+            <t-button
+              size="small"
+              variant="text"
+              shape="square"
+              class="action-icon"
+              :title="$t('wordbook.view')"
+              :aria-label="$t('wordbook.view')"
+              @click="router.push(`/notebooks/${book.id}`)"
+            >
+              <template #icon><t-icon name="browse" size="16px" /></template>
+            </t-button>
+            <t-button
+              size="small"
+              variant="text"
+              shape="square"
+              class="action-icon"
+              :title="$t('wordbook.rename')"
+              :aria-label="$t('wordbook.rename')"
+              @click="openEdit(book)"
+            >
+              <template #icon><t-icon name="edit" size="16px" /></template>
+            </t-button>
             <t-popconfirm :content="$t('wordbook.deleteConfirm')" @confirm="handleDelete(book.id)">
-              <t-button variant="text" theme="danger">{{ $t('wordbook.delete') }}</t-button>
+              <t-button
+                size="small"
+                variant="text"
+                theme="danger"
+                shape="square"
+                class="action-delete"
+                :title="$t('wordbook.delete')"
+                :aria-label="$t('wordbook.delete')"
+              >
+                <template #icon><t-icon name="delete" size="16px" /></template>
+              </t-button>
             </t-popconfirm>
           </div>
         </li>
@@ -224,36 +264,84 @@ async function handleDelete(id: number) {
 .page {
   min-height: 100vh;
   background: transparent;
+  color: var(--brand-ink);
 }
 
 .page-header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  padding: 10px 16px 10px 6px;
+  background: color-mix(in srgb, var(--brand-white) 72%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
+  backdrop-filter: blur(8px);
 }
 
-.page-header > div {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   min-width: 0;
-  flex: 1;
+  max-width: min(42%, 160px);
+  flex: 0 1 auto;
+  z-index: 1;
+}
+
+.header-left :deep(.t-button) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.header-left :deep(.t-icon) {
+  font-size: 18px;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.header-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand-ink, #315c34);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 58%;
+  z-index: 1;
 }
 
 .page-header h1 {
-  font-size: 20px;
   margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--brand-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.page-header > .t-button {
-  flex-shrink: 0;
+.nav-link {
+  color: var(--brand-ink) !important;
 }
 
 .page-body {
@@ -316,24 +404,36 @@ async function handleDelete(id: number) {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 4px 8px;
+  gap: 2px 4px;
   flex-shrink: 0;
   max-width: 100%;
 }
 
 .nb-count {
   flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.action-icon {
+  border-radius: 6px !important;
+  color: var(--brand-ink, #315c34) !important;
+}
+
+.action-icon:hover {
+  background: color-mix(in srgb, var(--brand-lizard, #a8b59f) 22%, transparent) !important;
+}
+
+.action-delete {
+  border-radius: 6px !important;
+  color: color-mix(in srgb, #d54941 82%, #888) !important;
+}
+
+.action-delete:hover {
+  background: color-mix(in srgb, #d54941 8%, transparent) !important;
+  color: #d54941 !important;
 }
 
 @media (max-width: 560px) {
-  .page-header {
-    padding: 12px 16px;
-  }
-
-  .page-header h1 {
-    font-size: 17px;
-  }
-
   .page-body {
     margin: 16px auto;
     padding: 0 16px;

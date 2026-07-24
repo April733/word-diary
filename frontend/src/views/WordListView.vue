@@ -1,11 +1,14 @@
 <template>
   <div class="page">
     <header class="page-header">
-      <div>
+      <div class="header-left">
         <t-button variant="text" @click="router.push('/notebooks')">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
         <h1>{{ notebookName }}</h1>
+      </div>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('common.appName') }}</span>
       </div>
       <div class="header-actions">
         <!-- 暂时隐藏批量生成入口 -->
@@ -48,10 +51,33 @@
             </template>
           </t-list-item-meta>
           <template #action>
-            <t-button variant="text" theme="primary" @click="openEditDialog(word)">修改</t-button>
-            <t-popconfirm content="确定删除该单词？删除后不可恢复。" @confirm="handleDelete(word.id)">
-              <t-button variant="text" theme="danger">移除</t-button>
-            </t-popconfirm>
+            <div class="word-actions">
+              <t-button
+                size="small"
+                variant="text"
+                theme="primary"
+                shape="square"
+                class="action-icon"
+                title="修改"
+                aria-label="修改"
+                @click="openEditDialog(word)"
+              >
+                <template #icon><t-icon name="edit" size="16px" /></template>
+              </t-button>
+              <t-popconfirm content="确定删除该单词？删除后不可恢复。" @confirm="handleDelete(word.id)">
+                <t-button
+                  size="small"
+                  variant="text"
+                  theme="danger"
+                  shape="square"
+                  class="action-delete"
+                  title="移除"
+                  aria-label="移除"
+                >
+                  <template #icon><t-icon name="delete" size="16px" /></template>
+                </t-button>
+              </t-popconfirm>
+            </div>
           </template>
         </t-list-item>
       </t-list>
@@ -644,28 +670,74 @@ function displayRootAffix(text: string) {
 }
 
 .page-header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
+  gap: 12px;
+  padding: 10px 16px 10px 6px;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
-.page-header > div {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  min-width: 0;
+  max-width: min(42%, 160px);
+  flex: 0 1 auto;
+  z-index: 1;
+}
+
+.header-left :deep(.t-button) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.header-left :deep(.t-icon) {
+  font-size: 18px;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.header-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand-ink, #315c34);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .page-header h1 {
-  font-size: 20px;
+  font-size: 15px;
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 42%;
+  z-index: 1;
 }
 
 .page-body {
@@ -678,6 +750,31 @@ function displayRootAffix(text: string) {
   font-size: 18px;
   font-weight: 600;
   color: #1a1a2e;
+}
+
+.word-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-icon {
+  border-radius: 6px !important;
+  color: var(--brand-ink, #315c34) !important;
+}
+
+.action-icon:hover {
+  background: color-mix(in srgb, var(--brand-lizard, #a8b59f) 22%, transparent) !important;
+}
+
+.action-delete {
+  border-radius: 6px !important;
+  color: color-mix(in srgb, #d54941 82%, #888) !important;
+}
+
+.action-delete:hover {
+  background: color-mix(in srgb, #d54941 8%, transparent) !important;
+  color: #d54941 !important;
 }
 
 .word-meaning-inline {

@@ -3,6 +3,7 @@ package spring.nexusfuture.word_diary.config;
 import org.springframework.stereotype.Component;
 import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
+import spring.nexusfuture.word_diary.common.TranslationDirections;
 import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
 import spring.nexusfuture.word_diary.entity.WdUser;
@@ -385,6 +386,180 @@ public class AiPromptBuilder {
                 - modelEssay (string: high-band sample for the same question)
                 Do not invent scores without reading the essay. Be specific and actionable.
                 """.formatted(taskCriterion).replace("{task_type}", taskType);
+    }
+
+    /**
+     * 翻译出题 system prompt。优先 sys_ai_scene_prompt(translation_generate)。
+     * 不用通用 replyLanguageReinforcement（会误禁中文参考译文）。
+     */
+    public String buildTranslationGenerateSystemPrompt(Long userId) {
+        String locale = getUserLocale(userId);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GENERATE, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, "", "", locale) + translationGenerateLanguageReinforcement(locale);
+        }
+        return defaultTranslationGenerateSystem(locale);
+    }
+
+    public String buildTranslationGenerateUserPrompt(Long userId, String direction,
+                                                     String wordsBlock) {
+        String locale = getUserLocale(userId);
+        PromptTemplate t = getTemplateByLocale(locale);
+        String dirNorm = direction == null ? "" : direction.trim().toLowerCase();
+        String dirLabel = TranslationDirections.describeForPrompt(dirNorm);
+        String sourceLang = TranslationDirections.sourceLanguageName(dirNorm);
+        String targetLang = TranslationDirections.targetLanguageName(dirNorm);
+        return """
+                Product context: English-learning drills for non-native speakers.
+                Direction (keep exactly): %s
+                Language lock for this call:
+                - coachLanguage (theme label may use this): %s
+                - promptText MUST be entirely in %s (source language)
+                - referenceAnswer MUST be entirely in %s (target language); no coach commentary inside it
+                Learner vocabulary (use these words/phrases; prefer IELTS Academic themes such as education, environment, technology, cities, work, health):
+                ---
+                %s
+                ---
+                Return ONE JSON object only with keys:
+                direction (echo the requested direction code unchanged),
+                theme (short topic label; prefer %s),
+                promptText,
+                referenceAnswer,
+                targetWords (array of strings actually used from the list).
+                Constraints: one sentence or a short paragraph; mostly use the given vocabulary; any extra words must be very common; do not invent rare words.
+                """.formatted(
+                dirLabel,
+                t.localeName(),
+                sourceLang,
+                targetLang,
+                wordsBlock == null ? "" : wordsBlock,
+                t.localeName()
+        );
+    }
+
+    private String defaultTranslationGenerateSystem(String locale) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return t.globalConstraint() + "\n" + """
+                You design IELTS-style English translation drills from a learner's known vocabulary.
+                Audience: non-native English learners.
+                Create ONE practice item: a natural sentence or short paragraph that recycles the given words/phrases,
+                themed like IELTS Academic (education, environment, technology, urban life, work, health, etc.).
+                Return ONLY one JSON object (no Markdown fences) with keys:
+                direction, theme, promptText, referenceAnswer, targetWords.
+                Prefer the given vocabulary; keep length moderate; avoid rare out-of-list words.
+                Strict language lock (overrides any global "reply in one language" rule):
+                promptText = source language of the direction; referenceAnswer = target language of the direction;
+                do not mix coach language into promptText or referenceAnswer.
+                """
+                + translationGenerateLanguageReinforcement(locale);
+    }
+
+    /**
+     * 翻译批改 system prompt。优先 sys_ai_scene_prompt(translation_grade)。
+     */
+    public String buildTranslationGradeSystemPrompt(Long userId) {
+        String locale = getUserLocale(userId);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GRADE, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, "", "", locale) + translationGradeLanguageReinforcement(locale);
+        }
+        return defaultTranslationGradeSystem(locale);
+    }
+
+    public String buildTranslationGradeUserPrompt(Long userId, String direction,
+                                                  String promptText, String referenceAnswer,
+                                                  String bodyText, String targetWordsCsv) {
+        String locale = getUserLocale(userId);
+        PromptTemplate t = getTemplateByLocale(locale);
+        String dirNorm = direction == null ? "" : direction.trim().toLowerCase();
+        String dirLabel = TranslationDirections.describeForPrompt(dirNorm);
+        String sourceLang = TranslationDirections.sourceLanguageName(dirNorm);
+        String targetLang = TranslationDirections.targetLanguageName(dirNorm);
+        String coach = t.localeName();
+        return """
+                Product context: English-learning translation feedback for non-native speakers.
+                Direction: %s
+                STRICT language lock for JSON fields:
+                - summary: entirely in %s
+                - priorities[]: entirely in %s
+                - annotations[].issue: entirely in %s
+                - annotations[].excerpt: quote student text as-is
+                - annotations[].fix: explanation in %s; if you include a corrected translation, that translation text MUST be in %s (separate from the explanation)
+                - referenceAnswer: entirely in %s (no %s commentary inside this field)
+                Never put target-language reference text into summary/priorities/issue.
+                Never put coach-language prose into referenceAnswer.
+                Practice vocabulary: %s
+                Source text (%s):
+                ---
+                %s
+                ---
+                Reference translation (%s; for the examiner; do not copy blindly):
+                ---
+                %s
+                ---
+                Student translation:
+                ---
+                %s
+                ---
+                Return ONE JSON object only (no polishedAnswer).
+                """.formatted(
+                dirLabel,
+                coach, coach, coach, coach, targetLang,
+                targetLang, coach,
+                targetWordsCsv == null ? "" : targetWordsCsv,
+                sourceLang,
+                promptText == null ? "" : promptText,
+                targetLang,
+                referenceAnswer == null ? "" : referenceAnswer,
+                bodyText == null ? "" : bodyText
+        );
+    }
+
+    private String defaultTranslationGradeSystem(String locale) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return t.globalConstraint() + "\n" + """
+                You are an IELTS-oriented translation coach for non-native English learners.
+                Grade the student's translation for accuracy, fluency, and use of the practice vocabulary.
+                Return ONLY one JSON object (no Markdown fences) with keys:
+                - overallBand (number, 0-9, 0.5 steps)
+                - accuracy (number, 0-9)
+                - fluency (number, 0-9)
+                - targetWordUse (number, 0-9; score how well practice vocabulary was used)
+                - summary (short overview; use \\n between sentences)
+                - priorities (array of 3-5 actionable tips)
+                - annotations (array of {excerpt, issue, fix}; only include concrete mistakes with non-empty issue AND fix; omit empty items)
+                - referenceAnswer (strong reference translation in the exercise TARGET language only; use \\n between sentences)
+                Do NOT return polishedAnswer.
+                In Chinese coach replies, say 「练习词汇」 not 「目标词」.
+                Field language lock overrides any global single-language rule: coach fields use {language};
+                referenceAnswer and corrected-translation snippets use the exercise target language.
+                Be specific and fair.
+                """.replace("{language}", t.localeName())
+                + translationGradeLanguageReinforcement(locale);
+    }
+
+    /** 出题：禁止套用「一律用界面语、禁止中文」的通用强化。 */
+    private String translationGenerateLanguageReinforcement(String locale) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return "\n[Translation generate language lock] theme may follow " + t.localeName()
+                + ". promptText MUST be the direction SOURCE language only."
+                + " referenceAnswer MUST be the direction TARGET language only."
+                + " Ignore any global instruction that forces all translations into "
+                + t.localeName()
+                + " or forbids Chinese/Indonesian/Thai/Vietnamese when that language is the exercise target.\n";
+    }
+
+    /** 批改：评语 = 界面语；参考译文/订正例句 = 练习目标语。 */
+    private String translationGradeLanguageReinforcement(String locale) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return "\n[Translation grade language lock] summary, priorities, issue, and fix explanations MUST be in "
+                + t.localeName()
+                + " only."
+                + " referenceAnswer MUST be entirely in the exercise TARGET language"
+                + " (Chinese for en2zh, Indonesian for en2id, Thai for en2th, Vietnamese for en2vi, English for *2en)."
+                + " Corrected translation examples inside fix MUST use that same TARGET language;"
+                + " do not put TARGET-language prose into summary/priorities/issue."
+                + " This lock overrides global \"reply only in one language\" / \"do not use Chinese\" rules.\n";
     }
 
     /**

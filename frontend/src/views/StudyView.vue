@@ -7,6 +7,9 @@
         </t-button>
         <h1>{{ $t('study.sessionTitle') }}</h1>
       </div>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('common.appName') }}</span>
+      </div>
       <div class="header-actions">
         <t-button variant="text" size="small" class="nav-link" @click="router.push('/study/browse')">
           {{ $t('study.browse') }}
@@ -226,10 +229,12 @@ async function openCompletedList() {
 }
 
 .page-header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
+  gap: 12px;
+  padding: 10px 16px 10px 6px;
   background: color-mix(in srgb, var(--brand-white) 72%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
   backdrop-filter: blur(8px);
@@ -238,21 +243,62 @@ async function openCompletedList() {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
+  max-width: min(42%, 160px);
+  flex: 0 1 auto;
+  z-index: 1;
+}
+
+.header-left :deep(.t-button) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.header-left :deep(.t-icon) {
+  font-size: 18px;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.header-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand-ink, #315c34);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 42%;
+  z-index: 1;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 650;
   letter-spacing: 0.02em;
   color: var(--brand-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .back-btn :deep(.t-icon),

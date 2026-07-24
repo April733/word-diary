@@ -56,6 +56,7 @@
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 
@@ -100,6 +101,16 @@ function speak(text: string, accent: 'us' | 'uk' = 'uk') {
   u.lang = accent === 'us' ? 'en-US' : 'en-GB'
   window.speechSynthesis.speak(u)
 }
+
+/** 进入卡片 / 换词时默认播一次（英音） */
+watch(
+  () => props.word?.wordId ?? props.word?.id ?? props.word?.wordProto,
+  (key) => {
+    if (!key || !props.word?.wordProto) return
+    speak(props.word.wordProto, 'uk')
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

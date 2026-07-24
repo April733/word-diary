@@ -11,10 +11,12 @@
       <div class="top-right">
         <AiRegionSwitcher />
         <LocaleSwitcher />
-        <t-button variant="text" class="feedback-link" @click="router.push('/report')">
+        <t-button variant="text" size="small" class="top-action-btn" @click="router.push('/report')">
           {{ $t('login.reportLink') }}
         </t-button>
-        <t-button variant="text" @click="handleLogout">{{ $t('dashboard.logout') }}</t-button>
+        <t-button variant="text" size="small" class="top-action-btn" @click="handleLogout">
+          {{ $t('dashboard.logout') }}
+        </t-button>
       </div>
     </header>
 
@@ -42,11 +44,26 @@
       </section>
 
       <nav class="nav">
-        <button type="button" @click="router.push('/study')">{{ $t('study.sessionTitle') }}</button>
-        <button type="button" @click="router.push('/plan')">{{ $t('study.planOverviewTitle') }}</button>
-        <button type="button" @click="router.push('/notebooks')">{{ $t('nav.wordbook') }}</button>
-        <button type="button" @click="router.push('/bookshelf')">{{ $t('bookshelf.title') }}</button>
-        <button type="button" @click="router.push('/writing')">{{ $t('nav.writing') }}</button>
+        <button type="button" @click="router.push('/study')">
+          <t-icon name="calendar" size="18px" class="nav-icon" />
+          <span>{{ $t('study.sessionTitle') }}</span>
+        </button>
+        <button type="button" @click="router.push('/translation')">
+          <t-icon name="translate" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.translation') }}</span>
+        </button>
+        <button type="button" @click="router.push('/writing')">
+          <t-icon name="edit" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.writing') }}</span>
+        </button>
+        <button type="button" @click="router.push('/notebooks')">
+          <t-icon name="root-list" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.wordbook') }}</span>
+        </button>
+        <button type="button" @click="router.push('/bookshelf')">
+          <t-icon name="book-open" size="18px" class="nav-icon" />
+          <span>{{ $t('bookshelf.title') }}</span>
+        </button>
       </nav>
     </main>
   </div>
@@ -165,8 +182,15 @@ function handleLogout() {
   max-width: min(100%, 420px);
 }
 
-.feedback-link {
-  color: #315C34;
+.top-action-btn {
+  color: var(--td-text-color-secondary);
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.top-action-btn:hover {
+  color: var(--td-text-color-primary);
+  background: transparent;
 }
 
 .body {
@@ -215,6 +239,9 @@ function handleLogout() {
 }
 
 .nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 14px 0;
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 50%, var(--brand-white));
@@ -225,8 +252,18 @@ function handleLogout() {
   color: #333;
 }
 
+.nav-icon {
+  flex-shrink: 0;
+  color: var(--brand-ink);
+  opacity: 0.72;
+}
+
 .nav button:hover {
   color: var(--brand-ink);
+}
+
+.nav button:hover .nav-icon {
+  opacity: 1;
 }
 
 @media (max-width: 480px) {

@@ -1,5 +1,5 @@
 <template>
-  <div class="reader-layout">
+  <div class="reader-layout" :class="{ 'is-portrait': isPortrait }">
     <!-- 顶部栏 -->
     <header class="reader-header">
       <div class="header-left">
@@ -12,36 +12,57 @@
         <span class="header-brand">{{ $t('reader.aiAssistant') }}</span>
       </div>
       <div class="header-right">
-        <div class="header-notebooks">
-          <t-button
-            variant="outline"
-            size="small"
-            :title="activeNotebook?.notebookName || $t('reader.notebookLinkTitle')"
-            @click="onHeaderNotebookClick"
-          >
-            <template #icon><t-icon name="book" /></template>
+        <t-button
+          variant="outline"
+          size="small"
+          class="header-action-btn"
+          :title="activeNotebook?.notebookName || $t('reader.notebookLinkTitle')"
+          @click="onHeaderNotebookClick"
+        >
+          <template #icon><t-icon name="book" /></template>
+          <span class="header-action-label">
             {{
               activeNotebook
                 ? truncate(activeNotebook.notebookName, 14)
                 : $t('reader.notebookLinkTitle')
             }}
-          </t-button>
-          <t-button variant="outline" size="small" @click="openOperationGuide">
-            <template #icon><t-icon name="info-circle" /></template>
-            {{ $t('reader.operationGuide') }}
-          </t-button>
-        </div>
-        <t-button variant="outline" size="small" @click="showSettings = true">
+          </span>
+        </t-button>
+        <t-button
+          variant="outline"
+          size="small"
+          class="header-action-btn"
+          @click="openOperationGuide"
+        >
+          <template #icon><t-icon name="info-circle" /></template>
+          <span class="header-action-label">{{ $t('reader.operationGuide') }}</span>
+        </t-button>
+        <t-button
+          variant="outline"
+          size="small"
+          class="header-action-btn"
+          @click="showSettings = true"
+        >
           <template #icon><t-icon name="setting" /></template>
-          {{ $t('reader.readingSettings') }}
+          <span class="header-action-label">{{ $t('reader.readingSettings') }}</span>
         </t-button>
       </div>
     </header>
 
+    <div v-if="isPortrait" class="portrait-hint" role="status">
+      <t-icon name="info-circle" size="16px" />
+      <span>{{ $t('reader.portraitHint') }}</span>
+    </div>
+
     <!-- 主体三栏 -->
     <div class="reader-body" :class="{ resizing: isResizing }">
-      <!-- 左侧：目录 -->
-      <div class="sidebar-toc-wrapper" :class="{ collapsed: !showToc }" :style="tocWrapperStyle">
+      <!-- 左侧：目录（竖屏隐藏） -->
+      <div
+        v-show="!isPortrait"
+        class="sidebar-toc-wrapper"
+        :class="{ collapsed: !showToc }"
+        :style="tocWrapperStyle"
+      >
         <aside class="sidebar-toc" v-show="showToc">
           <div class="sidebar-title">{{ $t('reader.toc') }}</div>
           <div class="toc-list" v-if="toc.length > 0">
@@ -66,7 +87,7 @@
         </button>
       </div>
 
-      <div class="resize-handle resize-handle-left" v-if="showToc" @mousedown="startResizeToc" />
+      <div class="resize-handle resize-handle-left" v-if="showToc && !isPortrait" @mousedown="startResizeToc" />
 
       <!-- 中间：阅读区 -->
       <main class="reader-main" ref="readerContainer">
@@ -107,10 +128,15 @@
         </div>
       </main>
 
-      <div class="resize-handle resize-handle-right" v-if="showAi" @mousedown="startResizeAi" />
+      <div class="resize-handle resize-handle-right" v-if="showAi && !isPortrait" @mousedown="startResizeAi" />
 
-      <!-- 右侧：AI 对话框 -->
-      <div class="sidebar-ai-wrapper" :class="{ collapsed: !showAi }" :style="aiWrapperStyle">
+      <!-- 右侧：AI 对话框（竖屏隐藏） -->
+      <div
+        v-show="!isPortrait"
+        class="sidebar-ai-wrapper"
+        :class="{ collapsed: !showAi }"
+        :style="aiWrapperStyle"
+      >
         <button
           class="ai-toggle-btn"
           @click="toggleAi"
@@ -504,6 +530,13 @@ const notedPages = ref<number[]>([])
 const notedChapterIndexes = ref<Set<number>>(new Set())
 const showToc = ref(true)
 const showAi = ref(true)
+/** 竖屏：只留图书，隐藏目录与 AI */
+const isPortrait = ref(false)
+let orientationMq: MediaQueryList | null = null
+
+function syncPortraitMode() {
+  isPortrait.value = orientationMq?.matches ?? false
+}
 
 // 三栏宽度与拖拽调整
 const tocWidth = ref(200)
@@ -515,11 +548,13 @@ const MAX_AI_WIDTH = 600
 const isResizing = ref(false)
 
 const tocWrapperStyle = computed(() => {
+  if (isPortrait.value) return { width: '0' }
   if (!showToc.value) return { width: '32px' }
   return { width: tocWidth.value + 'px' }
 })
 
 const aiWrapperStyle = computed(() => {
+  if (isPortrait.value) return { width: '0' }
   if (!showAi.value) return { width: '32px' }
   return { width: aiWidth.value + 'px' }
 })
@@ -573,10 +608,12 @@ function startResizeAi(e: MouseEvent) {
 }
 
 function toggleToc() {
+  if (isPortrait.value) return
   showToc.value = !showToc.value
 }
 
 function toggleAi() {
+  if (isPortrait.value) return
   showAi.value = !showAi.value
 }
 
@@ -1511,6 +1548,9 @@ function clearAllHighlights() {
 
 onMounted(async () => {
   console.log('[Reader] onMounted 开始, bookId:', bookId)
+  orientationMq = window.matchMedia('(orientation: portrait)')
+  syncPortraitMode()
+  orientationMq.addEventListener('change', syncPortraitMode)
   // 优先加载书籍，避免 AI 会话/设置请求拖死正文
   await loadBook()
   console.log('[Reader] loadBook 完成, book:', !!book.value, 'fileType:', book.value?.fileType)
@@ -1534,6 +1574,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  orientationMq?.removeEventListener('change', syncPortraitMode)
+  orientationMq = null
   if (settingsSaveTimer) clearTimeout(settingsSaveTimer)
   if (rendition) {
     const keyHandler = (rendition as any).__keyHandler
@@ -2742,9 +2784,30 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
   overflow: hidden;
 }
 
+.portrait-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--brand-lizard, #a8b59f) 28%, #f6f0e6);
+  color: var(--brand-ink, #315c34);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard, #a8b59f) 35%, transparent);
+}
+
+.reader-layout.is-portrait .reader-main {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
 .reader-header {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
@@ -2758,7 +2821,7 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  max-width: 50%;
+  max-width: 100%;
   overflow: hidden;
   justify-self: start;
 }
@@ -2793,17 +2856,74 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
   justify-content: flex-end;
   justify-self: end;
-}
-
-.header-notebooks {
-  display: flex;
-  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.header-action-btn {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.header-action-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12em;
+}
+
+.reader-layout.is-portrait .reader-header {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.reader-layout.is-portrait .header-left {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.reader-layout.is-portrait .header-left .book-title-header {
+  display: none;
+}
+
+.reader-layout.is-portrait .header-center {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  justify-self: unset;
+}
+
+.reader-layout.is-portrait .header-brand {
+  font-size: 16px;
+}
+
+.reader-layout.is-portrait .header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  max-width: min(62%, 240px);
+}
+
+.reader-layout.is-portrait .header-action-btn {
+  width: auto;
+  max-width: 100%;
+}
+
+.reader-layout.is-portrait .header-action-label {
+  max-width: 9.5em;
 }
 
 .reader-body {

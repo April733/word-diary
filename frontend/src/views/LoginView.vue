@@ -40,7 +40,7 @@
         </t-form>
         <p class="card-foot">
           {{ $t('login.noAccount') }}
-          <button type="button" class="link-btn" @click="tab = 'register'">{{ $t('login.goRegister') }}</button>
+          <button type="button" class="link-btn go-register" @click="tab = 'register'">{{ $t('login.goRegister') }}</button>
           <span class="foot-sep">·</span>
           <router-link class="link-btn terms-link" to="/terms">{{ $t('login.termsLink') }}</router-link>
           <span class="foot-sep">·</span>
@@ -878,6 +878,17 @@ async function handleForgotPassword() {
   text-align: center;
   font-size: 13px;
   color: color-mix(in srgb, #315C34 50%, #F6F0E6);
+}
+
+.card-foot .go-register {
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.card-foot .terms-link {
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .panel-hint {

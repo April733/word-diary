@@ -27,6 +27,12 @@ public final class SysConfigKeys {
     /** 雅思写作：评分批改 + 润色/示范范文 */
     public static final String AI_SCENE_WRITING_GRADE = "writing_grade";
 
+    /** 翻译练习：根据已学词出题 */
+    public static final String AI_SCENE_TRANSLATION_GENERATE = "translation_generate";
+
+    /** 翻译练习：批改用户译文 */
+    public static final String AI_SCENE_TRANSLATION_GRADE = "translation_grade";
+
     /** 未匹配场景时的回退 */
     public static final String AI_SCENE_DEFAULT = "default";
 }

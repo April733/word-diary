@@ -8,7 +8,10 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * AI 对话会话表（wd_ai_session）：保存阅读助手等多轮对话的会话元数据。
+ * AI 对话会话表（wd_ai_session）。
+ * <p>
+ * 保存阅读器助手等多轮对话的会话元数据（按用户、可选按书隔离）。
+ * 消息正文见 wd_ai_message；与翻译/写作练习稿表拆分。
  */
 @Data
 @Builder

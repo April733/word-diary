@@ -7,19 +7,23 @@
         </t-button>
         <h1>{{ $t('bookshelf.title') }}</h1>
       </div>
-      <t-upload
-        :auto-upload="false"
-        accept=".epub,.pdf"
-        :before-upload="beforeUpload"
-        @change="handleFileChange"
-        :show-upload-list="false"
-        :disabled="uploading || atBookLimit"
-      >
-        <t-button theme="primary" :disabled="uploading || atBookLimit">
-          <template #icon><t-icon name="add" /></template>
-          {{ $t('bookshelf.import') }}
-        </t-button>
-      </t-upload>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('common.appName') }}</span>
+      </div>
+      <div class="header-actions">
+        <t-upload
+          :auto-upload="false"
+          accept=".epub,.pdf"
+          :before-upload="beforeUpload"
+          @change="handleFileChange"
+          :show-upload-list="false"
+          :disabled="uploading || atBookLimit"
+        >
+          <t-button variant="text" size="small" class="nav-link" :disabled="uploading || atBookLimit">
+            {{ $t('bookshelf.import') }}
+          </t-button>
+        </t-upload>
+      </div>
     </header>
 
     <div class="page-body">
@@ -61,11 +65,31 @@
               </span>
             </div>
             <div class="book-actions">
-              <t-button variant="text" size="small" theme="primary" @click.stop="openBook(book.id)">
-                {{ $t('bookshelf.read') }}
+              <t-button
+                variant="text"
+                size="small"
+                theme="primary"
+                shape="square"
+                class="action-icon"
+                :title="$t('bookshelf.read')"
+                :aria-label="$t('bookshelf.read')"
+                @click.stop="openBook(book.id)"
+              >
+                <template #icon><t-icon name="browse" size="16px" /></template>
               </t-button>
               <t-popconfirm :content="$t('bookshelf.deleteConfirm')" @confirm="handleDelete(book.id)">
-                <t-button variant="text" size="small" theme="danger" @click.stop>{{ $t('common.delete') }}</t-button>
+                <t-button
+                  variant="text"
+                  size="small"
+                  theme="danger"
+                  shape="square"
+                  class="action-delete"
+                  :title="$t('common.delete')"
+                  :aria-label="$t('common.delete')"
+                  @click.stop
+                >
+                  <template #icon><t-icon name="delete" size="16px" /></template>
+                </t-button>
               </t-popconfirm>
             </div>
           </div>
@@ -203,25 +227,84 @@ async function handleDelete(bookId: number) {
 .page {
   min-height: 100vh;
   background: transparent;
+  color: var(--brand-ink);
 }
 
 .page-header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  gap: 12px;
+  padding: 10px 16px 10px 6px;
+  background: color-mix(in srgb, var(--brand-white) 72%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
+  max-width: min(42%, 160px);
+  flex: 0 1 auto;
+  z-index: 1;
+}
+
+.header-left :deep(.t-button) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.header-left :deep(.t-icon) {
+  font-size: 18px;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.header-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand-ink, #315c34);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 42%;
+  z-index: 1;
 }
 
 .page-header h1 {
-  font-size: 20px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--brand-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-link {
+  color: var(--brand-ink) !important;
 }
 
 .page-body {
@@ -354,6 +437,26 @@ async function handleDelete(bookId: number) {
 
 .book-actions {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-icon {
+  border-radius: 6px !important;
+  color: var(--brand-ink, #315c34) !important;
+}
+
+.action-icon:hover {
+  background: color-mix(in srgb, var(--brand-lizard, #a8b59f) 22%, transparent) !important;
+}
+
+.action-delete {
+  border-radius: 6px !important;
+  color: color-mix(in srgb, #d54941 82%, #888) !important;
+}
+
+.action-delete:hover {
+  background: color-mix(in srgb, #d54941 8%, transparent) !important;
+  color: #d54941 !important;
 }
 </style>

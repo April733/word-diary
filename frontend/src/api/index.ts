@@ -272,6 +272,32 @@ export const uploadWritingPromptImage = (id: number, file: File) => {
 export const clearWritingPromptImage = (id: number) =>
   api.delete(`/writing/${id}/prompt-image`)
 
+// Translation practice (learned words)
+export const getTranslationPool = (poolMode: 'learned' | 'mastered' = 'learned') =>
+  api.get('/translation/pool', { params: { poolMode } })
+export const listTranslationPractices = () => api.get('/translation')
+export const createTranslationPractice = (data: {
+  title?: string
+  direction: string
+  poolMode: 'learned' | 'mastered'
+  pickMode?: 'random' | 'manual'
+  wordCount?: number
+  wordIds?: number[]
+}) => api.post('/translation', data)
+export const getTranslationPractice = (id: number) => api.get(`/translation/${id}`)
+export const saveTranslationPractice = (
+  id: number,
+  data: { title?: string; bodyText?: string }
+) => api.put(`/translation/${id}`, data)
+export const regenerateTranslationPractice = (id: number, direction: string) =>
+  api.post(`/translation/${id}/regenerate`, { direction }, { timeout: 180000 })
+export const updateTranslationWords = (id: number, wordIds: number[]) =>
+  api.put(`/translation/${id}/words`, { wordIds })
+export const deleteTranslationPractice = (id: number) => api.delete(`/translation/${id}`)
+export const gradeTranslationPractice = (id: number) =>
+  api.post(`/translation/${id}/grade`, null, { timeout: 180000 })
+export const listTranslationGrades = (id: number) => api.get(`/translation/${id}/grades`)
+
 // Book ↔ Notebook links & collect
 export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)
 export const collectBookWords = (bookId: number, data: any) =>

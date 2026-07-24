@@ -1,12 +1,16 @@
 <template>
   <div class="page">
     <header class="page-header">
-      <div>
+      <div class="header-left">
         <t-button variant="text" @click="router.push('/study')">
           <template #icon><t-icon name="chevron-left" /></template>
         </t-button>
         <h1>{{ $t('study.browseTitle') }}</h1>
       </div>
+      <div class="header-center">
+        <span class="header-brand">{{ $t('common.appName') }}</span>
+      </div>
+      <div class="header-right" aria-hidden="true" />
     </header>
 
     <div class="page-body">
@@ -108,19 +112,71 @@ function nextWord() {
 }
 
 .page-header {
-  padding: 16px 24px;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px 10px 6px;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
 
-.page-header > div {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  min-width: 0;
+  max-width: min(42%, 160px);
+  flex: 0 1 auto;
+  z-index: 1;
+}
+
+.header-left :deep(.t-button) {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.header-left :deep(.t-icon) {
+  font-size: 18px;
+}
+
+.header-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.header-brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand-ink, #315c34);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 0 0 auto;
+  max-width: 42%;
+  z-index: 1;
 }
 
 .page-header h1 {
-  font-size: 20px;
+  font-size: 15px;
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: 0.02em;
 }
 
 .page-body {

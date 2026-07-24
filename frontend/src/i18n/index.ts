@@ -40,7 +40,7 @@ export function setStoredLocale(locale: SupportedLocale) {
 const i18n = createI18n({
   legacy: false,
   locale: getStoredLocale(),
-  fallbackLocale: 'zh-CN',
+  fallbackLocale: 'en',
   messages: {
     'zh-CN': zhCN,
     en,

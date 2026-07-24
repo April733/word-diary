@@ -8,7 +8,10 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * AI 对话消息表（wd_ai_message）：保存会话内用户与助手的单条消息。
+ * AI 对话消息表（wd_ai_message）。
+ * <p>
+ * 保存阅读器会话内用户与助手的单条消息（自由问答、选中解析等）。
+ * 所属会话见 wd_ai_session；与翻译/写作练习稿表拆分。
  */
 @Data
 @Builder
@@ -31,7 +34,7 @@ public class WdAiMessage {
     /** 消息内容 */
     private String content;
 
-    /** 触发此消息的 AI 功能标识（可空，如 word / collocation） */
+    /** 触发此消息的 AI 功能标识（可空，如 reading_chat / word / collocation） */
     private String featureKey;
 
     /** 创建时间 */
