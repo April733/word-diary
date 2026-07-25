@@ -323,6 +323,31 @@ public class AiPromptBuilder {
     }
 
     /**
+     * 翻译答疑 system prompt：以当前批改记录为上下文，也允许通用语言学习提问。
+     */
+    public String buildTranslationChatPrompt(String locale, String practiceContext) {
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_CHAT, locale);
+        if (fromDb != null) {
+            return applyPlaceholders(fromDb, practiceContext, "", locale) + replyLanguageReinforcement(locale);
+        }
+        PromptTemplate t = getTemplateByLocale(locale);
+        String base = t.globalConstraint() + "\n"
+                + "You are Aiko, a translation coach. Answer language-learning questions "
+                + "(this practice, vocab differences, grammar, usage, tips). "
+                + "General English Q&A is OK; refuse only clearly off-topic requests.\n"
+                + "Reply in " + t.localeName() + ".";
+        if (practiceContext != null && !practiceContext.isBlank()) {
+            base += "\nCurrent practice record (context when relevant):\n---\n" + practiceContext + "\n---";
+        }
+        return base + replyLanguageReinforcement(locale);
+    }
+
+    public String buildTranslationChatUserPrompt(String locale, String question) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return String.format(t.readingAssistantUserPrefix(), question);
+    }
+
+    /**
      * 雅思写作批改 system prompt。优先 sys_ai_scene_prompt(writing_grade)；占位符 {task_type}。
      */
     public String buildWritingGradeSystemPrompt(Long userId, String taskType) {
@@ -629,13 +654,17 @@ public class AiPromptBuilder {
 
     /**
      * 语言学习范围约束：拒答与阅读/词汇/语法等无关的问题，并给出友好提示文案。
+     * 词汇辨析、语法、用法、发音、翻译技巧、本题追问均算相关。
      */
     public String languageLearningScopeInstruction(String locale) {
         String loc = AiFeatureI18nSupport.normalizeLocale(locale);
         if (AiFeatureI18nSupport.isChinese(loc)) {
-            return "\n【范围】仅回答语言学习相关问题；无关则只回复：抱歉，我是 Aiko 语言学习助手，请换个英语学习相关问题～\n";
+            return "\n【范围】回答语言学习相关问题（含词汇辨析如 there/those、语法、用法、发音、翻译技巧、本题批改追问）；"
+                    + "与语言学习无关则只回复：抱歉，我是 Aiko 语言学习助手，请换个英语学习相关问题～\n";
         }
-        return "\n[Scope] Language-learning only. If off-topic, reply briefly that Aiko only helps with language learning.\n";
+        return "\n[Scope] Language-learning only (vocab differences e.g. there/those, grammar, usage, "
+                + "pronunciation, translation tips, and follow-ups on this practice). "
+                + "If clearly off-topic, reply briefly that Aiko only helps with language learning.\n";
     }
 
     /** 按 locale 取功能行并解析展示名；不修改 Mapper 缓存对象。 */

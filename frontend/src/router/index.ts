@@ -61,6 +61,24 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/study-duration',
+      name: 'StudyDuration',
+      component: () => import('../views/StudyDurationView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/shadowing',
+      name: 'Shadowing',
+      component: () => import('../views/ShadowingListView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/shadowing/:id',
+      name: 'ShadowingPlayer',
+      component: () => import('../views/ShadowingPlayerView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/bookshelf',
       name: 'Bookshelf',
       component: () => import('../views/BookshelfView.vue'),

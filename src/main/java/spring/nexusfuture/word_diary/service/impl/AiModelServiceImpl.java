@@ -6,6 +6,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import spring.nexusfuture.word_diary.common.AiBillingUnits;
 import spring.nexusfuture.word_diary.common.AiRegions;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
@@ -235,18 +236,36 @@ public class AiModelServiceImpl implements AiModelService {
         if (scene == null) {
             throw new BizException("未配置 AI 场景: " + key + " / " + routingRegion + "（请在「场景绑定」维护）");
         }
+        return toEndpoint(scene, key, routingRegion);
+    }
+
+    @Override
+    public ResolvedAiEndpoint requireEndpointForSceneExact(String sceneKey, String region) {
+        if (sceneKey == null || sceneKey.isBlank()) {
+            throw new BizException("场景不能为空");
+        }
+        String key = sceneKey.trim();
+        String routingRegion = AiRegions.normalizeRoutingRegion(region);
+        SysAiScene scene = findScene(key, routingRegion);
+        if (scene == null) {
+            throw new BizException("未配置 AI 场景: " + key + " / " + routingRegion + "（请在「场景绑定」维护，勿回退 default）");
+        }
+        return toEndpoint(scene, key, routingRegion);
+    }
+
+    private ResolvedAiEndpoint toEndpoint(SysAiScene scene, String sceneKey, String routingRegion) {
         if (scene.getModelKey() == null || scene.getModelKey().isBlank()) {
-            throw new BizException("场景 " + key + "（" + routingRegion + "）未绑定模型");
+            throw new BizException("场景 " + sceneKey + "（" + routingRegion + "）未绑定模型");
         }
         SysAiModel model = modelMapper.selectEnabledByModelKey(scene.getModelKey().trim());
         if (model == null) {
             model = modelMapper.selectByModelKey(scene.getModelKey().trim());
         }
         if (model == null) {
-            throw new BizException("场景 " + key + " 绑定的模型不存在: " + scene.getModelKey());
+            throw new BizException("场景 " + sceneKey + " 绑定的模型不存在: " + scene.getModelKey());
         }
         if (model.getIsEnabled() != null && model.getIsEnabled() == 0) {
-            throw new BizException("场景 " + key + " 绑定的模型已停用: " + model.getModelKey());
+            throw new BizException("场景 " + sceneKey + " 绑定的模型已停用: " + model.getModelKey());
         }
         String provider = model.getProvider() != null ? model.getProvider().trim() : "";
         if (provider.isBlank()) {
@@ -379,6 +398,10 @@ public class AiModelServiceImpl implements AiModelService {
         if (model == null) {
             return BigDecimal.ZERO.setScale(8, RoundingMode.HALF_UP);
         }
+        // ASR 等按秒计费模型：token 估算不适用
+        if (AiBillingUnits.isSecond(model.getBillingUnit())) {
+            return BigDecimal.ZERO.setScale(8, RoundingMode.HALF_UP);
+        }
         BigDecimal inPrice = model.getInputPricePerMillion() != null
                 ? model.getInputPricePerMillion() : BigDecimal.ZERO;
         BigDecimal outPrice = model.getOutputPricePerMillion() != null
@@ -434,13 +457,14 @@ public class AiModelServiceImpl implements AiModelService {
             throw new BizException("供应商不存在或已停用: " + model.getProvider()
                     + "（请先在「供应商」中新增并启用）");
         }
+        model.setBillingUnit(AiBillingUnits.normalize(model.getBillingUnit()));
         if (model.getCurrency() == null || model.getCurrency().isBlank()) {
             model.setCurrency("CNY");
         }
         if (model.getInputPricePerMillion() == null) {
             model.setInputPricePerMillion(BigDecimal.ZERO);
         }
-        if (model.getOutputPricePerMillion() == null) {
+        if (model.getOutputPricePerMillion() == null || AiBillingUnits.isSecond(model.getBillingUnit())) {
             model.setOutputPricePerMillion(BigDecimal.ZERO);
         }
         if (model.getSortNum() == null) {

@@ -514,6 +514,10 @@ import {
   syncProgress,
 } from '../utils/offlineSync'
 import { aiRegionHeaders } from '../utils/aiRegion'
+import {
+  createStudyDurationTracker,
+  type StudyDurationTracker
+} from '../utils/studyDurationTracker'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
 
@@ -521,6 +525,9 @@ const route = useRoute()
 const router = useRouter()
 const { t, te, locale } = useI18n()
 const bookId = Number(route.params.id)
+
+/** 阅读有效时长分段（切标签/空闲结段；对用户不可见） */
+let studyDurationTracker: StudyDurationTracker | null = null
 
 const book = ref<any>(null)
 const toc = ref<any[]>([])
@@ -1109,15 +1116,24 @@ type SseHandlers = {
   onAnalyzeResult?: (payload: AiAnalyzeResult) => void
 }
 
-function parseSseEventBlock(eventBlock: string): { eventType: string; dataLines: string[] } {
+/**
+ * @param keepDataLeadingSpace Aiko 问答专用：Spring 发 data:<payload> 无协议空格，
+ *   模型分片常以空格开头（" Bedouin"），剥掉会丢词间空格。
+ *   解析场景勿开：解析不拼 chunk 正文，展示走 analyze-result，保持原逻辑。
+ */
+function parseSseEventBlock(
+  eventBlock: string,
+  options?: { keepDataLeadingSpace?: boolean }
+): { eventType: string; dataLines: string[] } {
   let eventType = ''
   const dataLines: string[] = []
+  const keepSpace = !!options?.keepDataLeadingSpace
   for (const line of eventBlock.split('\n')) {
     if (line.startsWith('event:')) eventType = line.substring('event:'.length).trim()
     else if (line.startsWith('data:')) {
-      // SSE：data: 后可选一个前导空格，需去掉
       let data = line.substring('data:'.length)
-      if (data.startsWith(' ')) data = data.slice(1)
+      // 默认仍按 HTML SSE「data: 后可选一空格」剥离；仅问答保留
+      if (!keepSpace && data.startsWith(' ')) data = data.slice(1)
       dataLines.push(data)
     }
   }
@@ -1172,9 +1188,13 @@ function unwrapSseJson(rawData: string): any {
   return cur
 }
 
-function processSseEventBlock(eventBlock: string, handlers: SseHandlers) {
+function processSseEventBlock(
+  eventBlock: string,
+  handlers: SseHandlers,
+  options?: { keepDataLeadingSpace?: boolean }
+) {
   if (!eventBlock.trim()) return
-  const { eventType, dataLines } = parseSseEventBlock(eventBlock)
+  const { eventType, dataLines } = parseSseEventBlock(eventBlock, options)
   dispatchSseEvent(eventType, dataLines, handlers)
 }
 
@@ -1555,6 +1575,12 @@ onMounted(async () => {
   await loadBook()
   console.log('[Reader] loadBook 完成, book:', !!book.value, 'fileType:', book.value?.fileType)
   if (book.value) {
+    studyDurationTracker = createStudyDurationTracker({
+      actionType: 'reading',
+      refTable: 'wd_book',
+      refId: bookId,
+      root: readerContainer.value || undefined
+    })
     if (book.value.fileType === 'pdf') {
       console.log('[Reader] 检测到 PDF，由 PdfReader 组件初始化')
     } else {
@@ -1574,6 +1600,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  studyDurationTracker?.dispose()
+  studyDurationTracker = null
   orientationMq?.removeEventListener('change', syncPortraitMode)
   orientationMq = null
   if (settingsSaveTimer) clearTimeout(settingsSaveTimer)
@@ -1950,6 +1978,7 @@ function mountRendition(initialCfi?: string) {
 
   // 监听章节切换
   rendition.on('relocated', (location: Location) => {
+    studyDurationTracker?.noteActivity()
     if (location.start) {
       const spineIndex = location.start.index ?? 0
       const cfi = location.start.cfi
@@ -2474,11 +2503,12 @@ async function sendAiMessage() {
       const events = buffer.split('\n\n')
       buffer = events.pop() || ''
       for (const eventBlock of events) {
-        processSseEventBlock(eventBlock, sseHandlers)
+        // 仅 Aiko 问答保留 data 前导空格；解析路径不走这里
+        processSseEventBlock(eventBlock, sseHandlers, { keepDataLeadingSpace: true })
       }
     }
     if (buffer.trim()) {
-      processSseEventBlock(buffer.trim(), sseHandlers)
+      processSseEventBlock(buffer.trim(), sseHandlers, { keepDataLeadingSpace: true })
     }
   } catch (e: any) {
     aiMessages.value.push({ role: 'assistant', content: t('login.error') + ': ' + e.message })

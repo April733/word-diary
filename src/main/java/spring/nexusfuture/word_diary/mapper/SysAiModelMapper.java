@@ -20,15 +20,15 @@ public interface SysAiModelMapper {
     @Select("SELECT * FROM sys_ai_model WHERE model_key = #{modelKey} AND is_deleted = 0 AND is_enabled = 1 LIMIT 1")
     SysAiModel selectEnabledByModelKey(String modelKey);
 
-    @Insert("INSERT INTO sys_ai_model(model_key, display_name, provider, currency, " +
+    @Insert("INSERT INTO sys_ai_model(model_key, display_name, provider, billing_unit, currency, " +
             "input_price_per_million, output_price_per_million, sort_num, is_enabled, remark, create_time, update_time) " +
-            "VALUES(#{modelKey}, #{displayName}, #{provider}, #{currency}, " +
+            "VALUES(#{modelKey}, #{displayName}, #{provider}, #{billingUnit}, #{currency}, " +
             "#{inputPricePerMillion}, #{outputPricePerMillion}, #{sortNum}, #{isEnabled}, #{remark}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(SysAiModel model);
 
     @Update("UPDATE sys_ai_model SET model_key=#{modelKey}, display_name=#{displayName}, provider=#{provider}, " +
-            "currency=#{currency}, input_price_per_million=#{inputPricePerMillion}, " +
+            "billing_unit=#{billingUnit}, currency=#{currency}, input_price_per_million=#{inputPricePerMillion}, " +
             "output_price_per_million=#{outputPricePerMillion}, sort_num=#{sortNum}, is_enabled=#{isEnabled}, " +
             "remark=#{remark}, update_time=NOW() WHERE id=#{id} AND is_deleted=0")
     int update(SysAiModel model);

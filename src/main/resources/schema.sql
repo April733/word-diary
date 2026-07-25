@@ -317,7 +317,11 @@ INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`
 ('study.review_unlock_hour', '7', 'int', 'study',
  '今日到期的复习任务从几点开始出现在「今日复习」列表（0-23）。常见取值 7 或 8；修改后立即生效。', 1),
 ('study.daily_new_limit_default', '20', 'int', 'study',
- '用户未单独设置时的默认「每日新词」上限（预留，学习改造时使用）。', 2);
+ '用户未单独设置时的默认「每日新词」上限（预留，学习改造时使用）。', 2),
+('study.idle_timeout_seconds', '60', 'int', 'study',
+ '阅读等场景无操作超过该秒数视为离线并结段（不对用户暴露，默认60）。', 3),
+('study.min_valid_seconds', '120', 'int', 'study',
+ '进入埋点页后前端先本地计时；停留满该秒数才写入时长表，未满则丢弃（不对用户暴露，默认120）。', 4);
 
 -- =============================================
 -- AI 阅读功能配置表（可动态扩展的功能选项）
@@ -373,13 +377,15 @@ CREATE TABLE IF NOT EXISTS `wd_ai_session` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `user_id` bigint NOT NULL COMMENT '所属用户ID',
   `book_id` bigint DEFAULT NULL COMMENT '关联书籍ID，按书隔离会话',
+  `grade_id` bigint DEFAULT NULL COMMENT '翻译批改记录ID，按练习记录隔离答疑',
   `title` varchar(256) NOT NULL DEFAULT '新对话' COMMENT '会话标题',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
   KEY `idx_user_book` (`user_id`, `book_id`),
-  KEY `idx_user_book_time` (`user_id`, `book_id`, `update_time` DESC)
+  KEY `idx_user_book_time` (`user_id`, `book_id`, `update_time` DESC),
+  KEY `idx_user_grade` (`user_id`, `grade_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI对话会话表';
 
 -- =============================================
@@ -512,6 +518,49 @@ CREATE TABLE IF NOT EXISTS `wd_writing_essay_grade` (
   PRIMARY KEY (`id`),
   KEY `idx_essay_id` (`essay_id`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='写作批改历史';
+
+-- =============================================
+-- 学习时长分段（进入/暂停/空闲/退出各结一段）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_study_duration` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `action_type` varchar(32) NOT NULL COMMENT '行为 reading|study|translation|writing',
+  `ref_table` varchar(64) DEFAULT NULL COMMENT '关联业务表名，今日背诵可空',
+  `ref_id` bigint DEFAULT NULL COMMENT '关联业务表主键，今日背诵可空',
+  `start_time` datetime NOT NULL COMMENT '本段开始时间',
+  `end_time` datetime DEFAULT NULL COMMENT '本段结束时间，未结束为空',
+  `duration_seconds` int DEFAULT NULL COMMENT '间隔秒数',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_start` (`user_id`, `start_time`),
+  KEY `idx_user_open` (`user_id`, `end_time`),
+  KEY `idx_ref` (`ref_table`, `ref_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习时长分段';
+
+-- =============================================
+-- 跟读音频（ASR 台词，与阅读无关）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_shadowing_clip` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
+  `audio_key` varchar(512) NOT NULL COMMENT '音频COS key',
+  `audio_mime` varchar(64) DEFAULT NULL COMMENT 'MIME',
+  `original_name` varchar(255) DEFAULT NULL COMMENT '原始文件名',
+  `file_size` bigint NOT NULL DEFAULT 0 COMMENT '字节',
+  `duration_ms` int NOT NULL DEFAULT 0 COMMENT '时长毫秒',
+  `asr_status` varchar(16) NOT NULL DEFAULT 'pending' COMMENT 'pending|processing|ready|failed',
+  `asr_error` varchar(512) DEFAULT NULL COMMENT '失败原因',
+  `transcript_json` mediumtext COMMENT '台词JSON [{text,startMs,endMs}]',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_update` (`user_id`, `update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='跟读音频篇（ASR台词）';
 
 -- =============================================
 -- AI 场景系统提示词（按 locale 可配置，覆盖代码默认）

@@ -40,3 +40,8 @@ app:
         api-key: ${MODELSCOPE_API_KEY:sk-placeholder}
         # 官方文档为 .../v1；代码会去掉尾部 /v1，再由 Spring AI 追加
         base-url: https://api-inference.modelscope.cn/v1
+
+  # 跟读 ASR 轮询（模型与密钥在管理后台「模型与场景」：shadowing_asr → paraformer-v2 / aliyun）
+  asr:
+    poll-interval-ms: 2000
+    poll-timeout-ms: 300000

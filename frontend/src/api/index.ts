@@ -122,6 +122,25 @@ export const getBrowseWords = (params?: { notebookId?: number; page?: number; pa
 export const submitBrowseAnswer = (data: { wordId: number; feedback: number }) =>
   api.post('/study-plan/browse/answer', data)
 export const getStats = () => api.get('/study-plan/stats')
+
+/** 学习时长埋点配置（空闲超时 / 最短入库秒数，不对用户展示） */
+export const getStudyDurationConfig = (config?: SoftRequestConfig) =>
+  api.get('/study-duration/config', { soft: true, ...config })
+
+/** 学习时长：本地计时达标后一次性入库 */
+export const commitStudyDuration = (data: {
+  actionType?: string
+  refTable?: string
+  refId?: number
+  startTime: string
+  endTime: string
+  durationSeconds: number
+}, config?: SoftRequestConfig) => api.post('/study-duration/commit', data, { soft: true, ...config })
+
+/** 学习时长统计面板 */
+export const getStudyDurationStats = (range: 'today' | 'all' = 'today') =>
+  api.get('/study-duration/stats', { params: { range } })
+
 export const getPlanWords = (params?: { status?: 'pending' | 'learning' | 'mastered' | 'all' }) =>
   api.get('/study-plan/words', { params })
 
@@ -272,6 +291,41 @@ export const uploadWritingPromptImage = (id: number, file: File) => {
 export const clearWritingPromptImage = (id: number) =>
   api.delete(`/writing/${id}/prompt-image`)
 
+// Shadowing (ASR transcript, independent of reading)
+export const listShadowingClips = () => api.get('/shadowing')
+export const getShadowingClip = (id: number) => api.get(`/shadowing/${id}`)
+export const uploadShadowingClip = (file: File, title?: string) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (title?.trim()) formData.append('title', title.trim())
+  return api.post('/shadowing', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000
+  })
+}
+export const saveShadowingClip = (
+  id: number,
+  data: {
+    title?: string
+    segments?: Array<{ text: string; startMs: number; endMs: number }>
+  }
+) => api.put(`/shadowing/${id}`, data)
+export const transcribeShadowingClip = (id: number) =>
+  api.post(`/shadowing/${id}/transcribe`, null, { timeout: 360000 })
+/** 带鉴权拉取音频 Blob（播放） */
+export async function fetchShadowingAudioBlob(id: number): Promise<Blob> {
+  const token = localStorage.getItem('token')
+  const res = await fetch(`/api/shadowing/${id}/audio`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '')
+    throw new Error(msg || `audio HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+export const deleteShadowingClip = (id: number) => api.delete(`/shadowing/${id}`)
+
 // Translation practice (learned words)
 export const getTranslationPool = (poolMode: 'learned' | 'mastered' = 'learned') =>
   api.get('/translation/pool', { params: { poolMode } })
@@ -297,6 +351,8 @@ export const deleteTranslationPractice = (id: number) => api.delete(`/translatio
 export const gradeTranslationPractice = (id: number) =>
   api.post(`/translation/${id}/grade`, null, { timeout: 180000 })
 export const listTranslationGrades = (id: number) => api.get(`/translation/${id}/grades`)
+export const listTranslationGradeChatMessages = (practiceId: number, gradeId: number) =>
+  api.get(`/translation/${practiceId}/grades/${gradeId}/chat-messages`)
 
 // Book ↔ Notebook links & collect
 export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)

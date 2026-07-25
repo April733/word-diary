@@ -260,7 +260,32 @@ INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`
 ('study.review_unlock_hour', '7', 'int', 'study',
  '今日到期的复习任务从几点开始出现在「今日复习」列表（0-23）。常见取值 7 或 8；修改后立即生效。', 1),
 ('study.daily_new_limit_default', '20', 'int', 'study',
- '用户未单独设置时的默认「每日新词」上限（预留，学习改造时使用）。', 2);
+ '用户未单独设置时的默认「每日新词」上限（预留，学习改造时使用）。', 2),
+('study.idle_timeout_seconds', '60', 'int', 'study',
+ '阅读等场景无操作超过该秒数视为离线并结段（不对用户暴露，默认60）。', 3),
+('study.min_valid_seconds', '120', 'int', 'study',
+ '进入埋点页后前端先本地计时；停留满该秒数才写入时长表，未满则丢弃（不对用户暴露，默认120）。', 4);
+
+-- =============================================
+-- 学习时长分段
+-- =============================================
+CREATE TABLE IF NOT EXISTS `wd_study_duration` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `action_type` varchar(32) NOT NULL COMMENT '行为 reading|study|translation|writing',
+  `ref_table` varchar(64) DEFAULT NULL COMMENT '关联业务表名，今日背诵可空',
+  `ref_id` bigint DEFAULT NULL COMMENT '关联业务表主键，今日背诵可空',
+  `start_time` datetime NOT NULL COMMENT '本段开始时间',
+  `end_time` datetime DEFAULT NULL COMMENT '本段结束时间，未结束为空',
+  `duration_seconds` int DEFAULT NULL COMMENT '间隔秒数',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_start` (`user_id`, `start_time`),
+  KEY `idx_user_open` (`user_id`, `end_time`),
+  KEY `idx_ref` (`ref_table`, `ref_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习时长分段';
 
 -- =============================================
 -- 2026-07-16: 学习系统 P1（SM-2 + 强制复习 + 三档反馈）

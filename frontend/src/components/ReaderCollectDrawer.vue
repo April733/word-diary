@@ -9,7 +9,13 @@
       <div class="drawer-header">
         <div class="drawer-title">
           <template v-if="viewMode === 'notebook' && linkedNotebooks.length">
-            <t-dropdown trigger="click" :options="notebookMenuOptions" @click="onNotebookMenuClick">
+            <t-dropdown
+              trigger="click"
+              :options="notebookMenuOptions"
+              :min-column-width="200"
+              :max-column-width="360"
+              @click="onNotebookMenuClick"
+            >
               <button type="button" class="drawer-title-switch" :title="$t('reader.notebookLinkManage')">
                 <span class="drawer-title-text">{{ drawerTitle }}</span>
                 <t-icon name="chevron-down" size="16px" />

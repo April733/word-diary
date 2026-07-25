@@ -56,6 +56,10 @@
           <t-icon name="edit" size="18px" class="nav-icon" />
           <span>{{ $t('nav.writing') }}</span>
         </button>
+        <button type="button" @click="router.push('/shadowing')">
+          <t-icon name="sound" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.shadowing') }}</span>
+        </button>
         <button type="button" @click="router.push('/notebooks')">
           <t-icon name="root-list" size="18px" class="nav-icon" />
           <span>{{ $t('nav.wordbook') }}</span>
@@ -63,6 +67,10 @@
         <button type="button" @click="router.push('/bookshelf')">
           <t-icon name="book-open" size="18px" class="nav-icon" />
           <span>{{ $t('bookshelf.title') }}</span>
+        </button>
+        <button type="button" @click="router.push('/study-duration')">
+          <t-icon name="chart-bar" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.studyDuration') }}</span>
         </button>
       </nav>
     </main>

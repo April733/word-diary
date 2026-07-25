@@ -52,8 +52,7 @@ public class SysBaseConfigServiceImpl implements SysBaseConfigService {
             return defaultValue;
         }
         try {
-            int v = Integer.parseInt(raw.trim());
-            return Math.max(0, Math.min(23, v));
+            return Integer.parseInt(raw.trim());
         } catch (NumberFormatException e) {
             return defaultValue;
         }
@@ -61,7 +60,8 @@ public class SysBaseConfigServiceImpl implements SysBaseConfigService {
 
     @Override
     public int getReviewUnlockHour() {
-        return getInt(SysConfigKeys.STUDY_REVIEW_UNLOCK_HOUR, SysConfigKeys.DEFAULT_REVIEW_UNLOCK_HOUR);
+        int v = getInt(SysConfigKeys.STUDY_REVIEW_UNLOCK_HOUR, SysConfigKeys.DEFAULT_REVIEW_UNLOCK_HOUR);
+        return Math.max(0, Math.min(23, v));
     }
 
     @Override

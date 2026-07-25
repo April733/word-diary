@@ -52,6 +52,28 @@ public class AiSessionServiceImpl implements AiSessionService {
     }
 
     @Override
+    @Transactional
+    public WdAiSession getOrCreateSessionForGrade(Long userId, Long gradeId) {
+        if (gradeId == null) {
+            throw new BizException("缺少批改记录");
+        }
+        WdAiSession existing = sessionMapper.selectLatestByUserAndGrade(userId, gradeId);
+        if (existing != null) {
+            sessionMapper.touch(existing.getId());
+            return existing;
+        }
+        WdAiSession newSession = WdAiSession.builder()
+                .userId(userId)
+                .bookId(null)
+                .gradeId(gradeId)
+                .title("新对话")
+                .build();
+        sessionMapper.insert(newSession);
+        log.info("创建翻译答疑会话: id={}, userId={}, gradeId={}", newSession.getId(), userId, gradeId);
+        return newSession;
+    }
+
+    @Override
     public List<WdAiSession> listSessions(Long userId, Long bookId) {
         return sessionMapper.selectByUserAndBook(userId, bookId);
     }

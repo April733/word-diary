@@ -87,6 +87,15 @@ public interface AiModelService {
     ResolvedAiEndpoint requireEndpointForScene(String sceneKey, String region);
 
     /**
+     * 按场景精确解析端点，不回退 {@code default}（ASR 等非 Chat 场景用）。
+     *
+     * @param sceneKey 场景标识
+     * @param region 路由区 cn|global
+     * @return 解析后的端点；场景未配置时抛业务异常
+     */
+    ResolvedAiEndpoint requireEndpointForSceneExact(String sceneKey, String region);
+
+    /**
      * 按场景获取绑定的 modelKey（默认 cn）。
      *
      * @param sceneKey 场景标识

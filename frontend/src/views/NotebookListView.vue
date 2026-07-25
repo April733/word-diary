@@ -21,6 +21,9 @@
     </header>
 
     <div class="page-body">
+      <p v-if="notebooks.length > 0" class="nb-summary">
+        {{ $t('wordbook.summary', { books: notebooks.length, words: totalWords }) }}
+      </p>
       <ul v-if="notebooks.length > 0" class="nb-list">
         <li v-for="book in notebooks" :key="book.id" class="nb-item">
           <div class="nb-main">
@@ -101,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -117,6 +120,9 @@ const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
 const notebooks = ref<any[]>([])
+const totalWords = computed(() =>
+  notebooks.value.reduce((sum, b) => sum + (Number(b.wordCount) || 0), 0)
+)
 const showAddDialog = ref(false)
 const saving = ref(false)
 const togglingId = ref<number | null>(null)
@@ -348,6 +354,14 @@ async function handleDelete(id: number) {
   max-width: 640px;
   margin: 24px auto;
   padding: 0 24px;
+}
+
+.nb-summary {
+  margin: 0 0 12px;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--brand-ink, #315c34) 62%, #888);
 }
 
 .nb-list {

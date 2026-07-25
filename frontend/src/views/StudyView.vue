@@ -89,12 +89,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { openStudySession, submitStudyAnswer, getTodayCompleted, getStudySessionQueue } from '../api'
 import WordCard from '../components/WordCard.vue'
+import {
+  createStudyDurationTracker,
+  type StudyDurationTracker
+} from '../utils/studyDurationTracker'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -117,6 +121,9 @@ const queueListLoading = ref(false)
 const queueListPhase = ref<'review' | 'new' | 'completed'>('review')
 const queueListItems = ref<any[]>([])
 
+/** 今日背诵时长（无单一业务 ID） */
+let studyDurationTracker: StudyDurationTracker | null = null
+
 const queueListTitle = computed(() => {
   const n = queueListItems.value.length
   if (queueListPhase.value === 'new') return t('study.queueListNewTitle', { n })
@@ -129,7 +136,15 @@ const phase = computed(() => session.value?.phase || today.value.currentPhase)
 /** 今日已完成 = 复习已完成 + 新词已完成（当日满 2 遍认识） */
 const todayCompletedCount = computed(() => (today.value.reviewDone || 0) + (today.value.newDone || 0))
 
-onMounted(() => loadSession())
+onMounted(() => {
+  studyDurationTracker = createStudyDurationTracker({ actionType: 'study' })
+  loadSession()
+})
+
+onBeforeUnmount(() => {
+  studyDurationTracker?.dispose()
+  studyDurationTracker = null
+})
 
 async function loadSession() {
   loading.value = true

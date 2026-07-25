@@ -88,12 +88,27 @@ public class DatabaseInitConfig implements ApplicationRunner {
             seedWritingGradePromptIfMissing(conn);
             ensureTranslationPracticeTable(conn, stmt);
             ensureTranslationGradeTable(conn, stmt);
+            ensureShadowingClipTable(conn, stmt);
+            ensureStudyDurationTable(conn, stmt);
+            ensureStudyDurationRefNullable(conn, stmt);
+            seedStudyIdleTimeoutConfig(conn);
+            seedStudyMinValidSecondsConfig(conn);
             ensureColumn(conn, stmt, "wd_translation_grade", "direction",
                     "ALTER TABLE wd_translation_grade ADD COLUMN direction varchar(16) DEFAULT NULL COMMENT '批改当时方向 en2zh|zh2en' AFTER user_id");
             ensureColumn(conn, stmt, "wd_translation_grade", "prompt_text",
                     "ALTER TABLE wd_translation_grade ADD COLUMN prompt_text mediumtext COMMENT '批改当时题目' AFTER direction");
             ensureColumn(conn, stmt, "wd_translation_grade", "source_words_json",
                     "ALTER TABLE wd_translation_grade ADD COLUMN source_words_json mediumtext COMMENT '批改当时目标词JSON' AFTER prompt_text");
+            ensureColumn(conn, stmt, "wd_ai_session", "grade_id",
+                    "ALTER TABLE wd_ai_session ADD COLUMN grade_id bigint DEFAULT NULL COMMENT '翻译批改记录ID，按练习记录隔离答疑' AFTER book_id");
+            try {
+                if (!indexExists(conn, "wd_ai_session", "idx_user_grade")) {
+                    stmt.execute("CREATE INDEX idx_user_grade ON wd_ai_session(user_id, grade_id)");
+                    log.info("数据库索引初始化完成: wd_ai_session.idx_user_grade");
+                }
+            } catch (Exception e) {
+                log.warn("创建 wd_ai_session.idx_user_grade 失败（可忽略）: {}", e.getMessage());
+            }
             seedTranslationScenePromptsIfMissing(conn);
             // 偏好语言（须先于 preferred_ai_region；旧库可能缺此列）
             ensureColumn(conn, stmt, "wd_user", "preferred_locale",
@@ -106,7 +121,10 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     "ALTER TABLE sys_ai_feature ADD COLUMN name_i18n json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi' AFTER description");
             ensureColumn(conn, stmt, "sys_ai_feature", "description_i18n",
                     "ALTER TABLE sys_ai_feature ADD COLUMN description_i18n json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi' AFTER name_i18n");
+            ensureColumn(conn, stmt, "sys_ai_model", "billing_unit",
+                    "ALTER TABLE sys_ai_model ADD COLUMN billing_unit varchar(16) NOT NULL DEFAULT 'token' COMMENT '计费单位 token|second' AFTER provider");
             seedWordFeatureI18nIfMissing(conn);
+            seedParaformerBilling(conn);
         } catch (Exception e) {
             log.warn("数据库字段初始化警告: {}", e.getMessage());
         }
@@ -145,6 +163,31 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("补齐 sys_ai_feature.word i18n 失败: {}", e.getMessage());
+        }
+    }
+
+    /** paraformer-v2：按秒计费；输入价字段存「元/秒」 */
+    private void seedParaformerBilling(Connection conn) {
+        try (var ps = conn.prepareStatement("""
+                UPDATE sys_ai_model
+                SET billing_unit = 'second',
+                    input_price_per_million = CASE
+                        WHEN input_price_per_million IS NULL OR input_price_per_million = 0
+                        THEN 0.00008 ELSE input_price_per_million END,
+                    output_price_per_million = 0,
+                    remark = CASE
+                        WHEN remark IS NULL OR remark = ''
+                        THEN '跟读 ASR；input 价=元/秒（有效语音）'
+                        ELSE remark END,
+                    update_time = NOW()
+                WHERE model_key = 'paraformer-v2' AND is_deleted = 0
+                """)) {
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库迁移完成: paraformer-v2 计费单位 second，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("补齐 paraformer-v2 计费单位失败: {}", e.getMessage());
         }
     }
 
@@ -219,6 +262,14 @@ public class DatabaseInitConfig implements ApplicationRunner {
     private void seedAiScenes(Statement stmt) {
         try {
             stmt.executeUpdate("""
+                    INSERT IGNORE INTO sys_ai_model
+                    (model_key, display_name, provider, billing_unit, currency,
+                     input_price_per_million, output_price_per_million, sort_num, is_enabled, remark)
+                    VALUES
+                    ('paraformer-v2', 'Paraformer V2（录音转写）', 'aliyun', 'second', 'CNY', 0.00008, 0, 10, 1,
+                     '跟读 ASR；input 价=元/秒（有效语音）')
+                    """);
+            stmt.executeUpdate("""
                     INSERT IGNORE INTO sys_ai_scene
                     (scene_key, scene_name, region, model_key, sort_num, is_enabled, remark)
                     VALUES
@@ -234,6 +285,10 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     ('translation_generate', '翻译练习出题', 'global', 'deepseek-v4-flash', 5, 1, '海外线路'),
                     ('translation_grade', '翻译练习批改', 'cn', 'deepseek-v4-flash', 6, 1, '翻译评分+参考译文'),
                     ('translation_grade', '翻译练习批改', 'global', 'deepseek-v4-flash', 6, 1, '海外线路'),
+                    ('translation_chat', '翻译练习答疑', 'cn', 'deepseek-v4-flash', 7, 1, '针对当前批改记录的 Aiko 答疑'),
+                    ('translation_chat', '翻译练习答疑', 'global', 'deepseek-v4-flash', 7, 1, '海外线路'),
+                    ('shadowing_asr', '跟读台词转写', 'cn', 'paraformer-v2', 8, 1, '跟读音频 ASR，须绑定阿里云 Paraformer'),
+                    ('shadowing_asr', '跟读台词转写', 'global', 'paraformer-v2', 8, 1, '海外线路，可改为同供应商其它 ASR 模型'),
                     ('default', '未匹配场景回退', 'cn', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退'),
                     ('default', '未匹配场景回退', 'global', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退')
                     """);
@@ -413,11 +468,13 @@ public class DatabaseInitConfig implements ApplicationRunner {
         // 场景种子在 migrateAiSceneRegion + seedAiScenes 中写入（需先具备 region 列与新唯一键）
         stmt.executeUpdate("""
                 INSERT IGNORE INTO sys_ai_model
-                (model_key, display_name, provider, currency,
+                (model_key, display_name, provider, billing_unit, currency,
                  input_price_per_million, output_price_per_million, sort_num, is_enabled, remark)
                 VALUES
-                ('deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'CNY', 1.0, 2.0, 1, 1, ''),
-                ('qwen-turbo', 'Qwen Turbo', 'aliyun', 'CNY', 0.3, 0.6, 2, 1, '')
+                ('deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', 'token', 'CNY', 1.0, 2.0, 1, 1, ''),
+                ('qwen-turbo', 'Qwen Turbo', 'aliyun', 'token', 'CNY', 0.3, 0.6, 2, 1, ''),
+                ('paraformer-v2', 'Paraformer V2（录音转写）', 'aliyun', 'second', 'CNY', 0.00008, 0, 10, 1,
+                 '跟读 ASR；input 价=元/秒（有效语音）')
                 """);
     }
 
@@ -1298,6 +1355,36 @@ public class DatabaseInitConfig implements ApplicationRunner {
         log.info("数据库表初始化完成: wd_translation_grade");
     }
 
+    private void ensureShadowingClipTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_shadowing_clip", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_shadowing_clip` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
+                  `audio_key` varchar(512) NOT NULL COMMENT '音频COS key',
+                  `audio_mime` varchar(64) DEFAULT NULL COMMENT 'MIME',
+                  `original_name` varchar(255) DEFAULT NULL COMMENT '原始文件名',
+                  `file_size` bigint NOT NULL DEFAULT 0 COMMENT '字节',
+                  `duration_ms` int NOT NULL DEFAULT 0 COMMENT '时长毫秒',
+                  `asr_status` varchar(16) NOT NULL DEFAULT 'pending' COMMENT 'pending|processing|ready|failed',
+                  `asr_error` varchar(512) DEFAULT NULL COMMENT '失败原因',
+                  `transcript_json` mediumtext COMMENT '台词JSON [{text,startMs,endMs}]',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_user_update` (`user_id`, `update_time`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='跟读音频篇（ASR台词）'
+                """);
+        log.info("数据库表初始化完成: wd_shadowing_clip");
+    }
+
     /** 翻译场景提示词（仅缺省时插入） */
     private void seedTranslationScenePromptsIfMissing(Connection conn) {
         try {
@@ -1335,10 +1422,28 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     (Chinese for en2zh, Indonesian for en2id, Thai for en2th, Vietnamese for en2vi, English for *2en).
                     Be specific and actionable.
                     """;
+            String chatPrompt = """
+                    {global_constraint}
+                    You are Aiko, a translation coach for non-native English learners.
+                    Answer language-learning questions. In scope: this practice record, vocabulary
+                    differences (e.g. there vs those), grammar, usage, pronunciation, translation tips.
+                    Prefer tying answers to the practice record when relevant; general English Q&A is OK.
+                    Refuse only clearly off-topic (non language-learning) requests.
+                    Do not invent other exercises, books, or drills as the user's current task.
+                    Keep answers concise, actionable, and in {language}.
+                    When quoting corrections, keep target-language snippets in the exercise target language.
+
+                    Current practice record (context when relevant):
+                    ---
+                    {context}
+                    ---
+                    """;
             insertScenePromptIfMissing(conn, "translation_generate", "翻译练习出题", genPrompt.trim(),
                     "占位符 {global_constraint}/{language}");
             insertScenePromptIfMissing(conn, "translation_grade", "翻译练习批改", gradePrompt.trim(),
                     "占位符 {global_constraint}/{language}");
+            insertScenePromptIfMissing(conn, "translation_chat", "翻译练习答疑", chatPrompt.trim(),
+                    "占位符 {global_constraint}/{language}/{context}");
             // 已有环境：同步翻译出题/批改语言锁
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
@@ -1368,8 +1473,101 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     log.info("数据库迁移完成: translation_generate 提示词语言锁已更新，共 {} 行", n);
                 }
             }
+            // 已有环境：答疑不再限定「只能问本条练习」
+            try (var ps = conn.prepareStatement("""
+                    UPDATE sys_ai_scene_prompt
+                    SET system_prompt = ?, remark = ?, update_time = NOW()
+                    WHERE scene_key = 'translation_chat' AND is_deleted = 0
+                      AND (system_prompt LIKE '%ONLY about the current practice%'
+                        OR system_prompt LIKE '%仅回答%当前%练习%'
+                        OR system_prompt NOT LIKE '%general English Q&A is OK%')
+                    """)) {
+                ps.setString(1, chatPrompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}/{context}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: translation_chat 答疑范围已放宽，共 {} 行", n);
+                }
+            }
         } catch (Exception e) {
             log.warn("写入翻译场景提示词失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureStudyDurationTable(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_study_duration", new String[]{"TABLE"});
+        boolean exists = tables.next();
+        tables.close();
+        if (exists) {
+            return;
+        }
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_study_duration` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `action_type` varchar(32) NOT NULL COMMENT '行为 reading|study|translation|writing',
+                  `ref_table` varchar(64) DEFAULT NULL COMMENT '关联业务表名，今日背诵可空',
+                  `ref_id` bigint DEFAULT NULL COMMENT '关联业务表主键，今日背诵可空',
+                  `start_time` datetime NOT NULL COMMENT '本段开始时间',
+                  `end_time` datetime DEFAULT NULL COMMENT '本段结束时间，未结束为空',
+                  `duration_seconds` int DEFAULT NULL COMMENT '间隔秒数',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除',
+                  PRIMARY KEY (`id`),
+                  KEY `idx_user_start` (`user_id`, `start_time`),
+                  KEY `idx_user_open` (`user_id`, `end_time`),
+                  KEY `idx_ref` (`ref_table`, `ref_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习时长分段'
+                """);
+        log.info("数据库表初始化完成: wd_study_duration");
+    }
+
+    /** 已建表时把 ref 列改为可空（今日背诵无单一 ID） */
+    private void ensureStudyDurationRefNullable(Connection conn, Statement stmt) {
+        try {
+            stmt.execute("ALTER TABLE wd_study_duration MODIFY COLUMN ref_table varchar(64) DEFAULT NULL " +
+                    "COMMENT '关联业务表名，今日背诵可空'");
+            stmt.execute("ALTER TABLE wd_study_duration MODIFY COLUMN ref_id bigint DEFAULT NULL " +
+                    "COMMENT '关联业务表主键，今日背诵可空'");
+        } catch (Exception e) {
+            log.warn("调整 wd_study_duration.ref 可空失败（可忽略）: {}", e.getMessage());
+        }
+    }
+
+    /** 阅读空闲结段秒数（不对用户暴露；INSERT IGNORE 幂等） */
+    private void seedStudyIdleTimeoutConfig(Connection conn) {
+        try (var ps = conn.prepareStatement("""
+                INSERT IGNORE INTO sys_base_config
+                (config_key, config_value, value_type, category, description, sort_num)
+                VALUES (?, '60', 'int', 'study', ?, 3)
+                """)) {
+            ps.setString(1, "study.idle_timeout_seconds");
+            ps.setString(2, "阅读等场景无操作超过该秒数视为离线并结段（不对用户暴露，默认60）。");
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: study.idle_timeout_seconds");
+            }
+        } catch (Exception e) {
+            log.warn("写入 study.idle_timeout_seconds 失败: {}", e.getMessage());
+        }
+    }
+
+    /** 停留满该秒数才入库（不对用户暴露；默认120=2分钟） */
+    private void seedStudyMinValidSecondsConfig(Connection conn) {
+        try (var ps = conn.prepareStatement("""
+                INSERT IGNORE INTO sys_base_config
+                (config_key, config_value, value_type, category, description, sort_num)
+                VALUES (?, '120', 'int', 'study', ?, 4)
+                """)) {
+            ps.setString(1, "study.min_valid_seconds");
+            ps.setString(2, "进入埋点页后前端先本地计时；停留满该秒数才写入时长表，未满则丢弃（不对用户暴露，默认120）。");
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: study.min_valid_seconds");
+            }
+        } catch (Exception e) {
+            log.warn("写入 study.min_valid_seconds 失败: {}", e.getMessage());
         }
     }
 

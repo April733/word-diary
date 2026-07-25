@@ -29,13 +29,21 @@ public class SysAiModel {
     /** 所属供应商标识，对齐 sys_ai_provider.provider_key */
     private String provider;
 
+    /**
+     * 计费单位：{@code token}=元/百万 tokens；{@code second}=元/秒（ASR，存于 inputPricePerMillion）。
+     */
+    private String billingUnit;
+
     /** 公开价币种，统一 CNY */
     private String currency;
 
-    /** 输入单价：每百万 prompt tokens */
+    /**
+     * token：输入单价（元/百万 prompt tokens）；
+     * second：有效语音单价（元/秒）。
+     */
     private BigDecimal inputPricePerMillion;
 
-    /** 输出单价：每百万 completion tokens */
+    /** token：输出单价（元/百万 completion tokens）；second 时忽略 */
     private BigDecimal outputPricePerMillion;
 
     /** 排序权重 */

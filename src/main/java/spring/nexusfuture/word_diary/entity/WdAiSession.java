@@ -28,6 +28,9 @@ public class WdAiSession {
     /** 关联书籍ID（可选，按书隔离会话） */
     private Long bookId;
 
+    /** 翻译批改记录ID（可选，按练习记录隔离答疑） */
+    private Long gradeId;
+
     /** 会话标题（通常取第一条用户消息摘要） */
     private String title;
 

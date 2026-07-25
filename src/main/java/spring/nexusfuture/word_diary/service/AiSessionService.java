@@ -18,6 +18,15 @@ public interface AiSessionService {
     WdAiSession getOrCreateSession(Long userId, Long bookId);
 
     /**
+     * 翻译答疑：按批改记录隔离，同一 grade 复用同一会话（记忆不含其它练习记录）。
+     *
+     * @param userId 当前用户 ID
+     * @param gradeId 翻译批改记录 ID
+     * @return 会话实体
+     */
+    WdAiSession getOrCreateSessionForGrade(Long userId, Long gradeId);
+
+    /**
      * 获取某本书下的全部 AI 会话列表（按最近活跃排序）。
      *
      * @param userId 当前用户 ID
