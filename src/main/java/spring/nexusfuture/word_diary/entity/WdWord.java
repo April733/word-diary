@@ -60,7 +60,7 @@ public class WdWord {
 
     /**
      * 学习状态（见 {@link spring.nexusfuture.word_diary.common.WordStudyStatus}）：
-     * 0未学 1~6复习阶梯 7熟记
+     * 0未学 1~5复习阶梯 6熟记
      */
     private Integer status;
 

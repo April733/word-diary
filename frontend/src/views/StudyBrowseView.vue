@@ -20,10 +20,20 @@
         <WordCard :word="currentWord" :show-answer="showAnswer" @toggle="showAnswer = true" />
 
         <div v-if="showAnswer" class="study-actions">
-          <button type="button" class="act act--pass" @click="handleAnswer(0)">
+          <button
+            type="button"
+            class="act act--pass"
+            :disabled="answering"
+            @click="handleAnswer(0)"
+          >
             {{ $t('study.forget') }}
           </button>
-          <button type="button" class="act act--know" @click="handleAnswer(1)">
+          <button
+            type="button"
+            class="act act--know"
+            :disabled="answering"
+            @click="handleAnswer(1)"
+          >
             {{ $t('study.know') }}
           </button>
         </div>
@@ -55,6 +65,7 @@ import WordCard from '../components/WordCard.vue'
 const router = useRouter()
 const { t } = useI18n()
 const loading = ref(true)
+const answering = ref(false)
 const showAnswer = ref(false)
 const words = ref<any[]>([])
 const index = ref(0)
@@ -78,7 +89,8 @@ async function loadWords() {
 
 async function handleAnswer(feedback: number) {
   const word = currentWord.value
-  if (!word) return
+  if (!word || answering.value) return
+  answering.value = true
   try {
     await submitBrowseAnswer({ wordId: word.wordId, feedback })
     showAnswer.value = false
@@ -87,6 +99,8 @@ async function handleAnswer(feedback: number) {
     }
   } catch (e: any) {
     MessagePlugin.error(e.response?.data?.msg || t('study.actionFailed'))
+  } finally {
+    answering.value = false
   }
 }
 
@@ -218,6 +232,13 @@ function nextWord() {
 
 .act:active {
   transform: scale(0.98);
+}
+
+.act:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  pointer-events: none;
 }
 
 .act--pass {

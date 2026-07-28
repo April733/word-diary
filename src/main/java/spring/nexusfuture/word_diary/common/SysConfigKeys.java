@@ -51,4 +51,9 @@ public final class SysConfigKeys {
 
     /** 未匹配场景时的回退 */
     public static final String AI_SCENE_DEFAULT = "default";
+
+    /** 当前生效的水平标尺：ielts / cefr / custom */
+    public static final String PROFICIENCY_ACTIVE_SCALE = "proficiency.active_scale";
+
+    public static final String DEFAULT_PROFICIENCY_ACTIVE_SCALE = "cefr";
 }

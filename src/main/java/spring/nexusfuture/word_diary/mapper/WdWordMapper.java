@@ -56,33 +56,32 @@ public interface WdWordMapper {
     List<WdWord> selectNewWords(@Param("userId") Long userId, @Param("limit") int limit);
 
     /**
-     * 到期复习：status NOT IN (0,7)，且「当前学习日 − 上次学习日」≥ 该阶段间隔。
+     * 到期复习：status NOT IN (0,6)，且「当前学习日 − 上次学习日」≥ 该阶段间隔。
      * {@code studyDate} 按每日刷新节点切日（默认 7:00），不是自然日 0:00。
      * MySQL：DATEDIFF(学习日, DATE(status_data))
      */
     @Select("SELECT w.* FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
-            "WHERE w.user_id = #{userId} AND w.status NOT IN (0, 7) AND w.status_data IS NOT NULL " +
+            "WHERE w.user_id = #{userId} AND w.status NOT IN (0, 6) AND w.status_data IS NOT NULL " +
             "AND DATEDIFF(#{studyDate}, DATE(w.status_data)) >= CASE w.status " +
             "  WHEN 1 THEN 1 " +
-            "  WHEN 2 THEN 1 " +
-            "  WHEN 3 THEN 2 " +
+            "  WHEN 2 THEN 2 " +
+            "  WHEN 3 THEN 3 " +
             "  WHEN 4 THEN 4 " +
             "  WHEN 5 THEN 7 " +
-            "  WHEN 6 THEN 15 " +
             "  ELSE 999 END " +
             "AND w.is_deleted = 0 ORDER BY w.status ASC, w.status_data ASC")
     List<WdWord> selectReviewTasks(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate);
 
     @Select("<script>SELECT COUNT(*) FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 " +
-            "WHERE w.user_id = #{userId} AND w.status BETWEEN 1 AND 7 AND w.is_deleted = 0" +
+            "WHERE w.user_id = #{userId} AND w.status BETWEEN 1 AND 6 AND w.is_deleted = 0" +
             "<if test='notebookId != null'> AND w.notebook_id = #{notebookId}</if></script>")
     int countBrowseWords(@Param("userId") Long userId, @Param("notebookId") Long notebookId);
 
     @Select("<script>SELECT w.* FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 " +
-            "WHERE w.user_id = #{userId} AND w.status BETWEEN 1 AND 7 AND w.is_deleted = 0" +
+            "WHERE w.user_id = #{userId} AND w.status BETWEEN 1 AND 6 AND w.is_deleted = 0" +
             "<if test='notebookId != null'> AND w.notebook_id = #{notebookId}</if> " +
             "ORDER BY COALESCE(w.status_data, w.update_time) DESC, w.id DESC LIMIT #{limit} OFFSET #{offset}</script>")
     List<WdWord> selectBrowseWords(@Param("userId") Long userId, @Param("notebookId") Long notebookId,
@@ -100,7 +99,7 @@ public interface WdWordMapper {
     List<WdWord> selectAllInStudyPlan(Long userId);
 
     /**
-     * 翻译练习词池：在背单词本中 status ≥ minStatus（learned=1，mastered=7）的词。
+     * 翻译练习词池：在背单词本中 status ≥ minStatus（learned=2 至少完成第一轮复习，mastered=6）的词。
      */
     @Select("""
             SELECT w.* FROM wd_word w

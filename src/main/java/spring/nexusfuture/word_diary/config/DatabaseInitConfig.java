@@ -73,6 +73,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
             migrateWordFeaturePromptV3(conn, stmt);
             migrateGrammarSentencePatternSplit(conn, stmt);
             migrateFeatureKeyBasedJsonContract(conn, stmt);
+            migrateWordFeaturePosMeaningContract(conn, stmt);
             migrateSplitAiModelAndScene(conn, stmt);
             ensureAiProviderTable(conn, stmt);
             ensureAbuseNoticeTables(conn, stmt);
@@ -88,6 +89,20 @@ public class DatabaseInitConfig implements ApplicationRunner {
             seedWritingGradePromptIfMissing(conn);
             ensureTranslationPracticeTable(conn, stmt);
             ensureTranslationGradeTable(conn, stmt);
+            // 已下线「文章专练」：列保留仅用于过滤；历史数据软删
+            ensureColumn(conn, stmt, "wd_translation_practice", "article_id",
+                    "ALTER TABLE wd_translation_practice ADD COLUMN article_id bigint DEFAULT NULL COMMENT '已废弃：文章专练ID' AFTER user_id");
+            try {
+                stmt.execute("UPDATE wd_translation_practice SET is_deleted = 1, update_time = NOW() "
+                        + "WHERE article_id IS NOT NULL AND is_deleted = 0");
+            } catch (Exception e) {
+                log.debug("清理文章专练练习稿跳过: {}", e.getMessage());
+            }
+            try {
+                stmt.execute("UPDATE wd_passage_article SET is_deleted = 1, update_time = NOW() WHERE is_deleted = 0");
+            } catch (Exception e) {
+                log.debug("清理文章专练表跳过: {}", e.getMessage());
+            }
             ensureShadowingClipTable(conn, stmt);
             ensureStudyDurationTable(conn, stmt);
             ensureStudyDurationRefNullable(conn, stmt);
@@ -129,13 +144,69 @@ public class DatabaseInitConfig implements ApplicationRunner {
             log.warn("数据库字段初始化警告: {}", e.getMessage());
         }
 
+        // 独立执行：水平标尺
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            ensureProficiencyTables(conn, stmt);
+            seedProficiencyActiveScaleConfig(conn);
+            seedProficiencyScalesAndLevels(conn, stmt);
+        } catch (Exception e) {
+            log.warn("水平标尺表初始化警告: {}", e.getMessage(), e);
+        }
+
+        // 独立执行：词性运用统计表
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            ensureWordPosStatTable(stmt);
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "meaning",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN meaning varchar(512) DEFAULT NULL COMMENT '该词性对应释义' AFTER pos");
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "spell_practice_count",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN spell_practice_count int NOT NULL DEFAULT 0 COMMENT '拼写练写次数' AFTER correct_count");
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "spell_correct_count",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN spell_correct_count int NOT NULL DEFAULT 0 COMMENT '拼写正确次数' AFTER spell_practice_count");
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "spell_mastered",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN spell_mastered tinyint NOT NULL DEFAULT 0 COMMENT '书写是否掌握 0否1是' AFTER spell_correct_count");
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "spell_status",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN spell_status tinyint NOT NULL DEFAULT 0 COMMENT '拼写阶梯0未练1~3复习4熟记' AFTER spell_correct_count");
+            ensureColumn(conn, stmt, "wd_word_pos_stat", "spell_status_data",
+                    "ALTER TABLE wd_word_pos_stat ADD COLUMN spell_status_data datetime DEFAULT NULL COMMENT '进入当前spell_status的学习日' AFTER spell_status");
+            migrateSpellStatusFromMastered(stmt);
+            shortenSpellStudyStatuses(stmt);
+            alignSpellStudyStatuses(conn, stmt);
+            alignWordStudyStatuses(conn, stmt);
+        } catch (Exception e) {
+            log.warn("wd_word_pos_stat 初始化警告: {}", e.getMessage(), e);
+        }
+
         // 独立执行：避免被上面其它迁移异常短路，导致 region 列一直缺失
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
             migrateAiSceneRegion(conn, stmt);
+            migrateAiSceneCallParams(stmt);
             seedAiScenes(stmt);
         } catch (Exception e) {
             log.warn("sys_ai_scene.region 初始化警告: {}", e.getMessage());
+        }
+    }
+
+    /** 场景级 Chat 参数：temperature / thinking 等 */
+    private void migrateAiSceneCallParams(Statement stmt) {
+        try {
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN temperature decimal(4,2) DEFAULT NULL COMMENT '采样温度，空=供应商默认' AFTER model_key");
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN max_tokens int DEFAULT NULL COMMENT '最大生成token，空=默认' AFTER temperature");
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN thinking_mode varchar(16) DEFAULT NULL COMMENT '思考模式 enabled|disabled|空=默认' AFTER max_tokens");
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN thinking_budget int DEFAULT NULL COMMENT '思考token预算' AFTER thinking_mode");
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN reasoning_effort varchar(16) DEFAULT NULL COMMENT 'reasoning_effort low|medium|high' AFTER thinking_budget");
+            addColumnIgnoreDuplicate(stmt,
+                    "ALTER TABLE sys_ai_scene ADD COLUMN response_format varchar(32) DEFAULT NULL COMMENT 'response_format json_object|text|空=不传' AFTER reasoning_effort");
+            log.info("sys_ai_scene 调用参数列迁移完成");
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_scene 调用参数失败: {}", e.getMessage(), e);
         }
     }
 
@@ -454,6 +525,12 @@ public class DatabaseInitConfig implements ApplicationRunner {
                   `scene_name` varchar(64) NOT NULL,
                   `region` varchar(16) NOT NULL DEFAULT 'cn',
                   `model_key` varchar(64) NOT NULL,
+                  `temperature` decimal(4,2) DEFAULT NULL,
+                  `max_tokens` int DEFAULT NULL,
+                  `thinking_mode` varchar(16) DEFAULT NULL,
+                  `thinking_budget` int DEFAULT NULL,
+                  `reasoning_effort` varchar(16) DEFAULT NULL,
+                  `response_format` varchar(32) DEFAULT NULL,
                   `sort_num` int NOT NULL DEFAULT 0,
                   `is_enabled` tinyint NOT NULL DEFAULT 1,
                   `remark` varchar(512) DEFAULT '',
@@ -506,11 +583,11 @@ public class DatabaseInitConfig implements ApplicationRunner {
     private void migrateLearnPlanOntoWord(Connection conn, Statement stmt) {
         try {
             ensureColumn(conn, stmt, "wd_word", "status",
-                    "ALTER TABLE wd_word ADD COLUMN status tinyint NOT NULL DEFAULT 0 COMMENT '学习状态: 0未学 1~6复习阶梯 7熟记' AFTER user_id");
+                    "ALTER TABLE wd_word ADD COLUMN status tinyint NOT NULL DEFAULT 0 COMMENT '学习状态: 0未学 1~5复习阶梯 6熟记' AFTER user_id");
             ensureColumn(conn, stmt, "wd_word", "status_data",
                     "ALTER TABLE wd_word ADD COLUMN status_data datetime DEFAULT NULL COMMENT '进入当前status的时间' AFTER status");
 
-            // 若仍有旧 SM-2 列，先回填 status_data / 映射旧 status（仅此路径做 3→7）
+            // 若仍有旧 SM-2 列，先回填 status_data / 映射旧 status（仅此路径做 3→6）
             var rs = conn.getMetaData().getColumns(null, null, "wd_word", "last_study_at");
             boolean hasLegacy = rs.next();
             rs.close();
@@ -519,8 +596,8 @@ public class DatabaseInitConfig implements ApplicationRunner {
                         UPDATE wd_word SET status_data = COALESCE(last_study_at, first_study_time, create_time, NOW())
                         WHERE status_data IS NULL
                         """);
-                // 旧模型：3=熟记 → 新 7
-                stmt.executeUpdate("UPDATE wd_word SET status = 7 WHERE status = 3");
+                // 旧模型：3=熟记 → 新 6
+                stmt.executeUpdate("UPDATE wd_word SET status = 6 WHERE status = 3");
             } else {
                 stmt.executeUpdate("""
                         UPDATE wd_word SET status_data = COALESCE(status_data, create_time, NOW())
@@ -555,7 +632,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
                           WHERE p.is_deleted = 0
                         ) p ON p.word_id = w.id
                         SET w.status = CASE
-                              WHEN COALESCE(p.learn_status, 0) = 3 THEN 7
+                              WHEN COALESCE(p.learn_status, 0) = 3 THEN 6
                               WHEN COALESCE(p.learn_status, 0) = 4 THEN 0
                               WHEN COALESCE(p.learn_status, 0) IN (1, 2) THEN p.learn_status
                               ELSE 0 END,
@@ -623,13 +700,13 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     """);
             log.info("数据库表初始化完成: sys_ai_provider 已创建");
         }
+        // 仅补缺：库中已有同 provider_key 时 IGNORE，不覆盖后台已配密钥
         stmt.executeUpdate("""
                 INSERT IGNORE INTO sys_ai_provider
                 (provider_key, display_name, base_url, api_key, sort_num, is_enabled, remark)
                 VALUES
                 ('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
-                ('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
-                ('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写')
+                ('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写')
                 """);
     }
 
@@ -1107,7 +1184,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
             // 干净约定：无目标词时接口层根本不下发 word/root_affix，提示词不解释「空」
             List<Feat> feats = List.of(
                     new Feat("meaning", "在 JSON 键 \"meaning\" 写整句/段落译文（字符串）。例：{\"meaning\":\"…\"}"),
-                    new Feat("word", "在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}"),
+                    new Feat("word", "在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。【词性释义格式】meaning=英文词性缩写+\". \"+释义；多词性只用中文分号「；」分隔。允许：n/v/adj/adv/prep/conj/pron/num/int/phr。例：n. 评论家；v. 评论。禁止「名词，意为…」、禁止逗号/斜杠串联。短语用 phr. 释义。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}"),
                     new Feat("collocation", "在 JSON 键 \"collocation\" 写固定搭配数组。元素：word, meaning。例：{\"collocation\":[{\"word\":\"examples of\",\"meaning\":\"…的例子\"}]}"),
                     new Feat("phonetic", "在 JSON 键 \"phonetic\" 写连读/吞音/重读等发音说明（字符串，非整词释义音标）。例：{\"phonetic\":\"…\"}"),
                     new Feat("root_affix", "在 JSON 键 \"root_affix\" 写词条数组，含 rootAffix。仅解析场景中的目标词。例：{\"root_affix\":[{\"word\":\"…\",\"meaning\":\"…\",\"rootAffix\":\"…\"}]}"),
@@ -1147,6 +1224,38 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("迁移 Key 分包 JSON 约定失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 阅读「单词」功能：收紧 meaning 与 WordPosParser 一致（n. 释义；v. 释义）。
+     * 幂等：已含【词性释义格式】则跳过。
+     */
+    private void migrateWordFeaturePosMeaningContract(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_feature", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+            String prompt = """
+                    在 JSON 键 "word" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。
+                    【词性释义格式】meaning=英文词性缩写+". "+释义；多词性只用中文分号「；」分隔。允许：n/v/adj/adv/prep/conj/pron/num/int/phr。例：n. 评论家；v. 评论。禁止「名词，意为…」、禁止逗号/斜杠串联。短语用 phr. 释义。
+                    例：{"word":[{"word":"reviewer","meaning":"n. 评论家","usPhonetic":"/…/","ukPhonetic":"/…/","rootAffix":"re- + view + -er"}]}
+                    """;
+            try (var ps = conn.prepareStatement(
+                    "UPDATE sys_ai_feature SET prompt = ?, update_time = NOW() "
+                            + "WHERE feature_key = 'word' AND is_deleted = 0 "
+                            + "AND (prompt IS NULL OR prompt NOT LIKE '%【词性释义格式】%')")) {
+                ps.setString(1, prompt.trim());
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: sys_ai_feature.word 词性释义格式收紧，共 {} 行", n);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("迁移 sys_ai_feature.word 词性释义格式失败: {}", e.getMessage());
         }
     }
 
@@ -1250,7 +1359,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
         }
     }
 
-    /** 已有库写入 writing_grade 场景壳（仅缺省时插入，不覆盖后台已改文案） */
+    /** 已有库写入 writing_grade 场景壳（仅缺省时插入；英文壳一次性改为中文） */
     private void seedWritingGradePromptIfMissing(Connection conn) {
         try {
             var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
@@ -1261,13 +1370,13 @@ public class DatabaseInitConfig implements ApplicationRunner {
             tables.close();
             String prompt = """
                     {global_constraint}
-                    You are an IELTS Academic Writing examiner and coach for {task_type}.
-                    Grade the essay; produce polishedEssay (keep student's ideas) and modelEssay (high-band sample for the same question).
-                    Return ONLY one JSON object with keys:
-                    overallBand, taskAchievement or taskResponse, coherence, lexical, grammar,
-                    summary, priorities (3-5 strings), annotations ([{excerpt,issue,fix}]),
-                    polishedEssay, modelEssay.
-                    Bands use 0-9 with 0.5 steps. Be specific and actionable. Reply language follows {language}.
+                    你是雅思学术写作（IELTS Academic Writing）考官兼写作教练，题型为 {task_type}。
+                    请批改作文；产出 polishedEssay（保留学生原意的润色版）与 modelEssay（同题高分范文）。
+                    只返回一个 JSON 对象，键包括：
+                    overallBand, taskAchievement 或 taskResponse, coherence, lexical, grammar,
+                    summary, priorities（3–5 条字符串）, annotations（[{excerpt,issue,fix}]）,
+                    polishedEssay, modelEssay。
+                    分数为 0–9，可 0.5 步进。评语须具体可执行。回复语言遵循 {language}。
                     """;
             try (var ps = conn.prepareStatement("""
                     INSERT INTO sys_ai_scene_prompt
@@ -1286,6 +1395,19 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     log.info("数据库种子初始化完成: writing_grade 场景提示词已写入");
                 }
             }
+            try (var ps = conn.prepareStatement("""
+                    UPDATE sys_ai_scene_prompt
+                    SET system_prompt = ?, remark = ?, update_time = NOW()
+                    WHERE scene_key = 'writing_grade' AND is_deleted = 0
+                      AND system_prompt LIKE '%You are an IELTS Academic Writing%'
+                    """)) {
+                ps.setString(1, prompt.trim());
+                ps.setString(2, "占位符 {global_constraint}/{language}/{task_type}");
+                int n = ps.executeUpdate();
+                if (n > 0) {
+                    log.info("数据库迁移完成: writing_grade 提示词已改为中文，共 {} 行", n);
+                }
+            }
         } catch (Exception e) {
             log.warn("写入 writing_grade 场景提示词失败: {}", e.getMessage());
         }
@@ -1302,6 +1424,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 CREATE TABLE IF NOT EXISTS `wd_translation_practice` (
                   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
                   `user_id` bigint NOT NULL COMMENT '用户ID',
+                  `article_id` bigint DEFAULT NULL COMMENT '已废弃：文章专练ID',
                   `title` varchar(120) NOT NULL DEFAULT '' COMMENT '用户自命名',
                   `direction` varchar(16) NOT NULL COMMENT 'en2zh|zh2en',
                   `pool_mode` varchar(16) NOT NULL DEFAULT 'learned' COMMENT 'learned|mastered',
@@ -1385,7 +1508,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
         log.info("数据库表初始化完成: wd_shadowing_clip");
     }
 
-    /** 翻译场景提示词（仅缺省时插入） */
+    /** 翻译场景提示词（仅缺省时插入；英文壳一次性改为中文） */
     private void seedTranslationScenePromptsIfMissing(Connection conn) {
         try {
             var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
@@ -1396,44 +1519,43 @@ public class DatabaseInitConfig implements ApplicationRunner {
             tables.close();
             String genPrompt = """
                     {global_constraint}
-                    You design IELTS-style English translation drills from a learner's known vocabulary.
-                    Audience: non-native English learners.
-                    Create ONE practice item that recycles the given words/phrases with an Academic IELTS theme.
-                    Return ONLY one JSON object with keys:
-                    direction, theme, promptText, referenceAnswer, targetWords.
-                    Prefer the given vocabulary; keep length moderate; avoid rare out-of-list words.
-                    Language lock (overrides global single-language rules):
-                    promptText = direction SOURCE language only; referenceAnswer = direction TARGET language only;
-                    theme may follow {language}. Do not mix coach language into promptText/referenceAnswer.
+                    你根据学习者已掌握的词汇，设计雅思风格的英语翻译练习题。
+                    受众：非英语母语学习者。
+                    请基于给定单词/短语出一道练习，并匹配学术雅思常见主题。
+                    只返回一个 JSON 对象，键包括：
+                    direction, theme, promptText, referenceAnswer, targetWords。
+                    优先使用给定词汇；篇幅适中；避免超纲生僻词。
+                    语言锁（覆盖全局「只用一种语言」规则）：
+                    promptText 只能用练习方向的源语言；referenceAnswer 只能用目标语言；
+                    theme 可用 {language}。不要把教练用语混进 promptText / referenceAnswer。
                     """;
             String gradePrompt = """
                     {global_constraint}
-                    You are an IELTS-oriented translation coach for non-native English learners.
-                    Grade accuracy, fluency, and practice-vocabulary use (0-9, 0.5 steps).
-                    Return ONLY one JSON object with keys:
+                    你是面向非英语母语学习者的雅思取向翻译教练。
+                    从准确性、流畅度、练习词汇使用三方面评分（0–9，可 0.5 步进）。
+                    只返回一个 JSON 对象，键包括：
                     overallBand, accuracy, fluency, targetWordUse, summary, priorities, annotations,
-                    referenceAnswer.
-                    summary and referenceAnswer should use \\n between sentences.
-                    annotations: only concrete mistakes with non-empty excerpt/issue/fix; omit empties.
-                    Do NOT return polishedAnswer. In Chinese coach replies use 「练习词汇」 not 「目标词」.
-                    STRICT language lock (overrides global single-language / "do not use Chinese" rules):
-                    summary, priorities, issue, fix explanations = {language} only;
-                    referenceAnswer and corrected-translation snippets = exercise TARGET language only
-                    (Chinese for en2zh, Indonesian for en2id, Thai for en2th, Vietnamese for en2vi, English for *2en).
-                    Be specific and actionable.
+                    referenceAnswer。
+                    summary 与 referenceAnswer 句与句之间用 \\n 分隔。
+                    annotations：仅收录有具体错误且 excerpt / issue / fix 均非空的条目；空项省略。
+                    不要返回 polishedAnswer。中文教练评语用「练习词汇」而非「目标词」。
+                    严格语言锁（覆盖全局「只用一种语言 / 不要用中文」规则）：
+                    summary、priorities、issue、fix 中的讲解只用 {language}；
+                    referenceAnswer 与订正译文片段只用练习目标语
+                    （en2zh 用中文，en2id 用印尼语，en2th 用泰语，en2vi 用越南语，*2en 用英语）。
+                    评语须具体可执行。
                     """;
             String chatPrompt = """
                     {global_constraint}
-                    You are Aiko, a translation coach for non-native English learners.
-                    Answer language-learning questions. In scope: this practice record, vocabulary
-                    differences (e.g. there vs those), grammar, usage, pronunciation, translation tips.
-                    Prefer tying answers to the practice record when relevant; general English Q&A is OK.
-                    Refuse only clearly off-topic (non language-learning) requests.
-                    Do not invent other exercises, books, or drills as the user's current task.
-                    Keep answers concise, actionable, and in {language}.
-                    When quoting corrections, keep target-language snippets in the exercise target language.
+                    你是 Aiko，面向非英语母语学习者的翻译教练。
+                    回答语言学习相关问题。范围内包括：本条练习记录、词汇辨析（如 there 与 those）、语法、用法、发音、翻译技巧。
+                    相关时优先结合本条练习；也可回答一般英语学习问题。
+                    仅拒绝明显与语言学习无关的请求。
+                    不要编造用户当前并未在做的其它练习、书籍或题目。
+                    回答简洁、可执行，并用 {language}。
+                    引用订正时，目标语片段保持练习目标语。
 
-                    Current practice record (context when relevant):
+                    当前练习记录（相关时作上下文）：
                     ---
                     {context}
                     ---
@@ -1444,49 +1566,44 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     "占位符 {global_constraint}/{language}");
             insertScenePromptIfMissing(conn, "translation_chat", "翻译练习答疑", chatPrompt.trim(),
                     "占位符 {global_constraint}/{language}/{context}");
-            // 已有环境：同步翻译出题/批改语言锁
+            // 已有环境：英文场景壳统一改为中文（不覆盖已手工改成中文的文案）
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
                     SET system_prompt = ?, remark = ?, update_time = NOW()
                     WHERE scene_key = 'translation_grade' AND is_deleted = 0
-                      AND (system_prompt LIKE '%polishedAnswer%'
-                        OR system_prompt LIKE '%目标词%'
-                        OR system_prompt NOT LIKE '%STRICT language lock%')
+                      AND system_prompt LIKE '%You are an IELTS-oriented translation coach%'
                     """)) {
                 ps.setString(1, gradePrompt.trim());
                 ps.setString(2, "占位符 {global_constraint}/{language}");
                 int n = ps.executeUpdate();
                 if (n > 0) {
-                    log.info("数据库迁移完成: translation_grade 提示词语言锁已更新，共 {} 行", n);
+                    log.info("数据库迁移完成: translation_grade 提示词已改为中文，共 {} 行", n);
                 }
             }
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
                     SET system_prompt = ?, remark = ?, update_time = NOW()
                     WHERE scene_key = 'translation_generate' AND is_deleted = 0
-                      AND system_prompt NOT LIKE '%Language lock%'
+                      AND system_prompt LIKE '%You design IELTS-style English translation drills%'
                     """)) {
                 ps.setString(1, genPrompt.trim());
                 ps.setString(2, "占位符 {global_constraint}/{language}");
                 int n = ps.executeUpdate();
                 if (n > 0) {
-                    log.info("数据库迁移完成: translation_generate 提示词语言锁已更新，共 {} 行", n);
+                    log.info("数据库迁移完成: translation_generate 提示词已改为中文，共 {} 行", n);
                 }
             }
-            // 已有环境：答疑不再限定「只能问本条练习」
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
                     SET system_prompt = ?, remark = ?, update_time = NOW()
                     WHERE scene_key = 'translation_chat' AND is_deleted = 0
-                      AND (system_prompt LIKE '%ONLY about the current practice%'
-                        OR system_prompt LIKE '%仅回答%当前%练习%'
-                        OR system_prompt NOT LIKE '%general English Q&A is OK%')
+                      AND system_prompt LIKE '%You are Aiko, a translation coach%'
                     """)) {
                 ps.setString(1, chatPrompt.trim());
                 ps.setString(2, "占位符 {global_constraint}/{language}/{context}");
                 int n = ps.executeUpdate();
                 if (n > 0) {
-                    log.info("数据库迁移完成: translation_chat 答疑范围已放宽，共 {} 行", n);
+                    log.info("数据库迁移完成: translation_chat 提示词已改为中文，共 {} 行", n);
                 }
             }
         } catch (Exception e) {
@@ -1568,6 +1685,333 @@ public class DatabaseInitConfig implements ApplicationRunner {
             }
         } catch (Exception e) {
             log.warn("写入 study.min_valid_seconds 失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureProficiencyTables(Connection conn, Statement stmt) throws Exception {
+        // 直接 IF NOT EXISTS：不依赖 getTables（库名/大小写差异时可能误判已存在而跳过创建）
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `sys_proficiency_scale` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `code` varchar(32) NOT NULL COMMENT 'ielts|cefr|custom',
+                  `name` varchar(64) NOT NULL,
+                  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用0停用',
+                  `sort_num` int NOT NULL DEFAULT 0,
+                  `remark` varchar(255) DEFAULT NULL,
+                  `create_by` bigint DEFAULT NULL,
+                  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+                  `update_by` bigint DEFAULT NULL,
+                  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_code` (`code`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='水平标尺'
+                """);
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `sys_proficiency_level` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `scale_id` bigint NOT NULL,
+                  `code` varchar(32) NOT NULL,
+                  `name` varchar(64) NOT NULL,
+                  `sort_num` int NOT NULL DEFAULT 0,
+                  `band_min` decimal(3,1) NOT NULL,
+                  `band_max` decimal(3,1) NOT NULL,
+                  `generate_constraints` mediumtext COMMENT '出题约束正文',
+                  `focus_skills` json DEFAULT NULL,
+                  `remark` varchar(255) DEFAULT NULL,
+                  `status` tinyint NOT NULL DEFAULT 1,
+                  `create_by` bigint DEFAULT NULL,
+                  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+                  `update_by` bigint DEFAULT NULL,
+                  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  `is_deleted` tinyint NOT NULL DEFAULT 0,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_scale` (`scale_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='水平等级'
+                """);
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_user_proficiency` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `user_id` bigint NOT NULL,
+                  `active_scale_code` varchar(32) DEFAULT NULL,
+                  `level_code` varchar(32) DEFAULT NULL,
+                  `level_name` varchar(64) DEFAULT NULL,
+                  `estimated_band` decimal(3,1) DEFAULT NULL,
+                  `confidence` varchar(16) DEFAULT NULL COMMENT 'low|medium|high',
+                  `sample_count` int NOT NULL DEFAULT 0,
+                  `dim_json` json DEFAULT NULL,
+                  `weak_skills_json` json DEFAULT NULL,
+                  `recent_bands_json` json DEFAULT NULL,
+                  `last_analysis_id` bigint DEFAULT NULL,
+                  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_user` (`user_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户能力快照'
+                """);
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_user_proficiency_analysis` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `user_id` bigint NOT NULL,
+                  `trigger_grade_id` bigint DEFAULT NULL,
+                  `trigger_source` varchar(32) NOT NULL DEFAULT 'admin_manual',
+                  `active_scale_code` varchar(32) DEFAULT NULL,
+                  `level_code` varchar(32) DEFAULT NULL,
+                  `level_name` varchar(64) DEFAULT NULL,
+                  `estimated_band` decimal(3,1) DEFAULT NULL,
+                  `confidence` varchar(16) DEFAULT NULL,
+                  `sample_count` int NOT NULL DEFAULT 0,
+                  `dim_json` json DEFAULT NULL,
+                  `weak_skills_json` json DEFAULT NULL,
+                  `recent_bands_json` json DEFAULT NULL,
+                  `grade_ids_json` json DEFAULT NULL,
+                  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+                  `create_by` bigint DEFAULT NULL,
+                  PRIMARY KEY (`id`),
+                  KEY `idx_user_time` (`user_id`, `id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户能力测评流水'
+                """);
+        log.info("数据库表检查完成: sys_proficiency_scale / sys_proficiency_level / wd_user_proficiency / wd_user_proficiency_analysis");
+    }
+
+    private void ensureWordPosStatTable(Statement stmt) throws Exception {
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_word_pos_stat` (
+                  `id` bigint NOT NULL AUTO_INCREMENT,
+                  `user_id` bigint NOT NULL,
+                  `word_id` bigint DEFAULT NULL COMMENT 'wd_word.id，可空',
+                  `word_proto` varchar(128) NOT NULL,
+                  `pos` varchar(16) NOT NULL COMMENT 'n|v|adj|adv|phr|other…',
+                  `meaning` varchar(512) DEFAULT NULL COMMENT '该词性对应释义',
+                  `practice_count` int NOT NULL DEFAULT 0 COMMENT '翻译练习中作为目标词出现次数',
+                  `correct_count` int NOT NULL DEFAULT 0 COMMENT '判定正确运用次数',
+                  `spell_practice_count` int NOT NULL DEFAULT 0 COMMENT '拼写练写次数',
+                  `spell_correct_count` int NOT NULL DEFAULT 0 COMMENT '拼写正确次数',
+                  `spell_status` tinyint NOT NULL DEFAULT 0 COMMENT '拼写阶梯0未练1~3复习4熟记',
+                  `spell_status_data` datetime DEFAULT NULL COMMENT '进入当前spell_status的学习日',
+                  `spell_mastered` tinyint NOT NULL DEFAULT 0 COMMENT '书写是否掌握 0否1是（由spell_status=4同步）',
+                  `last_practiced_at` datetime DEFAULT NULL,
+                  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+                  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_user_proto_pos` (`user_id`, `word_proto`, `pos`),
+                  KEY `idx_user_practice` (`user_id`, `practice_count`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='词性运用统计（翻译）'
+                """);
+        log.info("数据库表检查完成: wd_word_pos_stat");
+    }
+
+    /** 旧 spell_mastered=1 → spell_status=4（仅补未迁移行） */
+    private void migrateSpellStatusFromMastered(Statement stmt) {
+        try {
+            int n = stmt.executeUpdate("""
+                    UPDATE wd_word_pos_stat
+                    SET spell_status = 4,
+                        spell_status_data = COALESCE(spell_status_data, update_time, create_time, NOW()),
+                        spell_mastered = 1
+                    WHERE spell_mastered = 1 AND spell_status = 0
+                    """);
+            if (n > 0) {
+                log.info("wd_word_pos_stat 迁移: spell_mastered→spell_status=4 共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("spell_status 迁移跳过: {}", e.getMessage());
+        }
+    }
+
+    /** 拼写阶梯缩短遗留：旧 5/6/7 → 先落到 4（熟记），中间档 3/4 在 align 里再处理 */
+    private void shortenSpellStudyStatuses(Statement stmt) {
+        try {
+            int done = stmt.executeUpdate("""
+                    UPDATE wd_word_pos_stat
+                    SET spell_status = 4,
+                        spell_mastered = 1,
+                        spell_status_data = COALESCE(spell_status_data, update_time, create_time, NOW())
+                    WHERE spell_status IN (5, 6, 7)
+                    """);
+            if (done > 0) {
+                log.info("wd_word_pos_stat 高位状态收拢为熟记=4: {} 行", done);
+            }
+        } catch (Exception e) {
+            log.warn("spell_status 缩短迁移跳过: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 拼写熟记码对齐为 4：一次性把旧熟记 3 → 4。
+     * 用配置标记防重复（否则会把新的 status=3 第二轮复习误升为熟记）。
+     */
+    private void alignSpellStudyStatuses(Connection conn, Statement stmt) {
+        final String flagKey = "migrate.spell_status_mastered_v4";
+        try {
+            try (var ps = conn.prepareStatement(
+                    "SELECT 1 FROM sys_base_config WHERE config_key = ? LIMIT 1")) {
+                ps.setString(1, flagKey);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return;
+                    }
+                }
+            }
+            int n = stmt.executeUpdate("""
+                    UPDATE wd_word_pos_stat
+                    SET spell_status = 4,
+                        spell_mastered = 1,
+                        spell_status_data = COALESCE(spell_status_data, update_time, create_time, NOW())
+                    WHERE spell_status = 3 OR spell_mastered = 1
+                    """);
+            stmt.executeUpdate("""
+                    UPDATE wd_word_pos_stat
+                    SET spell_mastered = CASE WHEN spell_status = 4 THEN 1 ELSE 0 END
+                    """);
+            try (var ps = conn.prepareStatement("""
+                    INSERT IGNORE INTO sys_base_config
+                    (config_key, config_value, value_type, category, description, sort_num)
+                    VALUES (?, '1', 'string', 'migrate', ?, 0)
+                    """)) {
+                ps.setString(1, flagKey);
+                ps.setString(2, "spell_status 熟记码已对齐为 4（勿删）");
+                ps.executeUpdate();
+            }
+            if (n > 0) {
+                log.info("wd_word_pos_stat 阶梯对齐为熟记=4: {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("spell_status 对齐迁移跳过: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 背单词阶梯对齐为 0~6（6=熟记）：一次性把旧熟记码 5/7 → 6。
+     * 用配置标记防重复执行（否则会把新的 status=5 第四轮复习误升为熟记）。
+     */
+    private void alignWordStudyStatuses(Connection conn, Statement stmt) {
+        final String flagKey = "migrate.word_status_mastered_v6";
+        try {
+            try (var ps = conn.prepareStatement(
+                    "SELECT 1 FROM sys_base_config WHERE config_key = ? LIMIT 1")) {
+                ps.setString(1, flagKey);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return;
+                    }
+                }
+            }
+            int n = stmt.executeUpdate("UPDATE wd_word SET status = 6 WHERE status IN (5, 7)");
+            try (var ps = conn.prepareStatement("""
+                    INSERT IGNORE INTO sys_base_config
+                    (config_key, config_value, value_type, category, description, sort_num)
+                    VALUES (?, '1', 'string', 'migrate', ?, 0)
+                    """)) {
+                ps.setString(1, flagKey);
+                ps.setString(2, "word status 熟记码已对齐为 6（勿删）");
+                ps.executeUpdate();
+            }
+            if (n > 0) {
+                log.info("wd_word 阶梯对齐为熟记=6: {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("word status 对齐迁移跳过: {}", e.getMessage());
+        }
+    }
+
+    private void seedProficiencyActiveScaleConfig(Connection conn) {
+        try (var ps = conn.prepareStatement("""
+                INSERT IGNORE INTO sys_base_config
+                (config_key, config_value, value_type, category, description, sort_num)
+                VALUES (?, 'cefr', 'string', 'proficiency', ?, 10)
+                """)) {
+            ps.setString(1, "proficiency.active_scale");
+            ps.setString(2, "当前生效水平标尺 code：ielts / cefr / custom（默认 cefr）。");
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: proficiency.active_scale");
+            }
+        } catch (Exception e) {
+            log.warn("写入 proficiency.active_scale 失败: {}", e.getMessage());
+        }
+    }
+
+    private void seedProficiencyScalesAndLevels(Connection conn, Statement stmt) {
+        try {
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM sys_proficiency_scale WHERE is_deleted = 0")) {
+                if (rs.next() && rs.getInt(1) > 0) {
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("检查 sys_proficiency_scale 种子失败: {}", e.getMessage());
+            return;
+        }
+        try {
+            insertScaleWithLevels(conn, "cefr", "CEFR", 1,
+                    new String[][]{
+                            {"A1", "A1", "0.0", "3.0", "Very short simple sentences (8-12 words). Present simple only. No relative clauses, no passive, no idioms."},
+                            {"A2", "A2", "3.0", "4.0", "Short everyday sentences. Present/past simple, basic connectives (and/but/because). Avoid complex noun phrases."},
+                            {"B1", "B1", "4.0", "5.0", "Moderate sentence length. Allowed: present perfect, first conditional, simple relative clauses. Avoid advanced academic jargon."},
+                            {"B2", "B2", "5.0", "6.5", "IELTS-style but clear. Mix simple/complex sentences; limited passive; common academic vocabulary only."},
+                            {"C1", "C1", "6.5", "7.5", "Flexible complex sentences OK; precise academic lexis; still avoid rare idioms and overly dense packing."},
+                            {"C2", "C2", "7.5", "9.0", "Near-native flexibility; sophisticated cohesion allowed; keep natural, not deliberately obscure."}
+                    });
+            insertScaleWithLevels(conn, "ielts", "IELTS Band", 2,
+                    new String[][]{
+                            {"B4", "Band 4", "0.0", "4.0", "Very basic drills. Short clauses; high-frequency words; no complex grammar."},
+                            {"B5", "Band 5", "4.0", "5.0", "Simple paragraph feel. Limited complex sentences; focus on clear meaning over sophistication."},
+                            {"B6", "Band 6", "5.0", "6.0", "Generally effective. Some complex structures OK; keep vocabulary accessible."},
+                            {"B7", "Band 7", "6.0", "7.0", "Good control. Flexible sentence forms; academic themes with common lexis."},
+                            {"B8", "Band 8+", "7.0", "9.0", "Skilled user. Natural complexity allowed; still recycle the given vocabulary."}
+                    });
+            insertScaleWithLevels(conn, "custom", "产品等级", 3,
+                    new String[][]{
+                            {"L1", "入门 L1", "0.0", "3.0", "入门：超短句，现在时为主，禁止复杂从句与被动。"},
+                            {"L2", "基础 L2", "3.0", "4.0", "基础：日常短句，and/but/because，避免学术难词。"},
+                            {"L3", "进阶 L3", "4.0", "5.0", "进阶：可出现现在完成/简单定语从句，句长适中。"},
+                            {"L4", "中高 L4", "5.0", "6.0", "中高：简单复合句与常见学术词，避免冷僻表达。"},
+                            {"L5", "高阶 L5", "6.0", "7.0", "高阶：灵活句式，连贯自然，仍以给定词为主。"},
+                            {"L6", "精通 L6", "7.0", "9.0", "精通：接近母语灵活度，但仍须优先使用练习词表。"}
+                    });
+            log.info("数据库种子初始化完成: sys_proficiency_scale / sys_proficiency_level");
+        } catch (Exception e) {
+            log.warn("写入水平标尺种子失败: {}", e.getMessage());
+        }
+    }
+
+    private void insertScaleWithLevels(Connection conn, String code, String name, int sort,
+                                       String[][] levels) throws Exception {
+        long scaleId;
+        try (var ps = conn.prepareStatement("""
+                INSERT INTO sys_proficiency_scale(code, name, status, sort_num, remark, create_time, update_time)
+                VALUES (?, ?, 1, ?, 'seed', NOW(), NOW())
+                """, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, code);
+            ps.setString(2, name);
+            ps.setInt(3, sort);
+            ps.executeUpdate();
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (!keys.next()) {
+                    throw new IllegalStateException("no scale id for " + code);
+                }
+                scaleId = keys.getLong(1);
+            }
+        }
+        try (var ps = conn.prepareStatement("""
+                INSERT INTO sys_proficiency_level(
+                  scale_id, code, name, sort_num, band_min, band_max,
+                  generate_constraints, status, create_time, update_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+                """)) {
+            for (int i = 0; i < levels.length; i++) {
+                String[] row = levels[i];
+                ps.setLong(1, scaleId);
+                ps.setString(2, row[0]);
+                ps.setString(3, row[1]);
+                ps.setInt(4, i + 1);
+                ps.setBigDecimal(5, new java.math.BigDecimal(row[2]));
+                ps.setBigDecimal(6, new java.math.BigDecimal(row[3]));
+                ps.setString(7, row[4]);
+                ps.addBatch();
+            }
+            ps.executeBatch();
         }
     }
 

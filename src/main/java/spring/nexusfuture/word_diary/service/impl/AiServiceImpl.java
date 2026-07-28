@@ -13,8 +13,10 @@ import reactor.core.publisher.Flux;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.TextMetrics;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
+import spring.nexusfuture.word_diary.common.WordPosParser;
 import spring.nexusfuture.word_diary.config.AiChatClientRouter;
 import spring.nexusfuture.word_diary.config.AiPromptBuilder;
+import spring.nexusfuture.word_diary.config.AiSceneChatOptionsSupport;
 import spring.nexusfuture.word_diary.dto.response.AiParseResult;
 import spring.nexusfuture.word_diary.dto.ResolvedAiEndpoint;
 import spring.nexusfuture.word_diary.entity.WdAiCallLog;
@@ -75,6 +77,7 @@ public class AiServiceImpl implements AiService {
             userPrompt = promptBuilder.buildWordParseUserPrompt(userId, wordsList);
 
             SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
+            AiSceneChatOptionsSupport.bindExtraBody(call.params());
             usedModelKey = call.modelKey();
             ChatResponse chatResponse = call.client().prompt()
                     .options(call.options())
@@ -92,7 +95,9 @@ public class AiServiceImpl implements AiService {
 
             String json = extractJsonArray(content);
             try {
-                return objectMapper.readValue(json, new TypeReference<List<AiParseResult>>() {});
+                List<AiParseResult> results = objectMapper.readValue(json, new TypeReference<List<AiParseResult>>() {});
+                canonicalizeParseResults(results);
+                return results;
             } catch (Exception e) {
                 log.error("AI返回JSON解析失败, 原始内容: {}", content, e);
                 throw new RuntimeException("AI 返回数据解析失败，请重试", e);
@@ -105,6 +110,8 @@ public class AiServiceImpl implements AiService {
                         e.getMessage(), null, usedModelKey, durationMs);
             } catch (Exception ignored) {}
             throw e;
+        } finally {
+            AiSceneChatOptionsSupport.clearExtraBody();
         }
     }
 
@@ -125,6 +132,7 @@ public class AiServiceImpl implements AiService {
         StringBuilder fullResponseText = new StringBuilder();
         final ChatResponse[] lastWithUsage = {null};
         SceneCall call = resolveCall(userId, SCENE_WORD_PARSE);
+        AiSceneChatOptionsSupport.bindExtraBody(call.params());
         String usedModelKey = call.modelKey();
         // chatResponse + streamUsage：末包带 usage，流式结束后写入 token
         return call.client().prompt()
@@ -159,7 +167,8 @@ public class AiServiceImpl implements AiService {
                             durationMs, fullText.length(), lastWithUsage[0] != null);
                     saveCallLog(userId, SCENE_WORD_PARSE, inputText, systemPrompt, userPrompt,
                             fullText, lastWithUsage[0], usedModelKey, durationMs);
-                });
+                })
+                .doFinally(sig -> AiSceneChatOptionsSupport.clearExtraBody());
     }
 
     @Override
@@ -194,6 +203,7 @@ public class AiServiceImpl implements AiService {
 
         long tResolve = System.currentTimeMillis();
         SceneCall call = resolveCall(userId, scene);
+        AiSceneChatOptionsSupport.bindExtraBody(call.params());
         String usedModelKey = call.modelKey();
         log.info("[ai-stream] resolveCall 耗时={}ms model={} 就绪",
                 System.currentTimeMillis() - tResolve, usedModelKey);
@@ -256,7 +266,8 @@ public class AiServiceImpl implements AiService {
                             fullResponseText.length(), lastWithUsage[0] != null);
                     saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt,
                             fullResponseText.toString(), lastWithUsage[0], usedModelKey, durationMs);
-                });
+                })
+                .doFinally(sig -> AiSceneChatOptionsSupport.clearExtraBody());
     }
 
     @Override
@@ -324,26 +335,31 @@ public class AiServiceImpl implements AiService {
     private String invokeOnce(SceneCall call, String systemPrompt, String userPrompt,
                               List<org.springframework.ai.content.Media> media,
                               Long userId, String scene, String rawInput, long startTime) {
-        var promptSpec = call.client().prompt()
-                .options(OpenAiChatOptions.builder().model(call.modelKey()).build())
-                .system(systemPrompt != null ? systemPrompt : "");
-        ChatResponse chatResponse;
-        if (media != null && !media.isEmpty()) {
-            org.springframework.ai.chat.messages.UserMessage userMessage =
-                    new org.springframework.ai.chat.messages.UserMessage(
-                            userPrompt != null ? userPrompt : "", media);
-            chatResponse = promptSpec.messages(userMessage).call().chatResponse();
-        } else {
-            chatResponse = promptSpec
-                    .user(userPrompt != null ? userPrompt : "")
-                    .call()
-                    .chatResponse();
+        AiSceneChatOptionsSupport.bindExtraBody(call.params());
+        try {
+            var promptSpec = call.client().prompt()
+                    .options(call.options())
+                    .system(systemPrompt != null ? systemPrompt : "");
+            ChatResponse chatResponse;
+            if (media != null && !media.isEmpty()) {
+                org.springframework.ai.chat.messages.UserMessage userMessage =
+                        new org.springframework.ai.chat.messages.UserMessage(
+                                userPrompt != null ? userPrompt : "", media);
+                chatResponse = promptSpec.messages(userMessage).call().chatResponse();
+            } else {
+                chatResponse = promptSpec
+                        .user(userPrompt != null ? userPrompt : "")
+                        .call()
+                        .chatResponse();
+            }
+            int durationMs = (int) (System.currentTimeMillis() - startTime);
+            String content = chatResponse.getResult().getOutput().getText();
+            saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt, content,
+                    chatResponse, call.modelKey(), durationMs);
+            return content != null ? content : "";
+        } finally {
+            AiSceneChatOptionsSupport.clearExtraBody();
         }
-        int durationMs = (int) (System.currentTimeMillis() - startTime);
-        String content = chatResponse.getResult().getOutput().getText();
-        saveCallLog(userId, scene, rawInput, systemPrompt, userPrompt, content,
-                chatResponse, call.modelKey(), durationMs);
-        return content != null ? content : "";
     }
 
     /** DeepSeek 等官方 API 目前多为纯文本；带图请求易 Broken pipe / 参数拒绝 */
@@ -393,23 +409,23 @@ public class AiServiceImpl implements AiService {
         return last;
     }
 
-    private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey, String provider) {}
+    private record SceneCall(ChatClient client, OpenAiChatOptions options, String modelKey, String provider,
+                             spring.nexusfuture.word_diary.dto.AiSceneCallParams params) {}
 
     /** 场景 + 用户地区 → DB 模型 + provider → ChatClient */
     private SceneCall resolveCall(Long userId, String sceneKey) {
         String region = aiRegionResolver.resolveEffectiveRegion(userId);
         ResolvedAiEndpoint endpoint = aiModelService.requireEndpointForScene(sceneKey, region);
-        log.info("AI 场景={} region={} 使用模型={} provider={}",
-                sceneKey, region, endpoint.modelKey(), endpoint.provider());
+        var params = endpoint.paramsOrEmpty();
+        log.info("AI 场景={} region={} 使用模型={} provider={} temp={} thinking={}",
+                sceneKey, region, endpoint.modelKey(), endpoint.provider(),
+                params.temperature(), params.thinkingMode());
         return new SceneCall(
                 chatClientRouter.require(endpoint.provider()),
-                OpenAiChatOptions.builder()
-                        .model(endpoint.modelKey())
-                        // 开启后末包带回 usage；OpenAI 兼容网关一般不影响增量推流
-                        .streamUsage(true)
-                        .build(),
+                AiSceneChatOptionsSupport.buildOptions(endpoint, true),
                 endpoint.modelKey(),
-                endpoint.provider()
+                endpoint.provider(),
+                params
         );
     }
 
@@ -537,6 +553,17 @@ public class AiServiceImpl implements AiService {
             log.warn("提取 token usage 失败: {}", e.getMessage());
         }
         return new org.springframework.ai.chat.metadata.EmptyUsage();
+    }
+
+    private static void canonicalizeParseResults(List<AiParseResult> results) {
+        if (results == null) {
+            return;
+        }
+        for (AiParseResult r : results) {
+            if (r != null) {
+                r.setPartSpeechMean(WordPosParser.canonicalize(r.getPartSpeechMean()));
+            }
+        }
     }
 
     private String extractJsonArray(String text) {

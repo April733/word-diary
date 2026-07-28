@@ -589,8 +589,7 @@ INSERT IGNORE INTO `sys_ai_provider`
 (`provider_key`, `display_name`, `base_url`, `api_key`, `sort_num`, `is_enabled`, `remark`)
 VALUES
 ('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
-('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
-('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写');
+('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写');
 
 -- =============================================
 -- 2026-07-18: AI 线路地区（与语言分离）

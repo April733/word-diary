@@ -26,7 +26,7 @@ public interface StudyService {
 
     /**
      * 按计划状态筛选词表。
-     * status: pending(=0) | learning(NOT IN 0,7) | mastered(=7) | all（默认 all）
+     * status: pending(=0) | learning(NOT IN 0,6) | mastered(=6) | all（默认 all）
      *
      * @param userId 当前用户 ID
      * @param status 筛选状态，可为空表示 all

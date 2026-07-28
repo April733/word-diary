@@ -414,7 +414,7 @@
               @change="(checked: boolean) => toggleFeatureKey(f.featureKey, checked)"
             />
             <span class="ai-pref-name">{{ featureLabel(f) }}</span>
-            <span class="ai-pref-desc">{{ f.description }}</span>
+            <span class="ai-pref-desc">{{ featureDesc(f) }}</span>
           </div>
         </div>
       </div>
@@ -481,7 +481,7 @@ import {
   getBookDetail, getBookFileUrl,
   getChapterAnnotations, getAnnotations,
   getReaderSettings, saveReaderSettings,
-  getAiFeatures, getAiFeaturePreferences, saveAiFeaturePreferences,
+  getAiFeaturePreferences, saveAiFeaturePreferences,
   getAiSessions, getAiMessagesPaged,
   getBookNotebookLinks
 } from '../api'
@@ -500,6 +500,12 @@ import {
   type CollectEntry
 } from '../utils/collectBasket'
 import { normalizeSelectedText, pickSentenceForLemma, tokenizeContextSegments } from '../utils/selectedText'
+import {
+  AI_FEATURE_CATALOG,
+  AI_FEATURE_KEYS,
+  normalizeAiFeatureKeys,
+  type AiFeatureDef
+} from '../utils/aiFeatures'
 import {
   formatAnalyzeResultMarkdown,
   normalizeDisplayFeatureKeys,
@@ -703,16 +709,12 @@ function onContextWordDblClick(i: number) {
   window.getSelection()?.removeAllRanges()
 }
 
-// AI 功能列表（从数据库动态加载）
-const aiFeatures = ref<{ featureKey: string; featureName: string; description?: string }[]>([])
+// AI 功能：前端固定目录 + 用户偏好（wd_user_ai_preference）
 const aiFeaturesLoading = ref(false)
-
-// AI 功能偏好
-const allAiFeatures = ref<{ featureKey: string; featureName: string; description?: string }[]>([])
-const preferredFeatureKeys = ref<string[]>([])
+const preferredFeatureKeys = ref<string[]>([...AI_FEATURE_KEYS])
 const selectedFeatureKeys = ref<string[]>([])
-const selectedFeatureKeysForQuery = ref<string[]>([])
-const featureOrder = ref<string[]>([])
+const selectedFeatureKeysForQuery = ref<string[]>([...AI_FEATURE_KEYS])
+const featureOrder = ref<string[]>([...AI_FEATURE_KEYS])
 const showAiPrefDialog = ref(false)
 const aiPrefSaving = ref(false)
 
@@ -884,18 +886,28 @@ function collectableEntriesOf(msg: AiMessage): CollectEntry[] {
 function mergeCollectEntriesFromMessage(msg: AiMessage, snippet = ''): CollectEntry[] {
   const map = new Map<string, CollectEntry>()
   const snip = snippet || msg.collectSourceSnippet || ''
+  const mergeEntry = (e: CollectEntry) => {
+    const existing = map.get(e.basketKey)
+    if (!existing) {
+      map.set(e.basketKey, e)
+    } else {
+      // 同词条多条目：合并释义（AI 可能分多条返回同一词的不同含义）
+      const merged = existing.partSpeechMean + '；' + e.partSpeechMean
+      map.set(e.basketKey, { ...existing, partSpeechMean: merged })
+    }
+  }
   for (const e of collectableEntriesOf(msg)) {
-    map.set(e.basketKey, e)
+    mergeEntry(e)
   }
   if (msg.analyzeResult) {
     for (const e of collectEntriesFromKeyBasedResult(msg.analyzeResult, snip)) {
-      if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+      mergeEntry(e)
     }
   }
   if (!msg.analyzeResult && msg.content) {
     for (const e of parseCollectEntriesFromText(msg.content, snip)) {
       if (e.entryType !== 'word' && e.entryType !== 'phrase') continue
-      if (!map.has(e.basketKey)) map.set(e.basketKey, e)
+      mergeEntry(e)
     }
   }
   return [...map.values()]
@@ -1018,6 +1030,8 @@ function attachCollectEntriesToMessage(answerIndex: number, rawEntries: any[], s
   const entries = normalizeCollectEntries(rawEntries, snippet)
   const msg = aiMessages.value[answerIndex]
   if (!msg || entries.length === 0) return
+  // 已有 analyzeResult 时不覆盖 collectEntries，统一由 mergeCollectEntriesFromMessage 合并，避免重复
+  if (msg.analyzeResult) return
   aiMessages.value[answerIndex] = {
     ...msg,
     collectEntries: entries,
@@ -1088,12 +1102,13 @@ function attachAnalyzeResultToMessage(
     (k) => pruned[k] != null && pruned[k] !== '' && !(Array.isArray(pruned[k]) && !(pruned[k] as any[]).length)
   )
   // 始终清掉 content 里的 JSON；有结构就走 analyzeResult，避免右侧刷原始 JSON
+  // 有 analyzeResult 时不再设 collectEntries，统一由 mergeCollectEntriesFromMessage 合并，避免重复
   aiMessages.value[answerIndex] = {
     ...msg,
     featureKeys: keys.length ? keys : msg.featureKeys,
     content: hasDisplay ? '' : '',
     analyzeResult: hasDisplay ? pruned : undefined,
-    collectEntries: entries.length ? entries : msg.collectEntries,
+    collectEntries: hasDisplay ? undefined : (entries.length ? entries : msg.collectEntries),
     collectSourceSnippet: snippet || msg.collectSourceSnippet
   }
   // 若仍无结构，把原始文本放 content，但展示层还会再尝试 parse
@@ -1201,16 +1216,31 @@ function processSseEventBlock(
 // 拖拽排序相关
 const dragIndex = ref<number | null>(null)
 
-// 弹窗功能列表：后端 allFeatures 已按 featureOrder 排好
-const orderedAllFeatures = computed(() => allAiFeatures.value)
-
-// 标签栏：按 preferredKeys 顺序取后台下发的功能
-const preferredAiFeatures = computed(() => {
-  const map = new Map(allAiFeatures.value.map((f) => [f.featureKey, f]))
-  return preferredFeatureKeys.value
+// 弹窗功能列表：按用户排序展示固定目录
+const orderedAllFeatures = computed(() => {
+  const map = new Map(AI_FEATURE_CATALOG.map((f) => [f.featureKey, f]))
+  return featureOrder.value
     .map((k) => map.get(k))
-    .filter((f): f is NonNullable<typeof f> => !!f)
+    .filter((f): f is AiFeatureDef => !!f)
 })
+
+// 标签栏：启用项按 featureOrder（拖拽顺序）排列
+const preferredAiFeatures = computed(() => {
+  const map = new Map(AI_FEATURE_CATALOG.map((f) => [f.featureKey, f]))
+  const enabled = new Set(preferredFeatureKeys.value)
+  return featureOrder.value
+    .filter((k) => enabled.has(k))
+    .map((k) => map.get(k))
+    .filter((f): f is AiFeatureDef => !!f)
+})
+
+/** 把弹窗内勾选 + 拖拽顺序落到页面状态（preferredKeys 必须跟 featureOrder 对齐） */
+function applyLocalAiPreferences(keys: string[], order: string[]) {
+  const normalized = normalizeAiFeatureKeys(keys, order)
+  preferredFeatureKeys.value = normalized.preferredKeys
+  featureOrder.value = normalized.featureOrder
+  selectedFeatureKeysForQuery.value = [...normalized.preferredKeys]
+}
 
 // 页码信息
 const pageInfo = ref({ current: 0, total: 0 })
@@ -1242,33 +1272,16 @@ async function loadAiFeatures() {
   aiFeaturesLoading.value = true
   try {
     const prefRes = await getAiFeaturePreferences(locale.value)
-    const data = prefRes.data.data
-    // 后端已按 featureOrder 排好 allFeatures / preferredKeys，前端直接用
-    allAiFeatures.value = data.allFeatures || []
-    preferredFeatureKeys.value = data.preferredKeys?.length
-      ? data.preferredKeys
-      : allAiFeatures.value.map((f) => f.featureKey)
-    featureOrder.value = data.featureOrder?.length
-      ? data.featureOrder
-      : allAiFeatures.value.map((f) => f.featureKey)
-    selectedFeatureKeysForQuery.value = [...preferredFeatureKeys.value]
+    const data = prefRes.data.data || {}
+    const normalized = normalizeAiFeatureKeys(data.preferredKeys, data.featureOrder)
+    preferredFeatureKeys.value = normalized.preferredKeys
+    featureOrder.value = normalized.featureOrder
+    selectedFeatureKeysForQuery.value = [...normalized.preferredKeys]
   } catch (e) {
-    console.error('[Reader] 加载AI功能偏好失败，降级加载全部功能:', e)
-    try {
-      const res = await getAiFeatures(locale.value)
-      aiFeatures.value = res.data.data || []
-      allAiFeatures.value = aiFeatures.value
-      preferredFeatureKeys.value = allAiFeatures.value.map(f => f.featureKey)
-      featureOrder.value = allAiFeatures.value.map(f => f.featureKey)
-      selectedFeatureKeysForQuery.value = [...preferredFeatureKeys.value]
-    } catch (e2) {
-      console.warn('[Reader] 加载AI功能列表失败:', e2)
-      aiFeatures.value = []
-      allAiFeatures.value = []
-      preferredFeatureKeys.value = []
-      featureOrder.value = []
-      selectedFeatureKeysForQuery.value = []
-    }
+    console.warn('[Reader] 加载AI功能偏好失败，使用默认全部启用:', e)
+    preferredFeatureKeys.value = [...AI_FEATURE_KEYS]
+    featureOrder.value = [...AI_FEATURE_KEYS]
+    selectedFeatureKeysForQuery.value = [...AI_FEATURE_KEYS]
   } finally {
     aiFeaturesLoading.value = false
   }
@@ -1278,10 +1291,27 @@ watch(locale, () => {
   void loadAiFeatures()
 })
 
-/** 功能标签：只用后台下发的 featureName（接口已按 locale 解析） */
-function featureLabel(f: { featureKey: string; featureName?: string }) {
-  const name = f.featureName?.trim()
-  return name || f.featureKey
+function featureLabel(f: { featureKey: string; nameKey?: string; featureName?: string }) {
+  if (f.nameKey) return t(f.nameKey)
+  const def = AI_FEATURE_CATALOG.find((x) => x.featureKey === f.featureKey)
+  if (def) return t(def.nameKey)
+  return f.featureName?.trim() || f.featureKey
+}
+
+function featureDesc(f: AiFeatureDef) {
+  return t(f.descKey)
+}
+
+function featureTitleByKey(key: string) {
+  const def = AI_FEATURE_CATALOG.find((x) => x.featureKey === key)
+  return def ? t(def.nameKey) : key
+}
+
+function featureMetaForDisplay() {
+  return AI_FEATURE_CATALOG.map((f) => ({
+    featureKey: f.featureKey,
+    featureName: t(f.nameKey)
+  }))
 }
 
 /** 进入阅读器时恢复该书最近会话历史（无会话列表 / 新对话入口） */
@@ -1373,12 +1403,12 @@ let autoSavePending = false
 function autoSaveAiPreferences() {
   if (autoSavePending) return
   autoSavePending = true
+  const normalized = normalizeAiFeatureKeys(selectedFeatureKeys.value, featureOrder.value)
   saveAiFeaturePreferences({
-    featureKeys: selectedFeatureKeys.value,
-    featureOrder: featureOrder.value
+    featureKeys: normalized.preferredKeys,
+    featureOrder: normalized.featureOrder
   }).then(() => {
-    preferredFeatureKeys.value = [...selectedFeatureKeys.value]
-    selectedFeatureKeysForQuery.value = [...selectedFeatureKeys.value]
+    applyLocalAiPreferences(normalized.preferredKeys, normalized.featureOrder)
   }).catch(e => {
     console.error('[Reader] 自动保存AI功能偏好失败:', e)
   }).finally(() => {
@@ -1390,12 +1420,12 @@ function autoSaveAiPreferences() {
 function onAiPrefDialogClose() {
   if (autoSavePending) return // 已有请求在进行中，跳过
   autoSavePending = true
+  const normalized = normalizeAiFeatureKeys(selectedFeatureKeys.value, featureOrder.value)
   saveAiFeaturePreferences({
-    featureKeys: selectedFeatureKeys.value,
-    featureOrder: featureOrder.value
+    featureKeys: normalized.preferredKeys,
+    featureOrder: normalized.featureOrder
   }).then(() => {
-    preferredFeatureKeys.value = [...selectedFeatureKeys.value]
-    selectedFeatureKeysForQuery.value = [...selectedFeatureKeys.value]
+    applyLocalAiPreferences(normalized.preferredKeys, normalized.featureOrder)
   }).catch(e => {
     console.warn('[Reader] 自动保存AI功能偏好失败:', e)
   }).finally(() => {
@@ -1444,13 +1474,12 @@ function handleDragEnd() {
 async function saveAiPreferences() {
   aiPrefSaving.value = true
   try {
+    const normalized = normalizeAiFeatureKeys(selectedFeatureKeys.value, featureOrder.value)
     await saveAiFeaturePreferences({
-      featureKeys: selectedFeatureKeys.value,
-      featureOrder: featureOrder.value
+      featureKeys: normalized.preferredKeys,
+      featureOrder: normalized.featureOrder
     })
-    preferredFeatureKeys.value = [...selectedFeatureKeys.value]
-    // 同步更新查询多选框的选中状态
-    selectedFeatureKeysForQuery.value = [...selectedFeatureKeys.value]
+    applyLocalAiPreferences(normalized.preferredKeys, normalized.featureOrder)
     showAiPrefDialog.value = false
     MessagePlugin.success(t('common.saved'))
   } catch (e) {
@@ -2700,9 +2729,9 @@ function displayAnalyzeMessageBody(msg: AiMessage): string {
   if (result) {
     normalizeAnalyzeKeyAliases(result)
     delete result.raw
-    let md = formatAnalyzeResultMarkdown(result, msg.featureKeys, allAiFeatures.value)
+    let md = formatAnalyzeResultMarkdown(result, msg.featureKeys, featureMetaForDisplay())
     if (!md.trim()) {
-      md = formatAnalyzeResultMarkdown(result, null, allAiFeatures.value)
+      md = formatAnalyzeResultMarkdown(result, null, featureMetaForDisplay())
     }
     if (!md.trim()) {
       md = fallbackFormatAnalyzeObject(result)
@@ -2725,6 +2754,7 @@ function normalizeAnalyzeKeyAliases(obj: Record<string, unknown>) {
     ['meaning', ['translation', '译文', '翻译', '释义']],
     ['grammar', ['语法']],
     ['sentence_pattern', ['sentencePattern', '句式']],
+    ['modifier_attachment', ['modifierAttachment', 'modifiers', 'modification', '修饰挂接', '修饰']],
     ['root_affix', ['rootAffix', '词根词缀']],
     ['phonetic', ['音标', '连读音标']],
   ]
@@ -2750,7 +2780,7 @@ function fallbackFormatAnalyzeObject(result: Record<string, unknown>): string {
   for (const [key, value] of Object.entries(result || {})) {
     if (key === 'raw' || value == null || value === '') continue
     if (Array.isArray(value) && value.length === 0) continue
-    const title = allAiFeatures.value.find((f) => f.featureKey === key)?.featureName || key
+    const title = featureTitleByKey(key)
     lines.push(`${title}：`)
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
       lines.push(String(value), '')
@@ -3319,6 +3349,16 @@ function repairAnalyzeJson(text: string): Record<string, unknown> | null {
 
 .ai-msg-content--analyze :deep(span.ai-section:first-child) {
   margin-top: 0;
+}
+
+.ai-msg-content--analyze :deep(span.ai-subsection) {
+  display: block;
+  margin-top: 6px;
+  margin-bottom: 2px;
+  color: #5e57b5;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .ai-msg-content--analyze :deep(strong.ai-term) {

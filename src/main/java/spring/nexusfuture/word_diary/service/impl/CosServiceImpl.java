@@ -7,6 +7,8 @@ import com.qcloud.cos.auth.COSCredentials;
 import com.qcloud.cos.exception.CosClientException;
 import com.qcloud.cos.http.HttpMethodName;
 import com.qcloud.cos.http.HttpProtocol;
+import com.qcloud.cos.model.BucketCrossOriginConfiguration;
+import com.qcloud.cos.model.CORSRule;
 import com.qcloud.cos.model.COSObject;
 import com.qcloud.cos.model.COSObjectInputStream;
 import com.qcloud.cos.model.GetObjectRequest;
@@ -24,6 +26,7 @@ import spring.nexusfuture.word_diary.service.CosService;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.Date;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -65,6 +68,42 @@ public class CosServiceImpl implements CosService {
         this.cosClient = new COSClient(cred, clientConfig);
         log.info("COS 客户端初始化完成: region={}, bucket={}, bypassSystemProxy={}",
                 region, bucket, bypassSystemProxy);
+        ensureBrowserUploadCors();
+    }
+
+    /**
+     * 浏览器 PUT 直传依赖桶 CORS。启动时确保允许生产站与本地开发源。
+     * 失败只打日志，不阻断服务启动。
+     */
+    private void ensureBrowserUploadCors() {
+        if (cosClient == null || bucket == null || bucket.isBlank()) {
+            return;
+        }
+        try {
+            CORSRule rule = new CORSRule()
+                    .withId("aikoread-browser-put")
+                    .withAllowedOrigins(List.of(
+                            "https://aikoread.top",
+                            "http://localhost:5173",
+                            "http://127.0.0.1:5173",
+                            "http://localhost:5174",
+                            "http://127.0.0.1:5174"
+                    ))
+                    .withAllowedMethods(List.of(
+                            CORSRule.AllowedMethods.PUT,
+                            CORSRule.AllowedMethods.GET,
+                            CORSRule.AllowedMethods.HEAD,
+                            CORSRule.AllowedMethods.POST
+                    ))
+                    .withAllowedHeaders(List.of("*"))
+                    .withExposedHeaders(List.of("ETag", "x-cos-request-id", "x-cos-version-id"))
+                    .withMaxAgeSeconds(3600);
+            BucketCrossOriginConfiguration cors = new BucketCrossOriginConfiguration().withRules(rule);
+            cosClient.setBucketCrossOriginConfiguration(bucket, cors);
+            log.info("COS 桶 CORS 已配置（浏览器直传）: bucket={}", bucket);
+        } catch (Exception e) {
+            log.warn("配置 COS 桶 CORS 失败（直传可能被浏览器拦截）: {}", e.getMessage());
+        }
     }
 
     /** 清除会劫持出站连接的 JVM 代理属性（常见于 Clash / IDE HTTP Proxy 残留） */
@@ -159,6 +198,38 @@ public class CosServiceImpl implements CosService {
         } catch (Exception e) {
             log.error("生成签名 URL 失败: key={}, bucket={}, region={}", fullKey, bucket, region, e);
             throw new BizException("生成文件访问链接失败: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public String generatePresignedPutUrl(String key, String contentType) {
+        ensureClient();
+        if (bucket == null || bucket.isBlank()) {
+            throw new BizException("COS bucket 未配置");
+        }
+        if (key == null || key.isBlank()) {
+            throw new BizException("文件路径为空");
+        }
+        String fullKey = buildKey(key);
+        Date expiration = new Date(System.currentTimeMillis() + 3600 * 1000L);
+        try {
+            com.qcloud.cos.model.GeneratePresignedUrlRequest req =
+                    new com.qcloud.cos.model.GeneratePresignedUrlRequest(bucket, fullKey, HttpMethodName.PUT);
+            req.setExpiration(expiration);
+            if (contentType != null && !contentType.isBlank()) {
+                req.setContentType(contentType);
+            }
+            URL url = cosClient.generatePresignedUrl(req);
+            if (url == null) {
+                throw new BizException("生成上传链接失败: 返回空 URL");
+            }
+            log.info("生成 PUT 签名 URL: key={}, contentType={}", fullKey, contentType);
+            return url.toString();
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("生成 PUT 签名 URL 失败: key={}", fullKey, e);
+            throw new BizException("生成上传链接失败: " + e.getMessage());
         }
     }
 

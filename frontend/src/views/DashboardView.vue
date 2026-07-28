@@ -48,6 +48,10 @@
           <t-icon name="calendar" size="18px" class="nav-icon" />
           <span>{{ $t('study.sessionTitle') }}</span>
         </button>
+        <button type="button" @click="router.push('/spelling')">
+          <t-icon name="task" size="18px" class="nav-icon" />
+          <span>{{ $t('nav.spelling') }}</span>
+        </button>
         <button type="button" @click="router.push('/translation')">
           <t-icon name="translate" size="18px" class="nav-icon" />
           <span>{{ $t('nav.translation') }}</span>

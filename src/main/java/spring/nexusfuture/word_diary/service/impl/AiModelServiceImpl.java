@@ -13,6 +13,7 @@ import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.config.AiChatClientRouter;
 import spring.nexusfuture.word_diary.dto.response.AiModelTestResultVO;
 import spring.nexusfuture.word_diary.dto.response.AiSceneVO;
+import spring.nexusfuture.word_diary.dto.AiSceneCallParams;
 import spring.nexusfuture.word_diary.dto.ResolvedAiEndpoint;
 import spring.nexusfuture.word_diary.entity.SysAiModel;
 import spring.nexusfuture.word_diary.entity.SysAiScene;
@@ -271,7 +272,25 @@ public class AiModelServiceImpl implements AiModelService {
         if (provider.isBlank()) {
             throw new BizException("模型 " + model.getModelKey() + " 未配置 provider（如 deepseek / aliyun / modelscope）");
         }
-        return new ResolvedAiEndpoint(model.getModelKey().trim(), provider.toLowerCase());
+        return new ResolvedAiEndpoint(
+                model.getModelKey().trim(),
+                provider.toLowerCase(),
+                new AiSceneCallParams(
+                        scene.getTemperature(),
+                        scene.getMaxTokens(),
+                        AiSceneCallParams.normalizeThinkingMode(scene.getThinkingMode()),
+                        scene.getThinkingBudget(),
+                        blankToNull(scene.getReasoningEffort()),
+                        AiSceneCallParams.normalizeResponseFormat(scene.getResponseFormat())
+                )
+        );
+    }
+
+    private static String blankToNull(String s) {
+        if (s == null || s.isBlank()) {
+            return null;
+        }
+        return s.trim();
     }
 
     /** 精确地区 → 对侧地区 → 任意启用行 */
@@ -352,6 +371,11 @@ public class AiModelServiceImpl implements AiModelService {
         if (scene.getSortNum() == null) {
             scene.setSortNum(existing.getSortNum());
         }
+        if (scene.getRemark() == null) {
+            scene.setRemark(existing.getRemark());
+        }
+        // 调用参数以本次提交为准（表单留空 = 恢复供应商默认）
+        normalizeCallParams(scene);
         normalizeScene(scene);
         SysAiScene same = sceneMapper.selectBySceneKeyAndRegion(scene.getSceneKey(), scene.getRegion());
         if (same != null && !same.getId().equals(scene.getId())) {
@@ -499,6 +523,29 @@ public class AiModelServiceImpl implements AiModelService {
         }
         if (scene.getRemark() == null) {
             scene.setRemark("");
+        }
+        normalizeCallParams(scene);
+    }
+
+    private void normalizeCallParams(SysAiScene scene) {
+        scene.setThinkingMode(AiSceneCallParams.normalizeThinkingMode(scene.getThinkingMode()));
+        scene.setResponseFormat(AiSceneCallParams.normalizeResponseFormat(scene.getResponseFormat()));
+        if (scene.getReasoningEffort() != null && scene.getReasoningEffort().isBlank()) {
+            scene.setReasoningEffort(null);
+        } else if (scene.getReasoningEffort() != null) {
+            scene.setReasoningEffort(scene.getReasoningEffort().trim().toLowerCase());
+        }
+        if (scene.getMaxTokens() != null && scene.getMaxTokens() <= 0) {
+            scene.setMaxTokens(null);
+        }
+        if (scene.getThinkingBudget() != null && scene.getThinkingBudget() <= 0) {
+            scene.setThinkingBudget(null);
+        }
+        if (scene.getTemperature() != null) {
+            double t = scene.getTemperature();
+            if (t < 0 || t > 2) {
+                throw new BizException("temperature 须在 0～2 之间");
+            }
         }
     }
 }

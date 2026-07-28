@@ -642,12 +642,17 @@ async function handleForgotPassword() {
 <style scoped>
 .login-page {
   position: relative;
+  /* 100dvh：避免手机浏览器地址栏导致「假 100vh」把内容撑出可视区 */
   min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* 不用 justify-content:center：内容高于视口时顶部会被裁掉，手机看起来像停在中间 */
   padding: 32px 20px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #F6F0E6;
 }
 
@@ -672,6 +677,8 @@ async function handleForgotPassword() {
   z-index: 1;
   width: 100%;
   max-width: 420px;
+  /* 空间够时上下 margin:auto 居中；溢出时 margin 收成 0，从顶部开始可滚 */
+  margin-block: auto;
   transition: max-width 0.2s ease;
 }
 

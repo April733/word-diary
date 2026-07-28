@@ -50,10 +50,20 @@
       <!-- 释义出现后固定在底部，避免长释义把按钮顶出屏幕 -->
       <div v-if="currentWord && showAnswer" class="action-bar">
         <div class="action-bar-inner">
-          <button type="button" class="act act--pass" @click="handleAnswer(0)">
+          <button
+            type="button"
+            class="act act--pass"
+            :disabled="answering"
+            @click="handleAnswer(0)"
+          >
             {{ $t('study.forget') }}
           </button>
-          <button type="button" class="act act--know" @click="handleAnswer(1)">
+          <button
+            type="button"
+            class="act act--know"
+            :disabled="answering"
+            @click="handleAnswer(1)"
+          >
             {{ $t('study.know') }}
           </button>
         </div>
@@ -103,6 +113,7 @@ import {
 const router = useRouter()
 const { t } = useI18n()
 const loading = ref(true)
+const answering = ref(false)
 const showAnswer = ref(false)
 const session = ref<any>(null)
 const today = ref({
@@ -167,12 +178,15 @@ function applySession(data: any) {
 }
 
 async function handleAnswer(feedback: number) {
-  if (!currentWord.value || !showAnswer.value) return
+  if (!currentWord.value || !showAnswer.value || answering.value) return
+  answering.value = true
+  const wordId = currentWord.value.wordId
+  const answeredPhase = phase.value
   try {
     const res = await submitStudyAnswer({
-      wordId: currentWord.value.wordId,
+      wordId,
       feedback,
-      phase: phase.value
+      phase: answeredPhase
     })
     const data = res.data.data
     if (data.today) {
@@ -185,19 +199,23 @@ async function handleAnswer(feedback: number) {
     if (data.phaseSwitched && today.value.reviewPhaseDone) {
       MessagePlugin.success(t('study.reviewDoneStartNew'))
     }
+    // 切到下个词时再收起释义；请求期间只靠 answering 禁点，避免闪屏
     if (data.next) {
       session.value = {
         ...session.value,
         current: data.next,
         phase: nextPhase
       }
+      showAnswer.value = false
     } else {
       session.value = { ...session.value, current: null, phase: nextPhase }
+      showAnswer.value = false
       MessagePlugin.success(t('study.sessionDone'))
     }
-    showAnswer.value = false
   } catch (e: any) {
     MessagePlugin.error(e.response?.data?.msg || t('study.actionFailed'))
+  } finally {
+    answering.value = false
   }
 }
 
@@ -426,6 +444,13 @@ async function openCompletedList() {
 
 .act:active {
   transform: scale(0.98);
+}
+
+.act:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  pointer-events: none;
 }
 
 .act--pass {

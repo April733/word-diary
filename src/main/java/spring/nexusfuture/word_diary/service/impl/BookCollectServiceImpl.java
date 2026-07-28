@@ -3,6 +3,7 @@ package spring.nexusfuture.word_diary.service.impl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
+import spring.nexusfuture.word_diary.common.WordPosParser;
 import spring.nexusfuture.word_diary.common.WordStudyStatus;
 import spring.nexusfuture.word_diary.dto.request.BookCollectReq;
 import spring.nexusfuture.word_diary.dto.response.BookCollectResultVO;
@@ -97,7 +98,7 @@ public class BookCollectServiceImpl implements BookCollectService {
                     .notebookId(req.getNotebookId())
                     .userId(userId)
                     .wordProto(proto)
-                    .partSpeechMean(item.getPartSpeechMean().trim())
+                    .partSpeechMean(WordPosParser.canonicalize(item.getPartSpeechMean()))
                     .usPhonetic(emptyToNull(item.getUsPhonetic()))
                     .ukPhonetic(emptyToNull(item.getUkPhonetic()))
                     .sentenceExample(example)
@@ -127,7 +128,7 @@ public class BookCollectServiceImpl implements BookCollectService {
                                String fullSnippet, String sourceLocation) {
         String sentence = pickSentenceForLemma(fullSnippet, existing.getWordProto());
         String example = toOriginalExample(sentence);
-        existing.setPartSpeechMean(item.getPartSpeechMean().trim());
+        existing.setPartSpeechMean(WordPosParser.canonicalize(item.getPartSpeechMean()));
         existing.setUsPhonetic(emptyToNull(item.getUsPhonetic()));
         existing.setUkPhonetic(emptyToNull(item.getUkPhonetic()));
         existing.setRootAffix(emptyToNull(item.getRootAffix()));

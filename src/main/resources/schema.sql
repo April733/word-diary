@@ -159,8 +159,7 @@ INSERT IGNORE INTO `sys_ai_provider`
 (`provider_key`, `display_name`, `base_url`, `api_key`, `sort_num`, `is_enabled`, `remark`)
 VALUES
 ('deepseek', 'DeepSeek', 'https://api.deepseek.com', '', 1, 1, '密钥可由 yml 引导或后台填写'),
-('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写'),
-('modelscope', '魔塔 ModelScope', 'https://api-inference.modelscope.cn', '', 3, 1, '密钥可由 yml 引导或后台填写');
+('aliyun', '阿里云百炼', 'https://dashscope.aliyuncs.com/compatible-mode', '', 2, 1, '密钥可由 yml 引导或后台填写');
 
 -- =============================================
 -- AI 模型目录（与场景解耦，可被多个场景复用）
@@ -204,6 +203,12 @@ CREATE TABLE IF NOT EXISTS `sys_ai_scene` (
   `scene_name` varchar(64) NOT NULL COMMENT '场景描述',
   `region` varchar(16) NOT NULL DEFAULT 'cn' COMMENT '路由区 cn|global',
   `model_key` varchar(64) NOT NULL COMMENT '对应 sys_ai_model.model_key',
+  `temperature` decimal(4,2) DEFAULT NULL COMMENT '采样温度，空=供应商默认',
+  `max_tokens` int DEFAULT NULL COMMENT '最大生成token，空=默认',
+  `thinking_mode` varchar(16) DEFAULT NULL COMMENT '思考模式 enabled|disabled|空=默认',
+  `thinking_budget` int DEFAULT NULL COMMENT '思考token预算',
+  `reasoning_effort` varchar(16) DEFAULT NULL COMMENT 'reasoning_effort low|medium|high',
+  `response_format` varchar(32) DEFAULT NULL COMMENT 'response_format json_object|text|空=不传',
   `sort_num` int NOT NULL DEFAULT 0,
   `is_enabled` tinyint NOT NULL DEFAULT 1,
   `remark` varchar(512) DEFAULT '',
@@ -324,7 +329,7 @@ INSERT IGNORE INTO `sys_base_config` (`config_key`, `config_value`, `value_type`
  '进入埋点页后前端先本地计时；停留满该秒数才写入时长表，未满则丢弃（不对用户暴露，默认120）。', 4);
 
 -- =============================================
--- AI 阅读功能配置表（可动态扩展的功能选项）
+-- AI 阅读功能配置表（已废弃：功能目录与 prompt 改由前端常量 + 场景提示词承担；表保留不 DROP）
 -- =============================================
 CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -333,7 +338,7 @@ CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
   `description` varchar(255) NOT NULL COMMENT '功能描述，中文源文',
   `name_i18n` json DEFAULT NULL COMMENT '标签多语言 JSON: en/id/th/vi',
   `description_i18n` json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi',
-  `prompt` text COMMENT 'AI提示词，传递给大模型的详细指令',
+  `prompt` text COMMENT 'AI提示词（废弃，代码不再读取）',
   `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
   `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
   `create_by` bigint DEFAULT NULL COMMENT '创建人',
@@ -343,11 +348,11 @@ CREATE TABLE IF NOT EXISTS `sys_ai_feature` (
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_feature_key` (`feature_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI阅读功能配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI阅读功能配置表（废弃，代码路径已停用）';
 
--- 种子数据：默认AI阅读功能
+-- 种子数据：历史默认功能（运行时不再读取；保留兼容旧库）
 INSERT IGNORE INTO `sys_ai_feature` (`feature_key`, `feature_name`, `description`, `prompt`, `sort_num`) VALUES
-('word', '单词', '讲解重难点单词的词性、含义和用法', '在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}', 1),
+('word', '单词', '讲解重难点单词的词性、含义和用法', '在 JSON 键 \"word\" 写词条数组。仅解析场景中的目标词。元素：word, meaning, usPhonetic, ukPhonetic, rootAffix(可空)。【词性释义格式】meaning=英文词性缩写+\". \"+释义；多词性只用中文分号「；」分隔。允许：n/v/adj/adv/prep/conj/pron/num/int/phr。例：n. 评论家；v. 评论。禁止「名词，意为…」、禁止逗号/斜杠串联。短语用 phr. 释义。例：{\"word\":[{\"word\":\"reviewer\",\"meaning\":\"n. 评论家\",\"usPhonetic\":\"/…/\",\"ukPhonetic\":\"/…/\",\"rootAffix\":\"re- + view + -er\"}]}', 1),
 ('meaning', '释义', '翻译和释义选中的句子或段落', '在 JSON 键 \"meaning\" 写整句/段落译文（字符串）。例：{\"meaning\":\"…\"}', 2),
 ('collocation', '固搭', '分析固定搭配和短语用法', '在 JSON 键 \"collocation\" 写固定搭配数组。元素：word, meaning。例：{\"collocation\":[{\"word\":\"examples of\",\"meaning\":\"…的例子\"}]}', 3),
 ('sentence_pattern', '句式', '分析句式结构与句子骨架', '在 JSON 顶层键 \"sentence_pattern\" 按三行填写：句式 / 句子类型 / 功能。例：{\"sentence_pattern\":\"句式：…\\\\n句子类型：…\\\\n功能：…\"}', 4),

@@ -1,32 +1,23 @@
 package spring.nexusfuture.word_diary.service;
 
 import spring.nexusfuture.word_diary.dto.response.AiFeaturePreferenceVO;
-import spring.nexusfuture.word_diary.entity.SysAiFeature;
 
 import java.util.List;
 
-/** 客户端 AI 功能卡片：列表、用户偏好与排序。 */
+/** 客户端 AI 功能偏好：读写 wd_user_ai_preference（白名单校验）。 */
 public interface AiFeatureService {
 
     /**
-     * 列出已启用的 AI 功能（按 locale 解析名称与描述）。
-     *
-     * @param locale 语言区域，如 zh-CN、en
-     * @return 功能实体列表
-     */
-    List<SysAiFeature> listActiveFeatures(String locale);
-
-    /**
-     * 获取用户偏好与全量功能列表（featureName/description 已按 locale 解析）。
+     * 获取用户偏好（preferredKeys / featureOrder）；非法 key 已过滤，缺省=全部启用。
      *
      * @param userId 当前用户 ID
-     * @param locale 语言区域
-     * @return 偏好与功能列表 VO
+     * @param locale 语言区域（保留参数，前端自带目录文案）
+     * @return 偏好 VO
      */
     AiFeaturePreferenceVO getPreferences(Long userId, String locale);
 
     /**
-     * 保存用户 AI 功能偏好（含启用项与排序）。
+     * 保存用户 AI 功能偏好（含启用项与排序）；仅写入白名单内 key。
      *
      * @param userId 当前用户 ID
      * @param featureKeys 启用的功能 key 列表

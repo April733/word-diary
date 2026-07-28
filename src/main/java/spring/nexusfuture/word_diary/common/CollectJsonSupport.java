@@ -134,7 +134,7 @@ public final class CollectJsonSupport {
             out.add(CollectEntryDTO.builder()
                     .entryType("phrase".equalsIgnoreCase(type) ? "phrase" : "word")
                     .wordProto(word.trim())
-                    .partSpeechMean(meaning.trim())
+                    .partSpeechMean(WordPosParser.canonicalize(meaning.trim()))
                     .usPhonetic(asStr(m.get("usPhonetic")))
                     .ukPhonetic(asStr(m.get("ukPhonetic")))
                     .rootAffix(asStr(m.get("rootAffix")))
@@ -267,6 +267,7 @@ public final class CollectJsonSupport {
         remapAlias(payload, "meaning", "translation", "译文", "翻译", "释义");
         remapAlias(payload, "grammar", "语法");
         remapAlias(payload, "sentence_pattern", "sentencePattern", "句式");
+        remapAlias(payload, "modifier_attachment", "modifierAttachment", "modifiers", "modification", "修饰挂接", "修饰");
         remapAlias(payload, "root_affix", "rootAffix", "词根词缀");
         remapAlias(payload, "phonetic", "连读音标", "音标");
     }

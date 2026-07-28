@@ -5,128 +5,55 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
+import spring.nexusfuture.word_diary.common.AiFeatureKeys;
 import spring.nexusfuture.word_diary.dto.response.AiFeaturePreferenceVO;
-import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.WdUserAiPreference;
-import spring.nexusfuture.word_diary.mapper.SysAiFeatureMapper;
 import spring.nexusfuture.word_diary.mapper.WdUserAiPreferenceMapper;
 import spring.nexusfuture.word_diary.service.AiFeatureService;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class AiFeatureServiceImpl implements AiFeatureService {
 
-    private final SysAiFeatureMapper featureMapper;
     private final WdUserAiPreferenceMapper preferenceMapper;
     private final ObjectMapper objectMapper;
 
     @Override
-    public List<SysAiFeature> listActiveFeatures(String locale) {
-        List<SysAiFeature> list = featureMapper.selectActiveList();
-        AiFeatureI18nSupport.resolveAllInPlace(list, locale);
-        return list;
-    }
-
-    @Override
     public AiFeaturePreferenceVO getPreferences(Long userId, String locale) {
-        List<SysAiFeature> allFeatures = featureMapper.selectActiveList();
-        List<String> preferredKeys = new ArrayList<>();
-        List<String> featureOrder = new ArrayList<>();
+        List<String> preferredKeys = List.of();
+        List<String> featureOrder = List.of();
 
         WdUserAiPreference pref = preferenceMapper.selectByUserId(userId);
         if (pref != null && pref.getFeatureKeys() != null && !pref.getFeatureKeys().isEmpty()) {
             try {
-                preferredKeys = objectMapper.readValue(pref.getFeatureKeys(), new TypeReference<List<String>>() {});
-            } catch (JsonProcessingException e) {
-                // JSON 解析失败，返回空列表
+                preferredKeys = objectMapper.readValue(pref.getFeatureKeys(), new TypeReference<>() {});
+            } catch (JsonProcessingException ignored) {
+                // keep empty → normalize to defaults
             }
         }
         if (pref != null && pref.getFeatureOrder() != null && !pref.getFeatureOrder().isEmpty()) {
             try {
-                featureOrder = objectMapper.readValue(pref.getFeatureOrder(), new TypeReference<List<String>>() {});
-            } catch (JsonProcessingException e) {
-                // JSON 解析失败，返回空列表
+                featureOrder = objectMapper.readValue(pref.getFeatureOrder(), new TypeReference<>() {});
+            } catch (JsonProcessingException ignored) {
+                // keep empty → normalize to defaults
             }
         }
 
-        Map<String, SysAiFeature> featureMap = allFeatures.stream()
-                .collect(Collectors.toMap(SysAiFeature::getFeatureKey, f -> f, (a, b) -> a));
-
-        // 如果用户没有偏好记录，默认全部启用
-        if (preferredKeys.isEmpty()) {
-            preferredKeys = allFeatures.stream().map(SysAiFeature::getFeatureKey).toList();
-        } else {
-            // 去掉已停用/已删除功能，避免前端仍展示
-            preferredKeys = preferredKeys.stream()
-                    .filter(featureMap::containsKey)
-                    .collect(Collectors.toCollection(ArrayList::new));
-            if (preferredKeys.isEmpty()) {
-                preferredKeys = allFeatures.stream().map(SysAiFeature::getFeatureKey).toList();
-            }
-        }
-        // 如果没有排序记录，默认按数据库sort_num排序
-        if (featureOrder.isEmpty()) {
-            featureOrder = allFeatures.stream()
-                    .sorted(Comparator.comparingInt(SysAiFeature::getSortNum))
-                    .map(SysAiFeature::getFeatureKey)
-                    .toList();
-        } else {
-            featureOrder = featureOrder.stream()
-                    .filter(featureMap::containsKey)
-                    .collect(Collectors.toCollection(ArrayList::new));
-            for (SysAiFeature f : allFeatures) {
-                if (!featureOrder.contains(f.getFeatureKey())) {
-                    featureOrder.add(f.getFeatureKey());
-                }
-            }
-        }
-
-        // preferredKeys 也按 featureOrder 排，保证前后端展示顺序一致
-        {
-            List<String> orderedPreferred = new ArrayList<>();
-            for (String key : featureOrder) {
-                if (preferredKeys.contains(key)) orderedPreferred.add(key);
-            }
-            preferredKeys = orderedPreferred;
-        }
-
-        // 按用户自定义顺序重新排列 allFeatures
-        List<SysAiFeature> orderedFeatures = new ArrayList<>();
-        for (String key : featureOrder) {
-            SysAiFeature f = featureMap.get(key);
-            if (f != null) {
-                orderedFeatures.add(f);
-            }
-        }
-        // 补充未在排序中的功能（新添加的）
-        for (SysAiFeature f : allFeatures) {
-            if (!featureOrder.contains(f.getFeatureKey())) {
-                orderedFeatures.add(f);
-            }
-        }
-
-        AiFeatureI18nSupport.resolveAllInPlace(orderedFeatures, locale);
-
+        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(preferredKeys, featureOrder);
         return AiFeaturePreferenceVO.builder()
-                .allFeatures(orderedFeatures)
-                .preferredKeys(preferredKeys)
-                .featureOrder(featureOrder)
+                .preferredKeys(normalized.preferredKeys())
+                .featureOrder(normalized.featureOrder())
                 .build();
     }
 
     @Override
     public void savePreferences(Long userId, List<String> featureKeys, List<String> featureOrder) {
+        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(featureKeys, featureOrder);
         try {
-            String keysJson = objectMapper.writeValueAsString(featureKeys != null ? featureKeys : Collections.emptyList());
-            String orderJson = objectMapper.writeValueAsString(featureOrder != null ? featureOrder : Collections.emptyList());
+            String keysJson = objectMapper.writeValueAsString(normalized.preferredKeys());
+            String orderJson = objectMapper.writeValueAsString(normalized.featureOrder());
             WdUserAiPreference existing = preferenceMapper.selectByUserId(userId);
             if (existing != null) {
                 preferenceMapper.updateByUserId(userId, keysJson, orderJson);

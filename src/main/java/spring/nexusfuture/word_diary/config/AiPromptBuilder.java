@@ -2,35 +2,36 @@ package spring.nexusfuture.word_diary.config;
 
 import org.springframework.stereotype.Component;
 import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
+import spring.nexusfuture.word_diary.common.AiFeaturePrompt;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.common.TranslationDirections;
-import spring.nexusfuture.word_diary.entity.SysAiFeature;
 import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
 import spring.nexusfuture.word_diary.entity.WdUser;
-import spring.nexusfuture.word_diary.mapper.SysAiFeatureMapper;
 import spring.nexusfuture.word_diary.mapper.SysAiScenePromptMapper;
 import spring.nexusfuture.word_diary.mapper.WdUserMapper;
+import spring.nexusfuture.word_diary.service.UserProficiencyService;
 
 import java.util.List;
 import java.util.Map;
 
 /**
  * AI 提示词构建器。
- * 阅读解析：场景壳来自 sys_ai_scene_prompt(feature)，功能细节来自 sys_ai_feature.prompt（均后台可配）。
+ * 阅读解析：场景壳来自 sys_ai_scene_prompt(feature)；
+ * {feature_prompts} 由 AiFeaturePrompt 枚举按勾选 key 拼接功能契约。
  */
 @Component
 public class AiPromptBuilder {
 
     private final WdUserMapper userMapper;
-    private final SysAiFeatureMapper featureMapper;
     private final SysAiScenePromptMapper scenePromptMapper;
+    private final UserProficiencyService proficiencyService;
 
     public AiPromptBuilder(WdUserMapper userMapper,
-                           SysAiFeatureMapper featureMapper,
-                           SysAiScenePromptMapper scenePromptMapper) {
+                           SysAiScenePromptMapper scenePromptMapper,
+                           UserProficiencyService proficiencyService) {
         this.userMapper = userMapper;
-        this.featureMapper = featureMapper;
         this.scenePromptMapper = scenePromptMapper;
+        this.proficiencyService = proficiencyService;
     }
 
     private record PromptTemplate(
@@ -72,7 +73,7 @@ public class AiPromptBuilder {
                     "wordProto": "原词",
                     "usPhonetic": "美式音标，如 /ˈeksəmpəl/",
                     "ukPhonetic": "英式音标，如 /ɪɡˈzɑːmpəl/",
-                    "partSpeechMean": "词性+中文释义，如 n. 例子；v. 举例",
+                    "partSpeechMean": "词性+释义，规范格式：n. 例子；v. 举例（多词性必须用中文分号「；」分隔）",
                     "sentenceExample": "为每个词性各提供一个例句，格式：词性标记. 英文例句 中文翻译。多个词性用换行符\\n分隔，如 n. This is an example. 这是一个例子。\\nv. He exemplified the rule. 他举例说明了这个规则。",
                     "rootAffix": "词根词缀解析，如 ex-（出）+ ample（拿）→ 拿出来做示范 → 例子。短语，无词根词缀"
                   }
@@ -84,7 +85,8 @@ public class AiPromptBuilder {
                 3. 音标使用 IPA 国际音标
                 4. 例句要自然实用，每个词性都要有一个对应的例句，用\"词性标记. 英文例句 中文翻译\"格式，换行符\\n分隔
                 5. 词根词缀解析要准确，包含词源拆解和语义演变
-                6. 对于短语（如 set up, look forward to），partSpeechMean 标注为\"短语\"而非单一词性，usPhonetic/ukPhonetic 写完整短语的音标
+                6. partSpeechMean 格式强制：英文词性缩写 + \". \" + 释义；多词性只用「；」分隔。允许词性：n/v/adj/adv/prep/conj/pron/num/int/phr。例：n. 律师；v. 建议。禁止写「名词，意为…」、禁止用逗号/斜杠串联多词性
+                7. 对于短语（如 set up, look forward to），partSpeechMean 写\"phr. 释义\"，usPhonetic/ukPhonetic 写完整短语的音标
                 """;
         String wordParseUserPrefix = "请补全以下单词/短语的信息：\n";
         return new PromptTemplate("中文", globalConstraint, readingAssistantSystem,
@@ -112,7 +114,7 @@ public class AiPromptBuilder {
                     "wordProto": "original word",
                     "usPhonetic": "American phonetic, e.g. /ˈeksəmpəl/",
                     "ukPhonetic": "British phonetic, e.g. /ɪɡˈzɑːmpəl/",
-                    "partSpeechMean": "part of speech + English meaning, e.g. n. example; v. to exemplify",
+                    "partSpeechMean": "POS + gloss in form n. example；v. to exemplify (join multiple POS with Chinese semicolon 「；」 only)",
                     "sentenceExample": "Provide one example sentence for each part of speech, format: part-of-speech tag. English sentence English explanation. If multiple parts of speech, separate with newline \\n, e.g. n. This is an example. This is an example.\\nv. He exemplified the rule. He exemplified the rule.",
                     "rootAffix": "Root/affix analysis, e.g. ex- (out) + ample (take) → take out as a demonstration → example. Phrase, no root/affix"
                   }
@@ -124,7 +126,8 @@ public class AiPromptBuilder {
                 3. Use IPA for phonetic transcriptions
                 4. Example sentences should be natural and practical; each part of speech should have one example sentence in the format \"part-of-speech tag. English sentence English explanation\", separated by newline \\n
                 5. Root/affix analysis should be accurate, including etymological breakdown and semantic evolution
-                6. For phrases (e.g. set up, look forward to), mark partSpeechMean as \"phrase\" rather than a single part of speech, and write the full phrase phonetic for usPhonetic/ukPhonetic
+                6. partSpeechMean MUST be: English POS abbrev + \". \" + gloss; join senses with 「；」 only. Allowed: n/v/adj/adv/prep/conj/pron/num/int/phr. Example: n. lawyer；v. advise. Do not write \"noun meaning…\" or join POS with commas/slashes
+                7. For phrases (e.g. set up, look forward to), partSpeechMean as \"phr. gloss\", full-phrase phonetics for usPhonetic/ukPhonetic
                 """;
         String wordParseUserPrefix = "Please complete the information for the following words/phrases:\n";
         return new PromptTemplate("English", globalConstraint, readingAssistantSystem,
@@ -332,12 +335,12 @@ public class AiPromptBuilder {
         }
         PromptTemplate t = getTemplateByLocale(locale);
         String base = t.globalConstraint() + "\n"
-                + "You are Aiko, a translation coach. Answer language-learning questions "
-                + "(this practice, vocab differences, grammar, usage, tips). "
-                + "General English Q&A is OK; refuse only clearly off-topic requests.\n"
-                + "Reply in " + t.localeName() + ".";
+                + "你是 Aiko，翻译教练。回答语言学习相关问题"
+                + "（本条练习、词汇辨析、语法、用法、翻译技巧）。"
+                + "一般英语学习问答可以回答；仅拒绝明显跑题的请求。\n"
+                + "请用" + t.localeName() + "回复。";
         if (practiceContext != null && !practiceContext.isBlank()) {
-            base += "\nCurrent practice record (context when relevant):\n---\n" + practiceContext + "\n---";
+            base += "\n当前练习记录（相关时作上下文）：\n---\n" + practiceContext + "\n---";
         }
         return base + replyLanguageReinforcement(locale);
     }
@@ -368,17 +371,17 @@ public class AiPromptBuilder {
         PromptTemplate t = getTemplateByLocale(locale);
         String taskLabel = "task1".equalsIgnoreCase(taskType) ? "Task 1" : "Task 2";
         return """
-                %sWriting type: %s
-                Word count (approx): %d
-                Question:
+                %s写作类型：%s
+                大约词数：%d
+                题目：
                 ---
                 %s
                 ---
-                Student essay:
+                学生作文：
                 ---
                 %s
                 ---
-                Return ONE JSON object only.
+                只返回一个 JSON 对象。
                 """.formatted(
                 AiFeatureI18nSupport.isChinese(locale) ? "请用" + t.localeName() + "写评语与批注。\n" : "",
                 taskLabel,
@@ -391,25 +394,25 @@ public class AiPromptBuilder {
     private String defaultWritingGradeSystem(String locale, String taskType) {
         PromptTemplate t = getTemplateByLocale(locale);
         String taskCriterion = "task1".equalsIgnoreCase(taskType)
-                ? "taskAchievement (Task Achievement)"
-                : "taskResponse (Task Response)";
+                ? "taskAchievement（Task Achievement）"
+                : "taskResponse（Task Response）";
         return t.globalConstraint() + "\n" + """
-                You are an IELTS Academic Writing examiner and writing coach for {task_type}.
-                Grade the essay and produce a polished rewrite that keeps the student's ideas.
-                Also provide a high-band model essay for the same question (mark it as a model, not a rewrite).
+                你是雅思学术写作考官兼写作教练，题型为 {task_type}。
+                请批改作文，并产出保留学生原意的润色稿。
+                同时提供同题高分范文（标明为范文，不是润色稿）。
 
-                Return ONLY one JSON object (no Markdown fences) with keys:
-                - overallBand (number, 0-9, 0.5 steps)
-                - %s (number)
-                - coherence (number)
-                - lexical (number)
-                - grammar (number)
-                - summary (short string)
-                - priorities (array of 3-5 actionable improvement strings, highest impact first)
-                - annotations (array of {excerpt, issue, fix})
-                - polishedEssay (string: improved version of the student's essay)
-                - modelEssay (string: high-band sample for the same question)
-                Do not invent scores without reading the essay. Be specific and actionable.
+                只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：
+                - overallBand（数字，0–9，可 0.5 步进）
+                - %s（数字）
+                - coherence（数字）
+                - lexical（数字）
+                - grammar（数字）
+                - summary（短评）
+                - priorities（3–5 条可执行改进建议，影响最大的在前）
+                - annotations（[{excerpt, issue, fix}]）
+                - polishedEssay（学生作文的改进版）
+                - modelEssay（同题高分范文）
+                未读完作文不得臆造分数。评语须具体可执行。
                 """.formatted(taskCriterion).replace("{task_type}", taskType);
     }
 
@@ -420,10 +423,14 @@ public class AiPromptBuilder {
     public String buildTranslationGenerateSystemPrompt(Long userId) {
         String locale = getUserLocale(userId);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GENERATE, locale);
+        String base;
         if (fromDb != null) {
-            return applyPlaceholders(fromDb, "", "", locale) + translationGenerateLanguageReinforcement(locale);
+            base = applyPlaceholders(fromDb, "", "", locale, null, userId)
+                    + translationGenerateLanguageReinforcement(locale);
+        } else {
+            base = defaultTranslationGenerateSystem(locale);
         }
-        return defaultTranslationGenerateSystem(locale);
+        return appendProficiencyBlock(base, userId);
     }
 
     public String buildTranslationGenerateUserPrompt(Long userId, String direction,
@@ -434,24 +441,25 @@ public class AiPromptBuilder {
         String dirLabel = TranslationDirections.describeForPrompt(dirNorm);
         String sourceLang = TranslationDirections.sourceLanguageName(dirNorm);
         String targetLang = TranslationDirections.targetLanguageName(dirNorm);
-        return """
-                Product context: English-learning drills for non-native speakers.
-                Direction (keep exactly): %s
-                Language lock for this call:
-                - coachLanguage (theme label may use this): %s
-                - promptText MUST be entirely in %s (source language)
-                - referenceAnswer MUST be entirely in %s (target language); no coach commentary inside it
-                Learner vocabulary (use these words/phrases; prefer IELTS Academic themes such as education, environment, technology, cities, work, health):
+        String user = """
+                产品场景：面向非英语母语者的英语学习翻译练习。
+                翻译方向（请原样保留）：%s
+                本次语言锁：
+                - 教练语言（theme 可用）：%s
+                - promptText 必须全部为 %s（源语言）
+                - referenceAnswer 必须全部为 %s（目标语言）；其中不要夹带教练评语
+                学习者词汇（优先使用；主题可参考雅思学术：教育、环境、科技、城市、工作、健康等）：
                 ---
                 %s
                 ---
-                Return ONE JSON object only with keys:
-                direction (echo the requested direction code unchanged),
-                theme (short topic label; prefer %s),
-                promptText,
-                referenceAnswer,
-                targetWords (array of strings actually used from the list).
-                Constraints: one sentence or a short paragraph; mostly use the given vocabulary; any extra words must be very common; do not invent rare words.
+                只返回一个 JSON 对象，键包括：
+                direction（原样回传请求的方向代码）、
+                theme（短主题标签；优先用 %s）、
+                promptText、
+                referenceAnswer、
+                targetWords（实际用到的词汇字符串数组）。
+                约束：一句或一小段；主要用给定词汇；额外词须极常见；不要编造生僻词。
+                若系统提示中含学习者水平块，题目难度必须匹配该水平。
                 """.formatted(
                 dirLabel,
                 t.localeName(),
@@ -460,21 +468,22 @@ public class AiPromptBuilder {
                 wordsBlock == null ? "" : wordsBlock,
                 t.localeName()
         );
+        return appendProficiencyBlock(user, userId);
     }
 
     private String defaultTranslationGenerateSystem(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
         return t.globalConstraint() + "\n" + """
-                You design IELTS-style English translation drills from a learner's known vocabulary.
-                Audience: non-native English learners.
-                Create ONE practice item: a natural sentence or short paragraph that recycles the given words/phrases,
-                themed like IELTS Academic (education, environment, technology, urban life, work, health, etc.).
-                Return ONLY one JSON object (no Markdown fences) with keys:
-                direction, theme, promptText, referenceAnswer, targetWords.
-                Prefer the given vocabulary; keep length moderate; avoid rare out-of-list words.
-                Strict language lock (overrides any global "reply in one language" rule):
-                promptText = source language of the direction; referenceAnswer = target language of the direction;
-                do not mix coach language into promptText or referenceAnswer.
+                你根据学习者已掌握的词汇，设计雅思风格的英语翻译练习题。
+                受众：非英语母语学习者。
+                请出一道练习：自然的一句或一小段，复用给定单词/短语，主题接近雅思学术
+                （教育、环境、科技、城市生活、工作、健康等）。
+                只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：
+                direction, theme, promptText, referenceAnswer, targetWords。
+                优先使用给定词汇；篇幅适中；避免超纲生僻词。
+                严格语言锁（覆盖全局「只用一种语言」规则）：
+                promptText = 方向的源语言；referenceAnswer = 方向的目标语言；
+                不要把教练用语混进 promptText 或 referenceAnswer。
                 """
                 + translationGenerateLanguageReinforcement(locale);
     }
@@ -502,31 +511,32 @@ public class AiPromptBuilder {
         String targetLang = TranslationDirections.targetLanguageName(dirNorm);
         String coach = t.localeName();
         return """
-                Product context: English-learning translation feedback for non-native speakers.
-                Direction: %s
-                STRICT language lock for JSON fields:
-                - summary: entirely in %s
-                - priorities[]: entirely in %s
-                - annotations[].issue: entirely in %s
-                - annotations[].excerpt: quote student text as-is
-                - annotations[].fix: explanation in %s; if you include a corrected translation, that translation text MUST be in %s (separate from the explanation)
-                - referenceAnswer: entirely in %s (no %s commentary inside this field)
-                Never put target-language reference text into summary/priorities/issue.
-                Never put coach-language prose into referenceAnswer.
-                Practice vocabulary: %s
-                Source text (%s):
+                产品场景：面向非英语母语者的翻译练习反馈。
+                翻译方向：%s
+                JSON 字段严格语言锁：
+                - summary：全部用 %s
+                - priorities[]：全部用 %s
+                - annotations[].issue：全部用 %s
+                - annotations[].excerpt：原样引用学生文本
+                - annotations[].fix：讲解用 %s；若含订正译文，译文部分必须用 %s（与讲解分开）
+                - referenceAnswer：全部用 %s（字段内不要夹带 %s 评语）
+                切勿把目标语参考译文写进 summary / priorities / issue。
+                切勿把教练语言散文写进 referenceAnswer。
+                练习词汇：%s
+                源文（%s）：
                 ---
                 %s
                 ---
-                Reference translation (%s; for the examiner; do not copy blindly):
+                参考译文（%s；供考官参考，勿盲抄）：
                 ---
                 %s
                 ---
-                Student translation:
+                学生译文：
                 ---
                 %s
                 ---
-                Return ONE JSON object only (no polishedAnswer).
+                只返回一个 JSON 对象（不要 polishedAnswer）。
+                另需包含 wordHits：数组，元素为 {word, pos, used, correct}——练习词汇每项一条（不是以「词 (词性)」为键的 map）。
                 """.formatted(
                 dirLabel,
                 coach, coach, coach, coach, targetLang,
@@ -543,22 +553,23 @@ public class AiPromptBuilder {
     private String defaultTranslationGradeSystem(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
         return t.globalConstraint() + "\n" + """
-                You are an IELTS-oriented translation coach for non-native English learners.
-                Grade the student's translation for accuracy, fluency, and use of the practice vocabulary.
-                Return ONLY one JSON object (no Markdown fences) with keys:
-                - overallBand (number, 0-9, 0.5 steps)
-                - accuracy (number, 0-9)
-                - fluency (number, 0-9)
-                - targetWordUse (number, 0-9; score how well practice vocabulary was used)
-                - summary (short overview; use \\n between sentences)
-                - priorities (array of 3-5 actionable tips)
-                - annotations (array of {excerpt, issue, fix}; only include concrete mistakes with non-empty issue AND fix; omit empty items)
-                - referenceAnswer (strong reference translation in the exercise TARGET language only; use \\n between sentences)
-                Do NOT return polishedAnswer.
-                In Chinese coach replies, say 「练习词汇」 not 「目标词」.
-                Field language lock overrides any global single-language rule: coach fields use {language};
-                referenceAnswer and corrected-translation snippets use the exercise target language.
-                Be specific and fair.
+                你是面向非英语母语学习者的雅思取向翻译教练。
+                从准确性、流畅度、练习词汇使用三方面评分。
+                只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：
+                - overallBand（数字，0–9，可 0.5 步进）
+                - accuracy（数字，0–9）
+                - fluency（数字，0–9）
+                - targetWordUse（数字，0–9；练习词汇用得如何）
+                - summary（短评；句间用 \\n）
+                - priorities（3–5 条可执行建议）
+                - annotations（[{excerpt, issue, fix}]；仅收录有具体错误且 issue、fix 均非空的条目）
+                - referenceAnswer（强参考译文，只用练习目标语；句间用 \\n）
+                - wordHits（[{word, pos, used, correct}]；练习词汇每项一条；used=是否出现；correct=词性/义项是否正确）
+                不要返回 polishedAnswer。
+                中文教练评语用「练习词汇」而非「目标词」。
+                字段语言锁覆盖全局单语规则：教练字段用 {language}；
+                referenceAnswer 与订正译文片段用练习目标语。
+                评语须具体、公允。
                 """.replace("{language}", t.localeName())
                 + translationGradeLanguageReinforcement(locale);
     }
@@ -566,30 +577,30 @@ public class AiPromptBuilder {
     /** 出题：禁止套用「一律用界面语、禁止中文」的通用强化。 */
     private String translationGenerateLanguageReinforcement(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
-        return "\n[Translation generate language lock] theme may follow " + t.localeName()
-                + ". promptText MUST be the direction SOURCE language only."
-                + " referenceAnswer MUST be the direction TARGET language only."
-                + " Ignore any global instruction that forces all translations into "
+        return "\n【翻译出题语言锁】theme 可用" + t.localeName()
+                + "。promptText 必须仅为方向的源语言。"
+                + " referenceAnswer 必须仅为方向的目标语言。"
+                + " 忽略任何要求全部译文改成"
                 + t.localeName()
-                + " or forbids Chinese/Indonesian/Thai/Vietnamese when that language is the exercise target.\n";
+                + "、或在目标语为中文/印尼语/泰语/越南语时禁止使用该语言的全局指令。\n";
     }
 
     /** 批改：评语 = 界面语；参考译文/订正例句 = 练习目标语。 */
     private String translationGradeLanguageReinforcement(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
-        return "\n[Translation grade language lock] summary, priorities, issue, and fix explanations MUST be in "
+        return "\n【翻译批改语言锁】summary、priorities、issue、fix 中的讲解必须只用"
                 + t.localeName()
-                + " only."
-                + " referenceAnswer MUST be entirely in the exercise TARGET language"
-                + " (Chinese for en2zh, Indonesian for en2id, Thai for en2th, Vietnamese for en2vi, English for *2en)."
-                + " Corrected translation examples inside fix MUST use that same TARGET language;"
-                + " do not put TARGET-language prose into summary/priorities/issue."
-                + " This lock overrides global \"reply only in one language\" / \"do not use Chinese\" rules.\n";
+                + "。"
+                + " referenceAnswer 必须全部为练习目标语"
+                + "（en2zh 用中文，en2id 用印尼语，en2th 用泰语，en2vi 用越南语，*2en 用英语）。"
+                + " fix 内的订正译文示例也必须用同一目标语；"
+                + "不要把目标语正文写进 summary / priorities / issue。"
+                + " 本锁覆盖全局「只用一种语言 / 不要用中文」规则。\n";
     }
 
     /**
      * 功能预设 system prompt。
-     * 场景壳 = sys_ai_scene_prompt(feature)；功能细节 = sys_ai_feature.prompt。不追加任何代码内文案。
+     * 场景壳 = sys_ai_scene_prompt(feature)；{feature_prompts} = 枚举按勾选 key 拼接的功能契约。
      */
     public String buildFeaturePrompt(String locale, String featureKey, String context) {
         return buildMultiFeaturePrompt(locale,
@@ -598,7 +609,7 @@ public class AiPromptBuilder {
 
     /**
      * 多选功能 system prompt。
-     * 严格按 featureKeys 顺序读取库表 prompt，填入场景壳 {feature_prompts}。
+     * 按 featureKeys 顺序从 AiFeaturePrompt 枚举注入说明到场景壳 {feature_prompts}。
      */
     public String buildMultiFeaturePrompt(String locale, List<String> featureKeys, String context) {
         return buildMultiFeaturePrompt(locale, featureKeys, context, null);
@@ -606,12 +617,12 @@ public class AiPromptBuilder {
 
     public String buildMultiFeaturePrompt(String locale, List<String> featureKeys, String context,
                                           List<String> targetWords) {
-        String featureBlock = assembleFeaturePromptsFromDb(locale, featureKeys);
+        String featureBlock = assembleSelectedFeatureKeysBlock(featureKeys);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_FEATURE, locale);
         if (fromDb != null) {
             return applyPlaceholders(fromDb, context, featureBlock, locale, targetWords);
         }
-        // 未配置场景壳时：只下发后台功能提示词，不再拼代码里的中文壳
+        // 未配置场景壳时：仅下发枚举功能说明
         return featureBlock;
     }
 
@@ -631,25 +642,9 @@ public class AiPromptBuilder {
                 featureKey == null ? List.of() : List.of(featureKey), context);
     }
 
-    /** 按勾选顺序拼接 sys_ai_feature.prompt（后台「AI 功能」里配置的原文）。 */
-    private String assembleFeaturePromptsFromDb(String locale, List<String> featureKeys) {
-        if (featureKeys == null || featureKeys.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (String key : featureKeys) {
-            if (key == null || key.isBlank()) continue;
-            String k = key.trim();
-            SysAiFeature feature = loadFeatureForLocale(k, locale);
-            if (feature == null) continue; // 停用或不存在 → 不进提示词
-            String name = feature.getFeatureName() != null ? feature.getFeatureName() : k;
-            String prompt = feature.getPrompt() != null ? feature.getPrompt().trim() : "";
-            sb.append(i++).append('.').append(name).append('(').append(k).append("):\n");
-            if (!prompt.isEmpty()) {
-                sb.append(prompt).append('\n');
-            }
-            sb.append('\n');
-        }
-        return sb.toString().trim();
+    /** 按勾选 key 从枚举拼接功能契约（未知 key 跳过；空列表为空串）。 */
+    private String assembleSelectedFeatureKeysBlock(List<String> featureKeys) {
+        return AiFeaturePrompt.assemble(featureKeys);
     }
 
     /**
@@ -665,29 +660,6 @@ public class AiPromptBuilder {
         return "\n[Scope] Language-learning only (vocab differences e.g. there/those, grammar, usage, "
                 + "pronunciation, translation tips, and follow-ups on this practice). "
                 + "If clearly off-topic, reply briefly that Aiko only helps with language learning.\n";
-    }
-
-    /** 按 locale 取功能行并解析展示名；不修改 Mapper 缓存对象。 */
-    private SysAiFeature loadFeatureForLocale(String featureKey, String locale) {
-        SysAiFeature feature = featureMapper.selectByFeatureKey(featureKey);
-        if (feature == null) return null;
-        SysAiFeature copy = copyFeature(feature);
-        AiFeatureI18nSupport.resolveInPlace(copy, locale);
-        return copy;
-    }
-
-    private static SysAiFeature copyFeature(SysAiFeature src) {
-        SysAiFeature f = new SysAiFeature();
-        f.setId(src.getId());
-        f.setFeatureKey(src.getFeatureKey());
-        f.setFeatureName(src.getFeatureName());
-        f.setDescription(src.getDescription());
-        f.setNameI18n(src.getNameI18n());
-        f.setDescriptionI18n(src.getDescriptionI18n());
-        f.setPrompt(src.getPrompt());
-        f.setSortNum(src.getSortNum());
-        f.setStatus(src.getStatus());
-        return f;
     }
 
     /** 放在 prompt 末尾，优先于功能细节里残留的语言要求。 */
@@ -720,29 +692,89 @@ public class AiPromptBuilder {
 
     /**
      * 替换场景提示词占位符。
-     * 支持：{context}、{feature_prompts}、{target_words}、{language}、{locale}、{global_constraint}。
+     * 支持：{context}、{feature_prompts}、{target_words}、{language}、{locale}、{global_constraint}、
+     * {user_level}、{level_constraints}、{weak_skills}、{recent_bands}、{proficiency_block}。
      */
     private String applyPlaceholders(String template, String context, String featurePrompts, String locale) {
-        return applyPlaceholders(template, context, featurePrompts, locale, null);
+        return applyPlaceholders(template, context, featurePrompts, locale, null, null);
     }
 
     private String applyPlaceholders(String template, String context, String featurePrompts, String locale,
                                      List<String> targetWords) {
+        return applyPlaceholders(template, context, featurePrompts, locale, targetWords, null);
+    }
+
+    private String applyPlaceholders(String template, String context, String featurePrompts, String locale,
+                                     List<String> targetWords, Long userId) {
         String loc = AiFeatureI18nSupport.normalizeLocale(locale);
         PromptTemplate t = getTemplateByLocale(loc);
         String ctx = context == null ? "" : context;
         String feats = featurePrompts == null ? "" : featurePrompts;
-        // 有目标词才填入；没有则留空。无目标词时 word 功能不会下发给模型，不必在此解释。
         String targets = (targetWords != null && !targetWords.isEmpty())
                 ? String.join(", ", targetWords)
                 : "";
+        String proficiencyBlock = "";
+        String userLevel = "";
+        String levelConstraints = "";
+        String weakSkills = "";
+        String recentBands = "";
+        if (userId != null && proficiencyService != null) {
+            try {
+                proficiencyBlock = nullToEmpty(proficiencyService.buildPromptBlock(userId));
+                var snap = proficiencyService.getSnapshot(userId);
+                if (snap != null) {
+                    userLevel = nullToEmpty(snap.getLevelName());
+                    if (snap.getLevelCode() != null && !snap.getLevelCode().isBlank()) {
+                        userLevel = userLevel + " (" + snap.getLevelCode() + ")";
+                    }
+                    weakSkills = nullToEmpty(snap.getWeakSkillsJson());
+                    recentBands = nullToEmpty(snap.getRecentBandsJson());
+                }
+                if (!proficiencyBlock.isBlank()) {
+                    // 从 block 中无法可靠拆 constraints；占位符用整块即可
+                    levelConstraints = proficiencyBlock;
+                }
+            } catch (Exception ignored) {
+                // 解耦：画像读失败不影响出题
+            }
+        }
         return template
                 .replace("{context}", ctx)
                 .replace("{feature_prompts}", feats)
                 .replace("{target_words}", targets)
                 .replace("{language}", t.localeName())
                 .replace("{locale}", loc)
-                .replace("{global_constraint}", t.globalConstraint());
+                .replace("{global_constraint}", t.globalConstraint())
+                .replace("{user_level}", userLevel)
+                .replace("{level_constraints}", levelConstraints)
+                .replace("{weak_skills}", weakSkills)
+                .replace("{recent_bands}", recentBands)
+                .replace("{proficiency_block}", proficiencyBlock);
+    }
+
+    private String appendProficiencyBlock(String prompt, Long userId) {
+        if (prompt == null) {
+            prompt = "";
+        }
+        if (userId == null || proficiencyService == null) {
+            return prompt;
+        }
+        try {
+            String block = proficiencyService.buildPromptBlock(userId);
+            if (block == null || block.isBlank()) {
+                return prompt;
+            }
+            if (prompt.contains(block.trim()) || prompt.contains("[Learner proficiency]")) {
+                return prompt;
+            }
+            return prompt + block;
+        } catch (Exception e) {
+            return prompt;
+        }
+    }
+
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     private PromptTemplate getTemplate(Long userId) {

@@ -613,8 +613,8 @@ async function handleBatchSave() {
 
 function statusTheme(status: number) {
   if (status === 0) return 'default'
-  if (status === 7) return 'success'
-  if (status >= 1 && status <= 6) return 'primary'
+  if (status === 6) return 'success'
+  if (status >= 1 && status <= 5) return 'primary'
   return 'default'
 }
 
@@ -626,8 +626,7 @@ function statusLabel(status: number) {
     3: '第二轮复习',
     4: '第三轮复习',
     5: '第四轮复习',
-    6: '第五轮复习',
-    7: '已熟记',
+    6: '已熟记',
   }
   return map[status] || '未知'
 }

@@ -22,7 +22,19 @@
           <canvas
             :ref="(el) => setCanvasRef(pageNum, el)"
             class="pdf-canvas"
-            :class="{ 'pdf-canvas--ready': renderedPages.has(pageNum) }"
+            :class="{
+              'pdf-canvas--ready': renderedPages.has(pageNum),
+              'pdf-canvas--text': pageTextMode[pageNum] === 'text'
+            }"
+          />
+          <!-- 透明文字层：可用时原生划词；扫描页为空并回退框选 OCR -->
+          <div
+            :ref="(el) => setTextLayerRef(pageNum, el)"
+            class="pdf-text-layer textLayer"
+            :class="{
+              'pdf-text-layer--ocr': pageTextMode[pageNum] !== 'text',
+              'pdf-text-layer--disabled': annotateMode !== 'none'
+            }"
           />
           <!-- 批注覆盖层：不修改原始 PDF -->
           <canvas
@@ -71,7 +83,7 @@
       </t-button>
     </div>
 
-    <!-- 右侧：批注工具（透明悬浮；框选为默认模式） -->
+    <!-- 右侧：批注工具（透明悬浮；默认划词 / 扫描页框选 OCR） -->
     <aside class="pdf-toolbar" data-guide="pdf-tools" aria-label="Tools" @pointerdown.stop @mousedown.stop>
       <span data-guide="pdf-select" class="pdf-tool-guide-anchor">
         <t-button
@@ -82,16 +94,20 @@
           @click="setAnnotateMode('none')"
         >
           <svg class="select-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <rect
-              x="4.5"
-              y="4.5"
-              width="15"
-              height="15"
-              rx="1.5"
+            <path
+              d="M7 4v16M7 4h3.2c1.9 0 3.3 1.2 3.3 3.1S12.1 10 10.2 10H7"
               fill="none"
               stroke="currentColor"
-              stroke-width="1.6"
-              stroke-dasharray="3.2 2.4"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M14.5 14.2 17 20l1.2-3.3L21.5 15.5 14.5 14.2Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linejoin="round"
             />
           </svg>
         </t-button>
@@ -138,9 +154,13 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getBookFileUrl, getBookPresignedFileUrl, getPdfMarkups } from '../api'
 import {
   pdfjsLib,
+  TextLayer,
   encodePdfCfi,
   decodePdfCfi,
   estimatePageHeight,
+  textContentToPlain,
+  isUsablePdfTextLayerForPage,
+  bindTextLayerSelection,
   type PdfProgressCfi,
 } from '../utils/pdfReader'
 import { cropAndSharpenRegion, recognizeRegion, terminateOcrWorker } from '../utils/pdfImageOcr'
@@ -207,11 +227,18 @@ const ocrLoading = ref(false)
 let pdfDoc: any = null
 const canvasMap = new Map<number, HTMLCanvasElement>()
 const markupCanvasMap = new Map<number, HTMLCanvasElement>()
+const textLayerMap = new Map<number, HTMLElement>()
+const textLayerTasks = new Map<number, { cancel: () => void }>()
+const textLayerUnbind = new Map<number, () => void>()
+/** 每页取词模式：text=原生划词，ocr=框选 OCR */
+const pageTextMode = reactive<Record<number, 'text' | 'ocr'>>({})
 const renderedPages = reactive(new Set<number>())
 const renderingPages = new Set<number>()
 const placeholderHeights = reactive<Record<number, number>>({})
 const pageAspect = reactive<Record<number, number>>({})
 const releaseTimers = new Map<number, ReturnType<typeof setTimeout>>()
+let selectionEmitTimer: ReturnType<typeof setTimeout> | null = null
+let lastEmittedSelection = ''
 
 let observer: IntersectionObserver | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -310,7 +337,7 @@ const inlineNoteStyle = computed(() => {
 })
 
 function setAnnotateMode(mode: AnnotateMode) {
-  // 再点一次已激活工具 → 回到框选；笔/笔记/擦除均未选中时即为框选
+  // 再点一次已激活工具 → 回到取词；笔/笔记/擦除均未选中时即为划词/OCR 取词
   const next = mode === 'none'
     ? 'none'
     : annotateMode.value === mode
@@ -335,13 +362,53 @@ function clearDraft() {
 function setCanvasRef(pageNum: number, el: unknown) {
   if (el instanceof HTMLCanvasElement) {
     canvasMap.set(pageNum, el)
+  } else {
+    canvasMap.delete(pageNum)
+  }
+}
+
+function setTextLayerRef(pageNum: number, el: unknown) {
+  if (el instanceof HTMLElement) {
+    textLayerMap.set(pageNum, el)
+  } else {
+    textLayerMap.delete(pageNum)
   }
 }
 
 function setMarkupCanvasRef(pageNum: number, el: unknown) {
   if (el instanceof HTMLCanvasElement) {
     markupCanvasMap.set(pageNum, el)
+  } else {
+    markupCanvasMap.delete(pageNum)
   }
+}
+
+function isTextLayerPage(pageNum: number) {
+  return pageTextMode[pageNum] === 'text'
+}
+
+function clearTextLayer(pageNum: number) {
+  const unbind = textLayerUnbind.get(pageNum)
+  if (unbind) {
+    try {
+      unbind()
+    } catch { /* ignore */ }
+    textLayerUnbind.delete(pageNum)
+  }
+  const task = textLayerTasks.get(pageNum)
+  if (task) {
+    try {
+      task.cancel()
+    } catch { /* ignore */ }
+    textLayerTasks.delete(pageNum)
+  }
+  const el = textLayerMap.get(pageNum)
+  if (el) {
+    el.replaceChildren()
+    el.classList.remove('selecting')
+    el.style.removeProperty('--scale-factor')
+  }
+  delete pageTextMode[pageNum]
 }
 
 function getContainerWidth(): number {
@@ -714,8 +781,50 @@ async function renderPage(pageNum: number) {
 
     renderedPages.add(pageNum)
     redrawMarkupLayer(pageNum)
+    await mountTextLayer(page, pageNum, viewport)
   } catch (e) {
     console.warn('[PdfReader] 渲染第', pageNum, '页失败:', e)
+  }
+}
+
+/** 挂载/重建 pdf.js 透明文字层；不可用则标记为 OCR 回退 */
+async function mountTextLayer(page: any, pageNum: number, viewport: any) {
+  const container = textLayerMap.get(pageNum)
+  if (!container || destroyed) return
+  clearTextLayer(pageNum)
+  // clearTextLayer 清掉了 mode，容器还需在
+  if (!textLayerMap.has(pageNum)) textLayerMap.set(pageNum, container)
+
+  try {
+    const textContent = await page.getTextContent()
+    if (destroyed) return
+    const plain = textContentToPlain(textContent)
+    if (!isUsablePdfTextLayerForPage(plain) || !TextLayer) {
+      pageTextMode[pageNum] = 'ocr'
+      return
+    }
+    // 必须设置，否则 span 的 calc(var(--scale-factor)*…) 失效，文字叠成一团，划词会串选整页
+    container.style.setProperty('--scale-factor', String(viewport.scale))
+    const layer = new TextLayer({
+      textContentSource: textContent,
+      container,
+      viewport,
+    })
+    textLayerTasks.set(pageNum, layer)
+    await layer.render()
+    if (destroyed) {
+      try {
+        layer.cancel()
+      } catch { /* ignore */ }
+      return
+    }
+    // pdf.js TextLayerBuilder 同款：endOfContent + selecting，避免绝对定位 span 之间选区穿透
+    textLayerUnbind.set(pageNum, bindTextLayerSelection(container))
+    pageTextMode[pageNum] = 'text'
+  } catch (e) {
+    console.warn('[PdfReader] 文字层第', pageNum, '页失败，回退 OCR:', e)
+    pageTextMode[pageNum] = 'ocr'
+    container.replaceChildren()
   }
 }
 
@@ -747,6 +856,7 @@ function doReleasePage(pageNum: number) {
     layer.width = 1
     layer.height = 1
   }
+  clearTextLayer(pageNum)
   renderedPages.delete(pageNum)
 }
 
@@ -953,8 +1063,17 @@ function onPointerDown(e: PointerEvent) {
   if (annotateMode.value !== 'none') {
     onAnnotStart(e)
   } else {
-    // 框选模式下点中已有文本批注 → 拖动，否则框选 OCR
+    // 取词模式：优先拖动已有文本批注；文字层页交给原生划词，扫描页框选 OCR
     if (tryStartTextDrag(e)) return
+    const info = pageFromEvent(e)
+    if (info && isTextLayerPage(info.page)) {
+      return
+    }
+    // 点在文字层内也不启动框选（避免误拖）
+    const t = e.target as Element | null
+    if (t?.closest?.('.pdf-text-layer') && !t.closest('.pdf-text-layer--ocr')) {
+      return
+    }
     onSelectStart(e)
   }
 }
@@ -1640,6 +1759,51 @@ function onSelectCancel() {
   }
 }
 
+/** 文字层原生划词 → 与 OCR 相同出口 emit('select-text') */
+function selectionInsidePdfTextLayer(sel: Selection): boolean {
+  const node = sel.anchorNode
+  if (!node) return false
+  const el = (node.nodeType === Node.TEXT_NODE ? node.parentElement : node) as Element | null
+  if (!el) return false
+  const layer = el.closest('.pdf-text-layer')
+  if (!layer || layer.classList.contains('pdf-text-layer--ocr')) return false
+  return !!(containerRef.value && containerRef.value.contains(layer))
+}
+
+function emitTextLayerSelection() {
+  if (annotateMode.value !== 'none' || ocrLoading.value) return
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return
+  if (!selectionInsidePdfTextLayer(sel)) return
+  let finalText = normalizeSelectedText(sel.toString(), { trimPartialEdges: true })
+  if (!finalText) return
+  if (finalText.length > MAX_SELECTION_LENGTH) {
+    MessagePlugin.warning(`选中内容过长，已截取前 ${MAX_SELECTION_LENGTH} 字`)
+    finalText = finalText.slice(0, MAX_SELECTION_LENGTH)
+  }
+  if (finalText === lastEmittedSelection) return
+  lastEmittedSelection = finalText
+  lastSelectedText = finalText
+  emit('select-text', finalText)
+  saveProgress()
+}
+
+function scheduleEmitTextLayerSelection() {
+  if (selectionEmitTimer) clearTimeout(selectionEmitTimer)
+  selectionEmitTimer = setTimeout(() => {
+    selectionEmitTimer = null
+    emitTextLayerSelection()
+  }, 80)
+}
+
+function onDocSelectionChange() {
+  scheduleEmitTextLayerSelection()
+}
+
+function onDocMouseUp() {
+  scheduleEmitTextLayerSelection()
+}
+
 function goToPage(pageNum: number) {
   const el = document.getElementById('pdf-page-container-' + pageNum)
   if (el) {
@@ -1660,6 +1824,9 @@ let stopOfflineSynced: (() => void) | undefined
 onMounted(() => {
   loadDocument()
   window.addEventListener('keydown', onKeyDown)
+  document.addEventListener('selectionchange', onDocSelectionChange)
+  document.addEventListener('mouseup', onDocMouseUp)
+  document.addEventListener('touchend', onDocMouseUp, { passive: true })
   stopOfflineSynced = onOfflineSynced((detail) => {
     if (detail.kind !== 'pdf-markup-create') return
     if (detail.bookId !== props.bookId) return
@@ -1671,6 +1838,13 @@ onBeforeUnmount(() => {
   destroyed = true
   stopOfflineSynced?.()
   window.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('selectionchange', onDocSelectionChange)
+  document.removeEventListener('mouseup', onDocMouseUp)
+  document.removeEventListener('touchend', onDocMouseUp)
+  if (selectionEmitTimer) clearTimeout(selectionEmitTimer)
+  for (const pageNum of [...textLayerTasks.keys()]) {
+    clearTextLayer(pageNum)
+  }
   if (saveTimer) clearTimeout(saveTimer)
   if (resizeTimer) clearTimeout(resizeTimer)
   resizeObserver?.disconnect()
@@ -1869,11 +2043,80 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
+.pdf-canvas--text {
+  cursor: text;
+}
+
 .pdf-page-container {
   position: relative;
   display: inline-block;
   overflow: hidden;
   background: #3a3d40;
+}
+
+/* pdf.js TextLayer：透明字可划选，叠在 canvas 上（需配合 --scale-factor） */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  transform-origin: 0 0;
+  caret-color: transparent;
+  cursor: text;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.pdf-text-layer :deep(span),
+.pdf-text-layer :deep(br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  z-index: 1;
+}
+
+.pdf-text-layer :deep(span.markedContent) {
+  top: 0;
+  height: 0;
+}
+
+.pdf-text-layer :deep(::selection) {
+  background: rgba(77, 163, 255, 0.35);
+}
+
+.pdf-text-layer :deep(br::selection) {
+  background: transparent;
+}
+
+/* 关键选区「穿透」：划词时 endOfContent 铺满并挡在字下方 */
+.pdf-text-layer :deep(.endOfContent) {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pdf-text-layer.selecting :deep(.endOfContent) {
+  top: 0;
+}
+
+.pdf-text-layer--ocr,
+.pdf-text-layer--disabled {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: inherit;
 }
 
 .pdf-markup-layer {

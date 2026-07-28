@@ -147,28 +147,89 @@ export const getPlanWords = (params?: { status?: 'pending' | 'learning' | 'maste
 export default api
 
 // ========== 阅读器 ==========
-export const getAiFeatures = (locale?: string) =>
-  api.get('/books/ai-features', { params: { locale: locale || 'zh-CN' } })
 export const getAiFeaturePreferences = (locale?: string) =>
   api.get('/books/ai-features/preferences', { params: { locale: locale || 'zh-CN' } })
 export const saveAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
   api.put('/books/ai-features/preferences', data)
 
-export const uploadBook = (file: File) => {
-  console.log('[API] uploadBook 请求, 文件名:', file.name, '大小:', (file.size / 1024).toFixed(1), 'KB')
-  const formData = new FormData()
-  formData.append('file', file)
-  return api.post('/books/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    // 大 PDF：浏览器上传 + 服务端压缩 + COS，可能远超 1 分钟
-    timeout: 300000
-  }).then(res => {
-    console.log('[API] uploadBook 响应:', res.status, res.data)
-    return res
-  }).catch(err => {
-    console.error('[API] uploadBook 失败:', err.response?.status, err.response?.data || err.message)
-    throw err
-  })
+export const uploadBook = async (
+  file: File,
+  onProgress?: (percent: number) => void
+) => {
+  console.log('[API] uploadBook 请求, 文件名:', file.name, '大小:', (file.size / 1024 / 1024).toFixed(2), 'MB')
+  // 优先 COS 直传，避免大文件经 nginx→后端→COS 双跳 504
+  try {
+    const initRes = await api.post('/books/upload-init', {
+      fileName: file.name,
+      fileSize: file.size
+    })
+    const init = initRes.data?.data
+    if (!init?.uploadUrl || !init?.cosKey) {
+      throw new Error('upload-init missing fields')
+    }
+    await axios.put(init.uploadUrl, file, {
+      headers: {
+        'Content-Type': init.contentType || file.type || 'application/octet-stream'
+      },
+      timeout: 600000,
+      onUploadProgress: (evt) => {
+        if (!onProgress || !evt.total) return
+        onProgress(Math.min(99, Math.round((evt.loaded / evt.total) * 100)))
+      }
+    })
+    onProgress?.(99)
+    const done = await api.post('/books/upload-complete', {
+      cosKey: init.cosKey,
+      originalName: file.name,
+      fileSize: file.size
+    })
+    onProgress?.(100)
+    console.log('[API] uploadBook 直传完成:', done.status)
+    return done
+  } catch (directErr: any) {
+    const status = directErr?.response?.status
+    const msg = String(directErr?.message || '')
+    const corsOrNetwork =
+      !directErr?.response &&
+      (msg.includes('Network') || msg.includes('CORS') || msg.includes('Failed to fetch'))
+    // 签名/鉴权/业务错误不要盲目兜底；CORS 或直传链路不可用时回退 multipart
+    if (status === 401 || status === 403 || status === 400) {
+      console.error('[API] uploadBook 直传业务失败:', status, directErr?.response?.data || msg)
+      throw directErr
+    }
+    console.warn('[API] uploadBook 直传失败，回退经后端上传:', status || msg)
+    // 大文件经 nginx→后端仍易 504，直传失败时不再兜底徒增等待
+    if (file.size > 8 * 1024 * 1024) {
+      const err = new Error('DIRECT_UPLOAD_FAILED')
+      ;(err as any).response = directErr?.response
+      ;(err as any).__directUploadHint = true
+      throw err
+    }
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await api.post('/books/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000,
+        onUploadProgress: (evt) => {
+          if (!onProgress || !evt.total) return
+          onProgress(Math.min(99, Math.round((evt.loaded / evt.total) * 100)))
+        }
+      })
+      onProgress?.(100)
+      return res
+    } catch (fallbackErr: any) {
+      console.error(
+        '[API] uploadBook 失败:',
+        fallbackErr?.response?.status,
+        fallbackErr?.response?.data || fallbackErr?.message
+      )
+      if (corsOrNetwork) {
+        ;(fallbackErr as any).__directUploadHint = true
+      }
+      throw fallbackErr
+    }
+  }
 }
 export const getBooks = () => api.get('/books')
 export const getBookDetail = (bookId: number) => api.get(`/books/${bookId}`)
@@ -312,8 +373,43 @@ export const saveShadowingClip = (
 ) => api.put(`/shadowing/${id}`, data)
 export const transcribeShadowingClip = (id: number) =>
   api.post(`/shadowing/${id}/transcribe`, null, { timeout: 360000 })
-/** 带鉴权拉取音频 Blob（播放） */
-export async function fetchShadowingAudioBlob(id: number): Promise<Blob> {
+/**
+ * 带鉴权拉取音频 Blob（播放）。
+ * 优先读 Cache API 本地缓存；带 Authorization 的请求几乎不会被浏览器 HTTP 缓存命中。
+ * @param fileSize 用于缓存键，避免同 id 文件变更后读到旧 blob（一般用详情里的 fileSize）
+ */
+export async function fetchShadowingAudioBlob(
+  id: number,
+  fileSize?: number | null
+): Promise<Blob> {
+  const {
+    readShadowingAudioCache,
+    writeShadowingAudioCache,
+    invalidateShadowingAudioCache
+  } = await import('../utils/shadowingAudioCache')
+
+  const expected = fileSize != null && fileSize > 0 ? Number(fileSize) : 0
+
+  const normalizeAudioBlob = (blob: Blob): Blob => {
+    if (blob.type && blob.type.startsWith('audio/')) return blob
+    return new Blob([blob], { type: 'audio/mpeg' })
+  }
+
+  const isPlausible = (blob: Blob) => {
+    if (!blob || blob.size < 256) return false
+    // 已知体积时：缓存/响应明显过小视为损坏（半截下载或把错误页当音频）
+    if (expected > 8 * 1024 && blob.size < expected * 0.5) return false
+    return true
+  }
+
+  const cached = await readShadowingAudioCache(id, fileSize)
+  if (cached && isPlausible(cached)) {
+    return normalizeAudioBlob(cached)
+  }
+  if (cached) {
+    await invalidateShadowingAudioCache(id)
+  }
+
   const token = localStorage.getItem('token')
   const res = await fetch(`/api/shadowing/${id}/audio`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -322,20 +418,38 @@ export async function fetchShadowingAudioBlob(id: number): Promise<Blob> {
     const msg = await res.text().catch(() => '')
     throw new Error(msg || `audio HTTP ${res.status}`)
   }
-  return res.blob()
+  const blob = normalizeAudioBlob(await res.blob())
+  if (!isPlausible(blob)) {
+    throw new Error('audio blob too small / incomplete')
+  }
+  void writeShadowingAudioCache(id, blob, expected > 0 ? expected : blob.size)
+  return blob
 }
-export const deleteShadowingClip = (id: number) => api.delete(`/shadowing/${id}`)
+export const deleteShadowingClip = async (id: number) => {
+  const res = await api.delete(`/shadowing/${id}`)
+  try {
+    const { invalidateShadowingAudioCache } = await import('../utils/shadowingAudioCache')
+    await invalidateShadowingAudioCache(id)
+  } catch {
+    // ignore cache cleanup failure
+  }
+  return res
+}
 
 // Translation practice (learned words)
 export const getTranslationPool = (poolMode: 'learned' | 'mastered' = 'learned') =>
   api.get('/translation/pool', { params: { poolMode } })
 export const listTranslationPractices = () => api.get('/translation')
+export type TranslationWordPick = { wordId: number; pos: string }
 export const createTranslationPractice = (data: {
   title?: string
   direction: string
   poolMode: 'learned' | 'mastered'
   pickMode?: 'random' | 'manual'
   wordCount?: number
+  /** 自选：一词一词性（推荐） */
+  picks?: TranslationWordPick[]
+  /** @deprecated 用 picks */
   wordIds?: number[]
 }) => api.post('/translation', data)
 export const getTranslationPractice = (id: number) => api.get(`/translation/${id}`)
@@ -345,14 +459,24 @@ export const saveTranslationPractice = (
 ) => api.put(`/translation/${id}`, data)
 export const regenerateTranslationPractice = (id: number, direction: string) =>
   api.post(`/translation/${id}/regenerate`, { direction }, { timeout: 180000 })
-export const updateTranslationWords = (id: number, wordIds: number[]) =>
-  api.put(`/translation/${id}/words`, { wordIds })
+export const updateTranslationWords = (
+  id: number,
+  picks: TranslationWordPick[]
+) => api.put(`/translation/${id}/words`, { picks })
 export const deleteTranslationPractice = (id: number) => api.delete(`/translation/${id}`)
 export const gradeTranslationPractice = (id: number) =>
   api.post(`/translation/${id}/grade`, null, { timeout: 180000 })
 export const listTranslationGrades = (id: number) => api.get(`/translation/${id}/grades`)
 export const listTranslationGradeChatMessages = (practiceId: number, gradeId: number) =>
   api.get(`/translation/${practiceId}/grades/${gradeId}/chat-messages`)
+
+// Spelling practice (wrong pos-stat words → write English from meaning; SRS like daily study)
+export const getSpellingSession = () => api.get('/spelling/session')
+export const getSpellingQueue = () => api.get('/spelling/session')
+export const checkSpelling = (data: { posStatId: number; answer: string }) =>
+  api.post('/spelling/check', data)
+
+export const getMyProficiency = () => api.get('/proficiency/me')
 
 // Book ↔ Notebook links & collect
 export const getBookNotebookLinks = (bookId: number) => api.get(`/books/${bookId}/notebook-links`)

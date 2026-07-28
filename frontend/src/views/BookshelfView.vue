@@ -12,6 +12,7 @@
       </div>
       <div class="header-actions">
         <t-upload
+          class="header-upload"
           :auto-upload="false"
           accept=".epub,.pdf"
           :before-upload="beforeUpload"
@@ -40,7 +41,13 @@
 
       <div v-if="uploading" class="upload-status">
         <t-loading size="small" />
-        <span>{{ $t('bookshelf.uploading', { name: uploadingFileName }) }}</span>
+        <span class="upload-name" :title="uploadingFileName">
+          {{
+            uploadPercent > 0
+              ? $t('bookshelf.uploadingProgress', { name: uploadingFileName, percent: uploadPercent })
+              : $t('bookshelf.uploading', { name: uploadingFileName })
+          }}
+        </span>
       </div>
 
       <div v-if="!loading && books.length > 0" class="bookshelf">
@@ -114,6 +121,7 @@ const books = ref<any[]>([])
 const loading = ref(true)
 const uploading = ref(false)
 const uploadingFileName = ref('')
+const uploadPercent = ref(0)
 
 /** 与后端 BookServiceImpl.MAX_BOOKS_PER_USER 一致 */
 const MAX_BOOKS_PER_USER = 10
@@ -177,9 +185,12 @@ async function handleFileChange(files: any) {
 
   uploadingFileName.value = file.name
   uploading.value = true
+  uploadPercent.value = 0
   console.log('[Bookshelf] 开始上传:', file.name, '原始大小:', (file.size / 1024 / 1024).toFixed(2), 'MB')
   try {
-    const res = await uploadBook(file)
+    const res = await uploadBook(file, (p) => {
+      uploadPercent.value = p
+    })
     console.log('[Bookshelf] 上传响应:', res.data)
     const book = res.data?.data
     console.log('[Bookshelf] 返回的书籍数据:', book)
@@ -193,7 +204,6 @@ async function handleFileChange(files: any) {
     }
     if (book?.id) {
       console.log('[Bookshelf] 跳转到阅读器 /reader/' + book.id)
-      // 直接跳转到阅读器
       router.push(`/reader/${book.id}`)
     } else {
       console.warn('[Bookshelf] 书籍无 id，刷新书架列表')
@@ -201,10 +211,16 @@ async function handleFileChange(files: any) {
     }
   } catch (e: any) {
     console.error('[Bookshelf] 上传失败:', e)
-    MessagePlugin.error(e.response?.data?.message || t('bookshelf.importError'))
+    const status = e?.response?.status
+    if (status === 504 || e?.__directUploadHint || e?.message === 'DIRECT_UPLOAD_FAILED') {
+      MessagePlugin.error(t('bookshelf.importTimeout'))
+    } else {
+      MessagePlugin.error(e.response?.data?.message || e.response?.data?.msg || t('bookshelf.importError'))
+    }
   } finally {
     uploading.value = false
     uploadingFileName.value = ''
+    uploadPercent.value = 0
   }
 }
 
@@ -287,9 +303,27 @@ async function handleDelete(bookId: number) {
   gap: 2px;
   justify-content: flex-end;
   margin-left: auto;
-  flex: 0 0 auto;
-  max-width: 42%;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(42%, 220px);
   z-index: 1;
+}
+
+.header-upload {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 顶栏只保留「导入」按钮；选中文件名改由下方 upload-status 省略展示 */
+.header-upload :deep(.t-upload__single-display-text),
+.header-upload :deep(.t-upload__tips),
+.header-upload :deep(.t-upload__file-list),
+.header-upload :deep(.t-upload__single-name),
+.header-upload :deep(.t-upload__display-text) {
+  display: none !important;
 }
 
 .page-header h1 {
@@ -305,6 +339,7 @@ async function handleDelete(bookId: number) {
 
 .nav-link {
   color: var(--brand-ink) !important;
+  max-width: 100%;
 }
 
 .page-body {
@@ -349,6 +384,15 @@ async function handleDelete(bookId: number) {
   padding: 12px;
   color: #6b7280;
   font-size: 14px;
+  min-width: 0;
+}
+
+.upload-status .upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bookshelf {

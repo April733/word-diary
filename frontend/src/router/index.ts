@@ -73,6 +73,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/shadowing/local',
+      name: 'ShadowingLocalVideo',
+      component: () => import('../views/ShadowingLocalVideoView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/shadowing/:id',
       name: 'ShadowingPlayer',
       component: () => import('../views/ShadowingPlayerView.vue'),
@@ -124,6 +130,12 @@ const router = createRouter({
       path: '/translation/:id',
       name: 'TranslationEdit',
       component: () => import('../views/TranslationEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/spelling',
+      name: 'Spelling',
+      component: () => import('../views/SpellingPracticeView.vue'),
       meta: { requiresAuth: true }
     },
     {

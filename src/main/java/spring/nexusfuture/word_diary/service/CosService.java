@@ -17,12 +17,21 @@ public interface CosService {
     String upload(String key, InputStream inputStream, long contentLength, String contentType);
 
     /**
-     * 生成带签名的临时访问 URL（用于下载/读取）。
+     * 生成带签名的临时下载/访问 URL。
      *
      * @param key COS 对象键
      * @return 签名 URL（默认 1 小时有效）
      */
     String generatePresignedUrl(String key);
+
+    /**
+     * 生成带签名的临时上传 URL（浏览器 PUT 直传 COS，绕过后端中转）。
+     *
+     * @param key COS 对象键
+     * @param contentType 客户端 PUT 时必须带上的 Content-Type（需与签名一致）
+     * @return 签名 URL（默认 1 小时有效）
+     */
+    String generatePresignedPutUrl(String key, String contentType);
 
     /**
      * 删除 COS 中的文件。

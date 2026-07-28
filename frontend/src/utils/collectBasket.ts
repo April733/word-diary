@@ -459,6 +459,19 @@ export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): C
   if (!text) return []
   const map = new Map<string, CollectEntry>()
 
+  /** 同词条多条目：合并释义而非丢弃 */
+  const mergeIntoMap = (entry: CollectEntry) => {
+    const existing = map.get(entry.basketKey)
+    if (!existing) {
+      map.set(entry.basketKey, entry)
+    } else {
+      map.set(entry.basketKey, {
+        ...existing,
+        partSpeechMean: existing.partSpeechMean + '；' + entry.partSpeechMean
+      })
+    }
+  }
+
   const analyze = parseAnalyzeResultFromStored(text)
   if (analyze) {
     for (const raw of Object.values(analyze)) {
@@ -469,7 +482,7 @@ export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): C
         if (!word && !(e as any).meaning && !(e as any).partSpeechMean) continue
         const entryType = (e as any).entryType || (word.includes(' ') ? 'phrase' : 'word')
         const normalized = normalizeRawEntry({ ...(e as Record<string, unknown>), entryType }, sourceSnippet)
-        if (normalized) map.set(normalized.basketKey, normalized)
+        if (normalized) mergeIntoMap(normalized)
       }
     }
     if (map.size) return [...map.values()]
@@ -485,7 +498,7 @@ export function parseCollectEntriesFromText(text: string, sourceSnippet = ''): C
         const entries = Array.isArray(root?.entries) ? root.entries : []
         for (const e of entries) {
           const normalized = normalizeRawEntry(e, sourceSnippet)
-          if (normalized) map.set(normalized.basketKey, normalized)
+          if (normalized) mergeIntoMap(normalized)
         }
       } catch {
         /* ignore */

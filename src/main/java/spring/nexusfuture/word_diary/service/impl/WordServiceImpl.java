@@ -3,6 +3,7 @@ package spring.nexusfuture.word_diary.service.impl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
+import spring.nexusfuture.word_diary.common.WordPosParser;
 import spring.nexusfuture.word_diary.common.WordStudyStatus;
 import spring.nexusfuture.word_diary.dto.response.AiParseResult;
 import spring.nexusfuture.word_diary.dto.request.WordAddReq;
@@ -53,7 +54,7 @@ public class WordServiceImpl implements WordService {
                 .wordProto(proto)
                 .usPhonetic(req.getUsPhonetic())
                 .ukPhonetic(req.getUkPhonetic())
-                .partSpeechMean(req.getPartSpeechMean())
+                .partSpeechMean(WordPosParser.canonicalize(req.getPartSpeechMean()))
                 .sentenceExample(req.getSentenceExample())
                 .rootAffix(req.getRootAffix())
                 .entryType("word")
@@ -108,7 +109,7 @@ public class WordServiceImpl implements WordService {
                         .wordProto(proto)
                         .usPhonetic(r.getUsPhonetic())
                         .ukPhonetic(r.getUkPhonetic())
-                        .partSpeechMean(r.getPartSpeechMean())
+                        .partSpeechMean(WordPosParser.canonicalize(r.getPartSpeechMean()))
                         .sentenceExample(r.getSentenceExample())
                         .rootAffix(r.getRootAffix())
                         .entryType("word")
@@ -136,7 +137,7 @@ public class WordServiceImpl implements WordService {
         word.setWordProto(req.getWordProto());
         word.setUsPhonetic(req.getUsPhonetic());
         word.setUkPhonetic(req.getUkPhonetic());
-        word.setPartSpeechMean(req.getPartSpeechMean());
+        word.setPartSpeechMean(WordPosParser.canonicalize(req.getPartSpeechMean()));
         word.setSentenceExample(req.getSentenceExample());
         word.setRootAffix(req.getRootAffix());
         wordMapper.update(word);
@@ -215,7 +216,7 @@ public class WordServiceImpl implements WordService {
             changed = true;
         }
         if (isBlank(word.getPartSpeechMean()) && !isBlank(from.getPartSpeechMean())) {
-            word.setPartSpeechMean(from.getPartSpeechMean());
+            word.setPartSpeechMean(WordPosParser.canonicalize(from.getPartSpeechMean()));
             changed = true;
         }
         return changed;

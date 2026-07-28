@@ -16,7 +16,7 @@ public final class StudyAlgorithm {
     private StudyAlgorithm() {}
 
     /**
-     * 认识满 2 遍后升阶：status+1（0→1→…→7），status_data=学习日。
+     * 认识满 2 遍后升阶：status+1（0→1→…→6），status_data=学习日。
      *
      * @param studyDate 当前学习日（默认每天 7:00 换日）
      */
