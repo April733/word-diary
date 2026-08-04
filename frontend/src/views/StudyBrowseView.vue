@@ -1,17 +1,6 @@
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" @click="router.push('/study')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ $t('study.browseTitle') }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-right" aria-hidden="true" />
-    </header>
+    <PageHeader :title="$t('study.browseTitle')" :back-to="backToStudy" />
 
     <div class="page-body">
       <p class="browse-hint">{{ $t('study.browseHint') }}</p>
@@ -56,14 +45,25 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getBrowseWords, submitBrowseAnswer } from '../api'
 import WordCard from '../components/WordCard.vue'
+import PageHeader from '../components/PageHeader.vue'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
+const sourceType = computed(() => (route.query.sourceType as string) || undefined)
+const tab = computed(() => (route.query.tab as string) || (sourceType.value === '听力' ? 'listen' : 'read'))
+const backToStudy = computed(() => ({
+  path: '/study',
+  query: {
+    ...(sourceType.value ? { sourceType: sourceType.value } : {}),
+    ...(tab.value ? { tab: tab.value } : {})
+  }
+}))
 const loading = ref(true)
 const answering = ref(false)
 const showAnswer = ref(false)
@@ -77,7 +77,11 @@ onMounted(loadWords)
 async function loadWords() {
   loading.value = true
   try {
-    const res = await getBrowseWords({ page: 1, pageSize: 100 })
+    const res = await getBrowseWords({
+      page: 1,
+      pageSize: 100,
+      ...(sourceType.value ? { sourceType: sourceType.value } : {})
+    })
     words.value = res.data.data.items || []
     index.value = 0
   } catch {
@@ -125,72 +129,11 @@ function nextWord() {
   background: transparent;
 }
 
+/* 浏览学习页面特有 header 样式 */
 .page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
   background: #fff;
+  border-bottom: none;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
-  max-width: 42%;
-  z-index: 1;
-}
-
-.page-header h1 {
-  font-size: 15px;
-  margin: 0;
-  font-weight: 650;
-  letter-spacing: 0.02em;
 }
 
 .page-body {

@@ -326,6 +326,38 @@ public class AiPromptBuilder {
     }
 
     /**
+     * 跟读 AI 助手 system prompt（基于 locale 字符串）。
+     * 上下文为音频台词，围绕台词中出现的单词进行讲解。
+     */
+    public String buildShadowingChatPrompt(String locale, String transcriptContext) {
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_SHADOWING_CHAT, locale);
+        if (fromDb == null || fromDb.isBlank()) {
+            throw new IllegalStateException(
+                "场景 'shadowing_chat' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
+        }
+        return applyPlaceholders(fromDb, transcriptContext, "", locale) + replyLanguageReinforcement(locale);
+    }
+
+    /**
+     * 跟读 AI 助手 system prompt（基于 userId，兼容旧调用）。
+     */
+    public String buildShadowingChatPrompt(Long userId, String transcriptContext) {
+        return buildShadowingChatPrompt(getUserLocale(userId), transcriptContext);
+    }
+
+    /**
+     * 跟读 AI 助手 user prompt。
+     */
+    public String buildShadowingChatUserPrompt(String locale, String question) {
+        PromptTemplate t = getTemplateByLocale(locale);
+        return String.format(t.readingAssistantUserPrefix(), question);
+    }
+
+    public String buildShadowingChatUserPrompt(Long userId, String question) {
+        return buildShadowingChatUserPrompt(getUserLocale(userId), question);
+    }
+
+    /**
      * 翻译答疑 system prompt：以当前批改记录为上下文，也允许通用语言学习提问。
      */
     public String buildTranslationChatPrompt(String locale, String practiceContext) {
@@ -417,185 +449,96 @@ public class AiPromptBuilder {
     }
 
     /**
-     * 翻译出题 system prompt。优先 sys_ai_scene_prompt(translation_generate)。
-     * 不用通用 replyLanguageReinforcement（会误禁中文参考译文）。
+     * 翻译出题 system prompt。必须从 sys_ai_scene_prompt(translation_generate) 加载，不允许硬编码回退。
+     * 语言锁为系统级约束，硬编码追加。
      */
     public String buildTranslationGenerateSystemPrompt(Long userId) {
         String locale = getUserLocale(userId);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GENERATE, locale);
-        String base;
-        if (fromDb != null) {
-            base = applyPlaceholders(fromDb, "", "", locale, null, userId)
-                    + translationGenerateLanguageReinforcement(locale);
-        } else {
-            base = defaultTranslationGenerateSystem(locale);
+        if (fromDb == null || fromDb.isBlank()) {
+            throw new IllegalStateException(
+                "场景 'translation_generate' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
         }
-        return appendProficiencyBlock(base, userId);
+        return applyPlaceholders(fromDb, "", "", locale, null, userId)
+                + translationGenerateLanguageReinforcement(locale);
     }
 
     public String buildTranslationGenerateUserPrompt(Long userId, String direction,
                                                      String wordsBlock) {
-        String locale = getUserLocale(userId);
-        PromptTemplate t = getTemplateByLocale(locale);
         String dirNorm = direction == null ? "" : direction.trim().toLowerCase();
         String dirLabel = TranslationDirections.describeForPrompt(dirNorm);
-        String sourceLang = TranslationDirections.sourceLanguageName(dirNorm);
-        String targetLang = TranslationDirections.targetLanguageName(dirNorm);
-        String user = """
-                产品场景：面向非英语母语者的英语学习翻译练习。
-                翻译方向（请原样保留）：%s
-                本次语言锁：
-                - 教练语言（theme 可用）：%s
-                - promptText 必须全部为 %s（源语言）
-                - referenceAnswer 必须全部为 %s（目标语言）；其中不要夹带教练评语
-                学习者词汇（优先使用；主题可参考雅思学术：教育、环境、科技、城市、工作、健康等）：
-                ---
-                %s
-                ---
-                只返回一个 JSON 对象，键包括：
-                direction（原样回传请求的方向代码）、
-                theme（短主题标签；优先用 %s）、
-                promptText、
-                referenceAnswer、
-                targetWords（实际用到的词汇字符串数组）。
-                约束：一句或一小段；主要用给定词汇；额外词须极常见；不要编造生僻词。
-                若系统提示中含学习者水平块，题目难度必须匹配该水平。
-                """.formatted(
-                dirLabel,
-                t.localeName(),
-                sourceLang,
-                targetLang,
-                wordsBlock == null ? "" : wordsBlock,
-                t.localeName()
-        );
-        return appendProficiencyBlock(user, userId);
+        String flat = wordsBlock == null ? "" : wordsBlock
+                .replace("- ", "").replace("\n", "；").trim();
+        return "翻译方向：" + dirLabel + " 词汇列表：" + flat + " 请出题。";
     }
 
-    private String defaultTranslationGenerateSystem(String locale) {
+    /** 出题语言锁（硬编码）：防止全局「只用界面语」规则覆盖目标语译文。 */
+    private String translationGenerateLanguageReinforcement(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
-        return t.globalConstraint() + "\n" + """
-                你根据学习者已掌握的词汇，设计雅思风格的英语翻译练习题。
-                受众：非英语母语学习者。
-                请出一道练习：自然的一句或一小段，复用给定单词/短语，主题接近雅思学术
-                （教育、环境、科技、城市生活、工作、健康等）。
-                只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：
-                direction, theme, promptText, referenceAnswer, targetWords。
-                优先使用给定词汇；篇幅适中；避免超纲生僻词。
-                严格语言锁（覆盖全局「只用一种语言」规则）：
-                promptText = 方向的源语言；referenceAnswer = 方向的目标语言；
-                不要把教练用语混进 promptText 或 referenceAnswer。
-                """
-                + translationGenerateLanguageReinforcement(locale);
+        return "【翻译出题语言锁】theme 可用" + t.localeName()
+                + "。promptText 必须仅为方向的源语言。"
+                + "referenceAnswer 必须仅为方向的目标语言。";
     }
 
     /**
-     * 翻译批改 system prompt。优先 sys_ai_scene_prompt(translation_grade)。
+     * 翻译批改 system prompt。必须从 sys_ai_scene_prompt(translation_grade) 加载，不允许硬编码回退。
+     * 支持占位符 {target_language}：替换为练习目标语言名（如“中文”“印尼语”）。
      */
-    public String buildTranslationGradeSystemPrompt(Long userId) {
+    public String buildTranslationGradeSystemPrompt(Long userId, String direction) {
         String locale = getUserLocale(userId);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GRADE, locale);
-        if (fromDb != null) {
-            return applyPlaceholders(fromDb, "", "", locale) + translationGradeLanguageReinforcement(locale);
+        if (fromDb == null || fromDb.isBlank()) {
+            throw new IllegalStateException(
+                "场景 'translation_grade' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
         }
-        return defaultTranslationGradeSystem(locale);
+        String dirNorm = direction == null ? "" : direction.trim().toLowerCase();
+        String targetLang = TranslationDirections.targetLanguageName(dirNorm);
+        return applyPlaceholders(fromDb, "", "", locale, null, userId)
+                .replace("{target_language}", targetLang);
     }
 
     public String buildTranslationGradeUserPrompt(Long userId, String direction,
                                                   String promptText, String referenceAnswer,
                                                   String bodyText, String targetWordsCsv) {
-        String locale = getUserLocale(userId);
-        PromptTemplate t = getTemplateByLocale(locale);
-        String dirNorm = direction == null ? "" : direction.trim().toLowerCase();
-        String dirLabel = TranslationDirections.describeForPrompt(dirNorm);
-        String sourceLang = TranslationDirections.sourceLanguageName(dirNorm);
-        String targetLang = TranslationDirections.targetLanguageName(dirNorm);
-        String coach = t.localeName();
-        return """
-                产品场景：面向非英语母语者的翻译练习反馈。
-                翻译方向：%s
-                JSON 字段严格语言锁：
-                - summary：全部用 %s
-                - priorities[]：全部用 %s
-                - annotations[].issue：全部用 %s
-                - annotations[].excerpt：原样引用学生文本
-                - annotations[].fix：讲解用 %s；若含订正译文，译文部分必须用 %s（与讲解分开）
-                - referenceAnswer：全部用 %s（字段内不要夹带 %s 评语）
-                切勿把目标语参考译文写进 summary / priorities / issue。
-                切勿把教练语言散文写进 referenceAnswer。
-                练习词汇：%s
-                源文（%s）：
-                ---
-                %s
-                ---
-                参考译文（%s；供考官参考，勿盲抄）：
-                ---
-                %s
-                ---
-                学生译文：
-                ---
-                %s
-                ---
-                只返回一个 JSON 对象（不要 polishedAnswer）。
-                另需包含 wordHits：数组，元素为 {word, pos, used, correct}——练习词汇每项一条（不是以「词 (词性)」为键的 map）。
-                """.formatted(
-                dirLabel,
-                coach, coach, coach, coach, targetLang,
-                targetLang, coach,
+        return String.format("练习词汇：%s 原文：%s 译文：%s",
                 targetWordsCsv == null ? "" : targetWordsCsv,
-                sourceLang,
                 promptText == null ? "" : promptText,
-                targetLang,
-                referenceAnswer == null ? "" : referenceAnswer,
                 bodyText == null ? "" : bodyText
         );
     }
 
-    private String defaultTranslationGradeSystem(String locale) {
-        PromptTemplate t = getTemplateByLocale(locale);
-        return t.globalConstraint() + "\n" + """
-                你是面向非英语母语学习者的雅思取向翻译教练。
-                从准确性、流畅度、练习词汇使用三方面评分。
-                只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：
-                - overallBand（数字，0–9，可 0.5 步进）
-                - accuracy（数字，0–9）
-                - fluency（数字，0–9）
-                - targetWordUse（数字，0–9；练习词汇用得如何）
-                - summary（短评；句间用 \\n）
-                - priorities（3–5 条可执行建议）
-                - annotations（[{excerpt, issue, fix}]；仅收录有具体错误且 issue、fix 均非空的条目）
-                - referenceAnswer（强参考译文，只用练习目标语；句间用 \\n）
-                - wordHits（[{word, pos, used, correct}]；练习词汇每项一条；used=是否出现；correct=词性/义项是否正确）
-                不要返回 polishedAnswer。
-                中文教练评语用「练习词汇」而非「目标词」。
-                字段语言锁覆盖全局单语规则：教练字段用 {language}；
-                referenceAnswer 与订正译文片段用练习目标语。
-                评语须具体、公允。
-                """.replace("{language}", t.localeName())
-                + translationGradeLanguageReinforcement(locale);
+    /**
+     * 翻译批改-结构化 system prompt。从 sys_ai_scene_prompt(translation_grade_structured) 加载。
+     * 异步调用，约束 AI 返回 JSON（spellCheck + patternCheck + patternNotFound）。
+     */
+    public String buildTranslationGradeStructuredSystemPrompt(Long userId) {
+        String locale = getUserLocale(userId);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_TRANSLATION_GRADE_STRUCTURED, locale);
+        if (fromDb == null || fromDb.isBlank()) {
+            throw new IllegalStateException(
+                "场景 'translation_grade_structured' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
+        }
+        return applyPlaceholders(fromDb, "", "", locale, null, userId);
     }
 
-    /** 出题：禁止套用「一律用界面语、禁止中文」的通用强化。 */
-    private String translationGenerateLanguageReinforcement(String locale) {
-        PromptTemplate t = getTemplateByLocale(locale);
-        return "\n【翻译出题语言锁】theme 可用" + t.localeName()
-                + "。promptText 必须仅为方向的源语言。"
-                + " referenceAnswer 必须仅为方向的目标语言。"
-                + " 忽略任何要求全部译文改成"
-                + t.localeName()
-                + "、或在目标语为中文/印尼语/泰语/越南语时禁止使用该语言的全局指令。\n";
-    }
-
-    /** 批改：评语 = 界面语；参考译文/订正例句 = 练习目标语。 */
-    private String translationGradeLanguageReinforcement(String locale) {
-        PromptTemplate t = getTemplateByLocale(locale);
-        return "\n【翻译批改语言锁】summary、priorities、issue、fix 中的讲解必须只用"
-                + t.localeName()
-                + "。"
-                + " referenceAnswer 必须全部为练习目标语"
-                + "（en2zh 用中文，en2id 用印尼语，en2th 用泰语，en2vi 用越南语，*2en 用英语）。"
-                + " fix 内的订正译文示例也必须用同一目标语；"
-                + "不要把目标语正文写进 summary / priorities / issue。"
-                + " 本锁覆盖全局「只用一种语言 / 不要用中文」规则。\n";
+    /**
+     * 翻译批改-结构化 user prompt（单行）：练习词汇 + 题目 + 译文 + 句式表JSON。
+     *
+     * @param targetWordsCsv 练习词汇 CSV
+     * @param promptText     题目（源语言）
+     * @param bodyText       用户译文
+     * @param patternJson    句式表 JSON（key→description），由调用方序列化
+     */
+    public String buildTranslationGradeStructuredUserPrompt(String targetWordsCsv,
+                                                            String promptText,
+                                                            String bodyText,
+                                                            String patternJson) {
+        return String.format("练习词汇：%s 题目：%s 译文：%s 句式表：%s",
+                targetWordsCsv == null ? "" : targetWordsCsv,
+                promptText == null ? "" : promptText,
+                bodyText == null ? "" : bodyText,
+                patternJson == null ? "{}" : patternJson
+        );
     }
 
     /**

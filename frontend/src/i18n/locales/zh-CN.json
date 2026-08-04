@@ -1,4 +1,4 @@
-{
+ {
   "common": {
     "appName": "Aikoread",
     "save": "保存",
@@ -47,10 +47,21 @@
     "records": "学习记录",
     "notebook": "笔记列表",
     "writing": "写作批改",
-    "translation": "今日翻译",
+    "translation": "翻译练习",
     "spelling": "今日拼写",
-    "shadowing": "跟读",
-    "studyDuration": "学习时长统计"
+    "shadowing": "我的音频",
+    "localVideo": "本地视频",
+    "studyDuration": "时长统计",
+    "todayTraining": "今日训练"
+  },
+  "profile": {
+    "title": "用户信息",
+    "userId": "用户ID",
+    "username": "用户名",
+    "nickname": "昵称",
+    "phone": "手机号",
+    "email": "邮箱",
+    "goHelpCenter": "前往帮助中心"
   },
   "login": {
     "title": "登录 Aikoread",
@@ -125,12 +136,12 @@
   },
   "report": {
     "title": "帮助中心",
-    "subtitle": "产品建议、服务投诉，以及侵权与违法内容举报",
+    "subtitle": "产品建议与其它诉求",
     "tabSubmit": "提交反馈",
     "tabMine": "我的记录",
     "viewMine": "查看我的记录",
     "mineTitle": "我提交的记录",
-    "mineNeedLogin": "登录后可查看本账号提交的建议与投诉记录。",
+    "mineNeedLogin": "登录后可查看本账号提交的建议与诉求记录。",
     "goLogin": "去登录",
     "mineEmpty": "暂无记录。若曾提交过，可在下方用回执编号认领。",
     "mineLoadFailed": "加载记录失败",
@@ -149,19 +160,13 @@
     "statusActioned": "已处理",
     "statusRejected": "已驳回",
     "statusClosed": "已关闭",
-    "generalIntro": "欢迎留下建议或反馈问题。我们会尽快查看；涉及侵权或违法内容时，请选择对应分类以便启动合规处理流程。",
-    "processTitle": "侵权 / 违法内容处理流程",
-    "process1": "提交合格通知（表单或发至公示邮箱），系统记录收到时间与通知原文。",
-    "process2": "平台审核材料；认定为合格通知后，启动 24–48 小时处理时限。",
-    "process3": "时限内删除/下架涉事内容，并留存通知、处理记录与各时间点证据。",
+    "generalIntro": "欢迎留下您的建议或反馈问题，我们会尽快查看。",
     "emailLabel": "联系邮箱：",
     "type": "类型",
     "typeSuggestion": "产品建议",
-    "typeComplaint": "其他投诉",
-    "typeCopyright": "侵权投诉",
-    "typeIllegal": "违法内容举报",
+    "typeComplaint": "其它诉求",
     "name": "姓名",
-    "namePh": "怎么称呼您，或权利主体名称",
+    "namePh": "怎么称呼您",
     "email": "联系邮箱",
     "emailPh": "用于接收回执与回复",
     "emailCode": "邮箱验证码",
@@ -172,18 +177,6 @@
     "sendCodeFailed": "验证码发送失败",
     "phone": "联系电话（选填）",
     "phonePh": "便于紧急联系",
-    "org": "机构 / 代理（选填）",
-    "orgPh": "律所、版权代理等",
-    "rightDesc": "权利说明",
-    "rightDescPh": "请说明您对涉事内容享有的著作权或其他权利",
-    "ownership": "权属证明说明",
-    "ownershipPh": "登记号、授权合同要点、公开署名等可核验信息（勿上传敏感原件至本表）",
-    "targetUrl": "相关链接（选填）",
-    "targetUrlPh": "阅读页或分享链接",
-    "targetBookId": "电子书 ID（选填）",
-    "targetBookIdPh": "若已知书架中的书籍编号",
-    "targetDesc": "相关内容描述",
-    "targetDescPh": "书名、功能模块、页面位置等，便于定位",
     "detail": "详情",
     "detailPh": "请说明情况与期望处理方式",
     "detailSuggestion": "建议内容",
@@ -192,7 +185,7 @@
     "submit": "提交",
     "successTitle": "已收到",
     "successBody": "您的编号为 {noticeNo}。请妥善保存，以便后续核对。",
-    "successKeep": "对合格的侵权/违法通知，平台将在 24–48 小时内完成删除/下架，并留存通知与处理时间线。",
+    "successKeep": "我们会尽快查看并视情况回复，感谢反馈。",
     "successKeepGeneral": "我们会尽快查看并视情况回复，感谢反馈。",
     "successToast": "提交成功",
     "submitAnother": "再提交一条",
@@ -202,11 +195,11 @@
     "errorEmail": "请填写联系邮箱",
     "errorEmailFormat": "邮箱格式不正确",
     "errorEmailCode": "请填写邮箱验证码",
-    "errorTargetDesc": "请描述相关内容",
     "errorDetail": "请填写详情",
     "errorGoodFaith": "请勾选声明",
-    "errorRight": "侵权投诉请填写权利说明",
-    "errorOwnership": "侵权投诉请填写权属证明说明"
+    "accountBound": "关联账号：",
+    "targetDesc": "诉求对象",
+    "complainantEmail": "联系邮箱"
   },
   "terms": {
     "title": "用户协议 / 服务条款",
@@ -275,7 +268,7 @@
         "heading": "九、联系我们",
         "paras": [
           "如对本协议有任何疑问，可通过产品内反馈功能或平台公示的联系方式与我们联系。",
-          "投诉与建议：请通过站内「帮助中心」提交（含产品建议、其他投诉、侵权投诉、违法内容举报），或发送至 aikoread@163.com。对合格的侵权/违法通知，平台将在 24–48 小时内删除或下架相关内容，并留存通知、处理记录与时间点证据。"
+          "投诉与建议：请通过站内「帮助中心」提交（含产品建议、其它诉求），或发送至 aikoread@163.com。"
         ]
       }
     }
@@ -338,11 +331,22 @@
     "studyAllDone": "今日学习任务已完成",
     "readingDesc": "划线笔记 + AI 助手",
     "wordbookDesc": "导入和管理词汇",
-    "recordsDesc": "查看历史学习记录"
+    "recordsDesc": "查看历史学习记录",
+    "tabRead": "今日读写",
+    "tabListen": "今日听说",
+    "continueShadowing": "继续跟读",
+    "noShadowing": "还没有跟读文件",
+    "goShadowing": "去跟读",
+    "userProfile": "用户信息",
+    "helpCenter": "帮助中心",
+    "listenUnderConstruction": "正在建设中",
+    "listenUnderConstructionHint": "上线后将第一时间通知您~"
   },
   "bookshelf": {
     "title": "我的书架",
     "import": "导入书籍",
+    "importShare": "导入分享码",
+    "share": "分享",
     "formatHint": "支持 EPUB、PDF 格式，单文件不超过 100MB；每人最多 10 本",
     "uploading": "正在导入 {name} ...",
     "uploadingProgress": "正在导入 {name} … {percent}%",
@@ -363,7 +367,12 @@
     "deleteError": "删除失败",
     "copyrightTitle": "版权确认",
     "copyrightBody": "请确认您拥有该电子书的合法版权或使用授权。禁止上传盗版内容。",
-    "copyrightConfirm": "我确认拥有版权"
+    "copyrightConfirm": "我确认拥有版权",
+    "sharePrompt": "分享码已生成，请复制给对方",
+    "shareImportPrompt": "请输入分享码",
+    "shareImportSuccess": "分享书籍导入成功",
+    "shareImportError": "分享码导入失败",
+    "shareError": "生成分享码失败"
   },
   "reader": {
     "readingSettings": "阅读设置",
@@ -638,7 +647,17 @@
     "startReview": "开始复习",
     "todayNew": "今日新词",
     "todayReview": "今日复习",
-    "totalProgress": "总进度"
+    "totalProgress": "总进度",
+    "editCurrentWord": "编辑单词",
+    "noCurrentWord": "没有可编辑的单词",
+    "save": "保存",
+    "deleteWord": "删除",
+    "deleteWordConfirm": "确认删除该单词？它将从学习计划中移除。",
+    "wordRequired": "请输入单词",
+    "editSuccess": "已更新",
+    "editFailed": "更新失败",
+    "deleteSuccess": "已删除",
+    "deleteFailed": "删除失败"
   },
   "wordbook": {
     "title": "单词本",
@@ -670,7 +689,40 @@
     "studyEnabledOn": "已加入背诵",
     "studyEnabledOff": "已移出背诵",
     "studyToggleCooldown": "操作太频繁，请 5 秒后再试",
-    "error": "操作失败"
+    "error": "操作失败",
+    "addWord": "新增单词",
+    "editWord": "编辑单词",
+    "searchPlaceholder": "搜索单词、释义或备注",
+    "searchNoResult": "没有匹配的单词",
+    "empty": "这个单词本里还没有词条",
+    "word": "词条",
+    "meaning": "释义",
+    "remark": "备注",
+    "remarkPlaceholder": "请输入备注（选填）",
+    "example": "例句",
+    "wordPlaceholder": "请输入单词原型",
+    "usPhonetic": "美式音标",
+    "ukPhonetic": "英式音标",
+    "usPhoneticPlaceholder": "如 /ˈeksəmpəl/（选填）",
+    "ukPhoneticPlaceholder": "如 /ɪɡˈzɑːmpəl/（选填）",
+    "meaningPlaceholder": "如 n. 例子，实例",
+    "examplePlaceholder": "请输入例句（选填）",
+    "rootAffixPlaceholder": "请输入词根词缀解析（选填）",
+    "wordRequired": "请输入单词",
+    "meaningRequired": "请输入释义",
+    "addSuccess": "已添加",
+    "editSuccess": "已保存",
+    "saveFail": "保存失败，请重试",
+    "removed": "已删除",
+    "removeFail": "删除失败",
+    "removeConfirm": "确定删除该单词？删除后不可恢复。",
+    "speakUs": "播放美音",
+    "speakUk": "播放英音",
+    "sourceAll": "全部",
+    "sourceReading": "读写",
+    "sourceListening": "听说",
+    "noWordbooksForSource": "该分类下还没有单词本",
+    "sourceType": "分类"
   },
   "wordlist": {
     "title": "单词列表",
@@ -797,7 +849,8 @@
     "loadFailed": "加载失败",
     "excerpt": "原文",
     "issue": "问题",
-    "fix": "改法"
+    "fix": "改法",
+    "selectedWords": "字"
   },
   "translation": {
     "title": "翻译练习",
@@ -938,7 +991,30 @@
     "checkFailed": "核对失败，请重试",
     "empty": "暂无翻译练习中用错的词，先去做翻译练习吧",
     "emptyDone": "今日拼写已练完，明天再来复习",
-    "goTranslation": "去翻译练习"
+    "goTranslation": "去翻译练习",
+    "manageWords": "管理拼写本",
+    "manageTitle": "拼写词条管理",
+    "manageEmpty": "暂无拼写词条",
+    "manageAdd": "新增词条",
+    "manageEdit": "编辑",
+    "manageDelete": "删除",
+    "manageDeleteConfirm": "确定删除该词条？删除后不可恢复。",
+    "manageAddSuccess": "已添加",
+    "manageEditSuccess": "已保存",
+    "manageDeleteSuccess": "已删除",
+    "manageLoadFailed": "加载失败",
+    "manageSaveFailed": "保存失败",
+    "manageDeleteFailed": "删除失败",
+    "wordProto": "单词",
+    "wordProtoPlaceholder": "请输入单词原型",
+    "pos": "词性",
+    "posPlaceholder": "如 n / v / adj / adv / phr",
+    "meaning": "释义",
+    "meaningPlaceholder": "请输入中文释义",
+    "wordRequired": "请输入单词",
+    "posRequired": "请输入词性",
+    "meaningRequired": "请输入释义",
+    "duplicateWord": "该单词+词性已存在"
   },
   "shadowing": {
     "title": "跟读",
@@ -990,7 +1066,21 @@
     "localVideoSeekHint": "点进度条跳转；← / → 后退 / 前进 {n} 秒；空格播放；F 全屏（全屏后 Esc 退出）",
     "fullscreen": "全屏",
     "exitFullscreen": "退出全屏",
-    "fullscreenFailed": "无法进入全屏，请检查浏览器权限"
+    "fullscreenFailed": "无法进入全屏，请检查浏览器权限",
+    "rename": "重命名",
+    "renameSuccess": "已重命名",
+    "renameFailed": "重命名失败",
+    "toggleNotes": "开启笔记",
+    "remarkPlaceholder": "写备注…",
+    "editLine": "纠正台词",
+    "aiAssistant": "AI 助手",
+    "aiEmptyTitle": "AI 单词讲解",
+    "aiEmptyDesc": "点击台词中的单词，或直接输入问题，AI 会为你讲解单词、语法、用法等。",
+    "aiHint": "试试问：这个词什么意思？",
+    "aiInputPlaceholder": "输入问题，如：这个词什么意思？",
+    "selectedText": "选中文本",
+    "selectHint": "拖拽选中台词",
+    "aiAnalyze": "解析"
   },
   "selectionCollect": {
     "hint": "划选英文单词或短语，可加入单词本背诵。",
@@ -1004,8 +1094,11 @@
     "aiFillFail": "AI 补全失败"
   },
   "studyDuration": {
-    "title": "学习时长统计",
+    "title": "时长统计",
     "total": "合计有效时长",
+    "days": "学习天数",
+    "daysUnit": "天",
+    "daysCount": "{n} 天",
     "byAction": "按学习行为",
     "timelineToday": "本学习日时间轴",
     "hourPreference": "学习时段偏好",
@@ -1018,7 +1111,7 @@
     "sessionFootnote": "单次 = 一段连续有效学习（切走或空闲会断段）。",
     "peakHour": "最常学习：{from}:00–{to}:00",
     "range": {
-      "today": "本学习日",
+      "today": "今日时长",
       "all": "全部"
     },
     "actions": {

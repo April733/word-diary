@@ -10,10 +10,10 @@ import java.util.List;
 public interface WdWordMapper {
 
     @Insert("INSERT INTO wd_word(notebook_id, word_proto, us_phonetic, uk_phonetic, part_speech_mean, " +
-            "sentence_example, root_affix, entry_type, source_book_id, source_snippet, source_location, " +
+            "sentence_example, root_affix, remark, entry_type, source_book_id, source_snippet, source_location, " +
             "is_public, user_id, status, status_data, create_time, update_time) " +
             "VALUES(#{notebookId}, #{wordProto}, #{usPhonetic}, #{ukPhonetic}, #{partSpeechMean}, " +
-            "#{sentenceExample}, #{rootAffix}, COALESCE(#{entryType}, 'word'), #{sourceBookId}, #{sourceSnippet}, #{sourceLocation}, " +
+            "#{sentenceExample}, #{rootAffix}, COALESCE(#{remark}, ''), COALESCE(#{entryType}, 'word'), #{sourceBookId}, #{sourceSnippet}, #{sourceLocation}, " +
             "#{isPublic}, #{userId}, COALESCE(#{status}, 0), COALESCE(#{statusData}, NOW()), NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdWord word);
@@ -29,7 +29,7 @@ public interface WdWordMapper {
 
     @Update("UPDATE wd_word SET word_proto = #{wordProto}, us_phonetic = #{usPhonetic}, " +
             "uk_phonetic = #{ukPhonetic}, part_speech_mean = #{partSpeechMean}, " +
-            "sentence_example = #{sentenceExample}, root_affix = #{rootAffix}, " +
+            "sentence_example = #{sentenceExample}, root_affix = #{rootAffix}, remark = #{remark}, " +
             "entry_type = #{entryType}, source_book_id = #{sourceBookId}, " +
             "source_snippet = #{sourceSnippet}, source_location = #{sourceLocation}, " +
             "update_time = NOW() WHERE id = #{id} AND is_deleted = 0")
@@ -49,20 +49,23 @@ public interface WdWordMapper {
     @Update("UPDATE wd_word SET is_deleted = 1, update_time = NOW() WHERE notebook_id = #{notebookId} AND is_deleted = 0")
     int softDeleteByNotebookId(Long notebookId);
 
-    @Select("SELECT w.* FROM wd_word w " +
+    @Select("<script>SELECT w.* FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE w.user_id = #{userId} AND w.status = 0 AND w.is_deleted = 0 " +
-            "ORDER BY w.id ASC LIMIT #{limit}")
-    List<WdWord> selectNewWords(@Param("userId") Long userId, @Param("limit") int limit);
+            "<if test='sourceType != null'> AND b.source_type = #{sourceType} </if>" +
+            "ORDER BY w.id ASC LIMIT #{limit}</script>")
+    List<WdWord> selectNewWords(@Param("userId") Long userId, @Param("limit") int limit,
+                                @Param("sourceType") String sourceType);
 
     /**
      * 到期复习：status NOT IN (0,6)，且「当前学习日 − 上次学习日」≥ 该阶段间隔。
      * {@code studyDate} 按每日刷新节点切日（默认 7:00），不是自然日 0:00。
      * MySQL：DATEDIFF(学习日, DATE(status_data))
      */
-    @Select("SELECT w.* FROM wd_word w " +
+    @Select("<script>SELECT w.* FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
             "WHERE w.user_id = #{userId} AND w.status NOT IN (0, 6) AND w.status_data IS NOT NULL " +
+            "<if test='sourceType != null'> AND b.source_type = #{sourceType} </if>" +
             "AND DATEDIFF(#{studyDate}, DATE(w.status_data)) >= CASE w.status " +
             "  WHEN 1 THEN 1 " +
             "  WHEN 2 THEN 2 " +
@@ -70,8 +73,9 @@ public interface WdWordMapper {
             "  WHEN 4 THEN 4 " +
             "  WHEN 5 THEN 7 " +
             "  ELSE 999 END " +
-            "AND w.is_deleted = 0 ORDER BY w.status ASC, w.status_data ASC")
-    List<WdWord> selectReviewTasks(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate);
+            "AND w.is_deleted = 0 ORDER BY w.status ASC, w.status_data ASC</script>")
+    List<WdWord> selectReviewTasks(@Param("userId") Long userId, @Param("studyDate") LocalDate studyDate,
+                                   @Param("sourceType") String sourceType);
 
     @Select("<script>SELECT COUNT(*) FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 " +
@@ -92,11 +96,12 @@ public interface WdWordMapper {
             "WHERE w.user_id = #{userId} AND w.is_deleted = 0")
     List<WdWord> selectAllByUserId(Long userId);
 
-    /** 已开启「在背」的单词本中的全部单词 */
-    @Select("SELECT w.* FROM wd_word w " +
+    @Select("<script>SELECT w.* FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 1 " +
-            "WHERE w.user_id = #{userId} AND w.is_deleted = 0")
-    List<WdWord> selectAllInStudyPlan(Long userId);
+            "WHERE w.user_id = #{userId} AND w.is_deleted = 0" +
+            "<if test='sourceType != null'> AND b.source_type = #{sourceType} </if></script>")
+    List<WdWord> selectAllInStudyPlan(@Param("userId") Long userId,
+                                      @Param("sourceType") String sourceType);
 
     /**
      * 翻译练习词池：在背单词本中 status ≥ minStatus（learned=2 至少完成第一轮复习，mastered=6）的词。
@@ -134,9 +139,10 @@ public interface WdWordMapper {
     WdWord selectByUserAndWordProto(@Param("userId") Long userId,
                                     @Param("wordProto") String wordProto);
 
-    /** 未开启「在背」的单词本中的词数（不计入每日计划） */
-    @Select("SELECT COUNT(*) FROM wd_word w " +
+    @Select("<script>SELECT COUNT(*) FROM wd_word w " +
             "INNER JOIN wd_word_book b ON b.id = w.notebook_id AND b.is_deleted = 0 AND b.status = 0 " +
-            "WHERE w.user_id = #{userId} AND w.is_deleted = 0")
-    int countPausedByUserId(@Param("userId") Long userId);
+            "WHERE w.user_id = #{userId} AND w.is_deleted = 0" +
+            "<if test='sourceType != null'> AND b.source_type = #{sourceType} </if></script>")
+    int countPausedByUserId(@Param("userId") Long userId,
+                            @Param("sourceType") String sourceType);
 }

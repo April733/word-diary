@@ -11,6 +11,8 @@ interface UserInfo {
   token: string
   preferredLocale?: string
   preferredAiRegion?: string
+  phone?: string
+  email?: string
 }
 
 export const useUserStore = defineStore('user', () => {

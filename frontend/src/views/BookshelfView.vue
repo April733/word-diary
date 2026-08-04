@@ -1,31 +1,29 @@
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" @click="router.push('/')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ $t('bookshelf.title') }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-actions">
-        <t-upload
-          class="header-upload"
-          :auto-upload="false"
-          accept=".epub,.pdf"
-          :before-upload="beforeUpload"
-          @change="handleFileChange"
-          :show-upload-list="false"
-          :disabled="uploading || atBookLimit"
-        >
-          <t-button variant="text" size="small" class="nav-link" :disabled="uploading || atBookLimit">
-            {{ $t('bookshelf.import') }}
-          </t-button>
-        </t-upload>
-      </div>
-    </header>
+    <PageHeader :title="$t('bookshelf.title')" back-to="/">
+      <t-upload
+        class="header-upload"
+        :auto-upload="false"
+        accept=".epub,.pdf"
+        :before-upload="beforeUpload"
+        @change="handleFileChange"
+        :show-upload-list="false"
+        :disabled="uploading || atBookLimit"
+      >
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="uploading || atBookLimit">
+          {{ $t('bookshelf.import') }}
+        </button>
+      </t-upload>
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm header-share-btn"
+        :disabled="uploading || atBookLimit"
+        @click="importSharedBook"
+      >
+        {{ $t('bookshelf.importShare') }}
+      </button>
+      <UserDropdown />
+    </PageHeader>
 
     <div class="page-body">
       <!-- 格式提示 -->
@@ -84,6 +82,17 @@
               >
                 <template #icon><t-icon name="browse" size="16px" /></template>
               </t-button>
+              <t-button
+                variant="text"
+                size="small"
+                theme="primary"
+                class="action-icon"
+                :title="$t('bookshelf.share')"
+                :aria-label="$t('bookshelf.share')"
+                @click.stop="generateShareCode(book.id)"
+              >
+                {{ $t('bookshelf.share') }}
+              </t-button>
               <t-popconfirm :content="$t('bookshelf.deleteConfirm')" @confirm="handleDelete(book.id)">
                 <t-button
                   variant="text"
@@ -109,14 +118,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
-import { getBooks, uploadBook, deleteBook } from '../api'
+import { getBooks, uploadBook, deleteBook, createBookShareCode, importBookByShareCode } from '../api'
+import { useUserStore } from '../stores/user'
+import UserDropdown from '../components/UserDropdown.vue'
+import PageHeader from '../components/PageHeader.vue'
 
 const router = useRouter()
 const { t } = useI18n()
+const userStore = useUserStore()
 const books = ref<any[]>([])
 const loading = ref(true)
 const uploading = ref(false)
@@ -228,6 +241,48 @@ function openBook(bookId: number) {
   router.push(`/reader/${bookId}`)
 }
 
+async function generateShareCode(bookId: number) {
+  try {
+    const res = await createBookShareCode(bookId)
+    const shareCode = res.data?.data?.shareCode
+    if (!shareCode) {
+      MessagePlugin.error(t('bookshelf.shareError'))
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(shareCode)
+      MessagePlugin.success(t('common.copied'))
+    } catch {
+      MessagePlugin.warning(t('common.copyFailed'))
+    }
+    window.prompt(t('bookshelf.sharePrompt'), shareCode)
+  } catch (e: any) {
+    MessagePlugin.error(e.response?.data?.message || t('bookshelf.shareError'))
+  }
+}
+
+async function importSharedBook() {
+  const code = window.prompt(t('bookshelf.shareImportPrompt'))
+  if (!code) return
+  try {
+    const res = await importBookByShareCode(code.trim())
+    const book = res.data?.data
+    MessagePlugin.success(t('bookshelf.shareImportSuccess'))
+    if (book?.id) {
+      router.push(`/reader/${book.id}`)
+      return
+    }
+    await loadBooks()
+  } catch (e: any) {
+    MessagePlugin.error(e.response?.data?.message || t('bookshelf.shareImportError'))
+  }
+}
+
+onMounted(() => {
+  userStore.loadFromStorage()
+  loadBooks()
+})
+
 async function handleDelete(bookId: number) {
   try {
     await deleteBook(bookId)
@@ -246,67 +301,11 @@ async function handleDelete(bookId: number) {
   color: var(--brand-ink);
 }
 
-.page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
-  background: color-mix(in srgb, var(--brand-white) 72%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
-  backdrop-filter: blur(8px);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
+/* 书架页面特有 header 样式 */
 .header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
   flex: 0 1 auto;
   min-width: 0;
   max-width: min(42%, 220px);
-  z-index: 1;
 }
 
 .header-upload {
@@ -317,6 +316,10 @@ async function handleDelete(bookId: number) {
   overflow: hidden;
 }
 
+.header-share-btn {
+  margin-left: 4px;
+}
+
 /* 顶栏只保留「导入」按钮；选中文件名改由下方 upload-status 省略展示 */
 .header-upload :deep(.t-upload__single-display-text),
 .header-upload :deep(.t-upload__tips),
@@ -324,22 +327,6 @@ async function handleDelete(bookId: number) {
 .header-upload :deep(.t-upload__single-name),
 .header-upload :deep(.t-upload__display-text) {
   display: none !important;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--brand-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-link {
-  color: var(--brand-ink) !important;
-  max-width: 100%;
 }
 
 .page-body {

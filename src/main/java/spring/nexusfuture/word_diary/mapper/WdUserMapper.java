@@ -69,24 +69,26 @@ public interface WdUserMapper {
 
     @Select("""
             <script>
-            SELECT id, username, nickname, email, phone, role,
-                   preferred_locale AS preferredLocale,
-                   preferred_ai_region AS preferredAiRegion,
-                   create_time AS createTime, update_time AS updateTime,
-                   is_deleted AS isDeleted
-            FROM wd_user
+            SELECT u.id, u.username, u.nickname, u.email, u.phone, u.role,
+                   u.preferred_locale AS preferredLocale,
+                   u.preferred_ai_region AS preferredAiRegion,
+                   u.create_time AS createTime, u.update_time AS updateTime,
+                   u.is_deleted AS isDeleted,
+                   p.level_name AS proficiencyLevel
+            FROM wd_user u
+            LEFT JOIN wd_user_proficiency p ON p.user_id = u.id
             WHERE 1 = 1
-            <if test="includeDeleted == null or includeDeleted == false">AND is_deleted = 0</if>
-            <if test="role != null and role != ''">AND role = #{role}</if>
+            <if test="includeDeleted == null or includeDeleted == false">AND u.is_deleted = 0</if>
+            <if test="role != null and role != ''">AND u.role = #{role}</if>
             <if test="keyword != null and keyword != ''">
               AND (
-                username LIKE CONCAT('%', #{keyword}, '%')
-                OR nickname LIKE CONCAT('%', #{keyword}, '%')
-                OR email LIKE CONCAT('%', #{keyword}, '%')
-                OR phone LIKE CONCAT('%', #{keyword}, '%')
+                u.username LIKE CONCAT('%', #{keyword}, '%')
+                OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+                OR u.email LIKE CONCAT('%', #{keyword}, '%')
+                OR u.phone LIKE CONCAT('%', #{keyword}, '%')
               )
             </if>
-            ORDER BY id DESC
+            ORDER BY u.id DESC
             LIMIT #{offset}, #{size}
             </script>
             """)

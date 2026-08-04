@@ -43,8 +43,14 @@ public class WdAiCallLog {
     /** 提示词 token 数（模型返回 usage） */
     private Integer promptTokens;
 
-    /** 补全 token 数（模型返回 usage） */
+    /** 补全 token 数（模型返回 usage，含 reasoning + content） */
     private Integer completionTokens;
+
+    /** 思考 token 数（reasoning tokens，仅推理模型有） */
+    private Integer reasoningTokens;
+
+    /** 可见内容 token 数（= completionTokens - reasoningTokens，给用户看的实际内容） */
+    private Integer contentTokens;
 
     /** 总 token 数 */
     private Integer totalTokens;

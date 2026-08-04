@@ -40,6 +40,7 @@ public class WordBookServiceImpl implements WordBookService {
         WdWordBook book = WdWordBook.builder()
                 .userId(userId)
                 .bookId(readingBookId)
+                .sourceType(req.getSourceType() != null ? req.getSourceType() : "阅读")
                 .bookName(req.getBookName())
                 .bookDesc(req.getBookDesc())
                 .sortNum(req.getSortNum() != null ? req.getSortNum() : 0)
@@ -63,6 +64,7 @@ public class WordBookServiceImpl implements WordBookService {
         }
         book.setBookName(req.getBookName());
         book.setBookDesc(req.getBookDesc());
+        if (req.getSourceType() != null) book.setSourceType(req.getSourceType());
         if (req.getSortNum() != null) book.setSortNum(req.getSortNum());
         bookMapper.update(book);
     }
@@ -97,6 +99,7 @@ public class WordBookServiceImpl implements WordBookService {
         return WordBookVO.builder()
                 .id(book.getId())
                 .bookId(book.getBookId())
+                .sourceType(book.getSourceType())
                 .bookName(book.getBookName())
                 .bookDesc(book.getBookDesc())
                 .sortNum(book.getSortNum())

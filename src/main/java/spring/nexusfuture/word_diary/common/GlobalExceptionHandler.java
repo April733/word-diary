@@ -62,6 +62,11 @@ public class GlobalExceptionHandler {
                 .body(R.fail(502, "AI 线路调用失败，请稍后重试或切换线路"));
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<R<Void>> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(R.fail(400, e.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<R<Void>> handleException(Exception e) {
         log.error("未处理异常", e);

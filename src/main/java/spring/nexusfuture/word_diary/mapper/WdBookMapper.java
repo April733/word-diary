@@ -11,9 +11,10 @@ import java.util.List;
 public interface WdBookMapper {
 
     @Insert("INSERT INTO wd_book(user_id, title, author, cover_url, file_path, file_type, file_size, " +
-            "total_chapters, current_chapter, current_cfi, progress_percent, last_read_at, " +
+            "resource_id, total_chapters, current_chapter, current_cfi, progress_percent, last_read_at, " +
             "create_by, create_time, update_by, update_time, is_deleted) " +
             "VALUES(#{userId}, #{title}, #{author}, #{coverUrl}, #{filePath}, #{fileType}, #{fileSize}, " +
+            "#{resourceId}, " +
             "#{totalChapters}, #{currentChapter}, #{currentCfi}, #{progressPercent}, #{lastReadAt}, " +
             "#{createBy}, #{createTime}, #{updateBy}, #{updateTime}, #{isDeleted})")
     @Options(useGeneratedKeys = true, keyProperty = "id")
@@ -23,6 +24,12 @@ public interface WdBookMapper {
             "total_chapters=#{totalChapters}, update_time=NOW() " +
             "WHERE id=#{id} AND user_id=#{userId} AND is_deleted=0")
     int updateById(WdBook book);
+
+    @Update("UPDATE wd_book SET resource_id=#{resourceId}, update_time=NOW() " +
+            "WHERE id=#{id} AND user_id=#{userId} AND is_deleted=0")
+    int updateResourceId(@Param("id") Long id,
+                         @Param("userId") Long userId,
+                         @Param("resourceId") Long resourceId);
 
     @Update("UPDATE wd_book SET is_deleted=1, update_time=NOW() WHERE id=#{id} AND user_id=#{userId}")
     int deleteById(@Param("id") Long id, @Param("userId") Long userId);
@@ -36,6 +43,9 @@ public interface WdBookMapper {
 
     @Select("SELECT * FROM wd_book WHERE user_id=#{userId} AND is_deleted=0 ORDER BY last_read_at DESC")
     List<WdBook> selectByUserId(@Param("userId") Long userId);
+
+    @Select("SELECT * FROM wd_book WHERE user_id=#{userId} AND resource_id=#{resourceId} AND is_deleted=0 LIMIT 1")
+    WdBook selectByUserIdAndResourceId(@Param("userId") Long userId, @Param("resourceId") Long resourceId);
 
     @Select("SELECT COUNT(*) FROM wd_book WHERE user_id=#{userId} AND is_deleted=0")
     int countByUserId(@Param("userId") Long userId);

@@ -2160,17 +2160,17 @@ onBeforeUnmount(() => {
   min-height: 1.35em;
   padding: 2px 4px;
   margin: 0;
-  border: none;
+  border: none !important;
   border-radius: 0;
-  background: rgba(255, 255, 255, 0.55);
+  background: transparent !important;
   color: #e53935;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.35;
   font-family: sans-serif;
   resize: none;
-  outline: none;
-  box-shadow: none;
+  outline: none !important;
+  box-shadow: none !important;
   overflow: hidden;
   field-sizing: content;
 }
@@ -2180,7 +2180,17 @@ onBeforeUnmount(() => {
 }
 
 .pdf-inline-note:focus {
-  background: rgba(255, 255, 255, 0.65);
-  outline: none;
+  background: transparent !important;
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* 强制覆盖：确保内联笔记文字框无任何白底 */
+.pdf-inline-note-wrap :deep(textarea) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 </style>

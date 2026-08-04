@@ -1,21 +1,8 @@
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" @click="router.push('/notebooks')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ notebookName }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-actions">
-        <!-- 暂时隐藏批量生成入口 -->
-        <!-- <t-button @click="openBatchImport">批量生成</t-button> -->
-        <t-button theme="primary" @click="openAddDialog">添加单词</t-button>
-      </div>
-    </header>
+    <PageHeader :title="notebookName" back-to="/notebooks">
+      <t-button theme="primary" @click="openAddDialog">添加单词</t-button>
+    </PageHeader>
 
     <div class="page-body">
       <t-list v-if="words.length > 0" :split="true">
@@ -195,6 +182,7 @@ import { ref, onMounted, onBeforeUnmount, watch, reactive, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getWords, addWord, updateWord, deleteWord, aiParseWords, aiParseWordsStream, batchAddWords } from '../api'
+import PageHeader from '../components/PageHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -645,7 +633,6 @@ function speak(text: string, accent: 'us' | 'uk') {
   const voices = window.speechSynthesis.getVoices()
   if (voices.length > 0) {
     const langPrefix = accent === 'us' ? 'en-US' : 'en-GB'
-    // 优先匹配完全一致的语言 + 高分语音
     let best = voices.find(v => v.lang === langPrefix && v.localService)
     if (!best) best = voices.find(v => v.lang.startsWith(langPrefix))
     if (!best) best = voices.find(v => v.lang.startsWith('en-'))
@@ -668,75 +655,15 @@ function displayRootAffix(text: string) {
   background: transparent;
 }
 
+/* 单词列表页面特有 header 样式 */
 .page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
   background: #fff;
+  border-bottom: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.page-header h1 {
-  font-size: 15px;
-  margin: 0;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
   max-width: 42%;
-  z-index: 1;
 }
 
 .page-body {

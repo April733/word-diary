@@ -118,11 +118,7 @@ export function drawMarkup(
     const contentW = Math.max(fontSize * 2, ...(widths.length ? widths : [0]))
     const tw = Math.min(maxTw, contentW + pad * 2)
     const th = lines.length * lineH + pad * 2
-    // 半透明白底 + 红字，无边框
-    ctx.globalAlpha = 0.55
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fillRect(x, y, tw, th)
-    ctx.globalAlpha = 1
+    // 仅绘制红字，避免白底造成“白边”观感
     ctx.fillStyle = color
     lines.forEach((line, i) => {
       ctx.fillText(line, x + pad, y + pad + i * lineH)

@@ -19,6 +19,12 @@ const router = createRouter({
       component: () => import('../views/ReportView.vue')
     },
     {
+      path: '/profile',
+      name: 'Profile',
+      component: () => import('../views/ProfileView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/',
       name: 'Dashboard',
       component: () => import('../views/DashboardView.vue'),
@@ -79,7 +85,7 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
-      path: '/shadowing/:id',
+      path: '/shadowing/player/:id',
       name: 'ShadowingPlayer',
       component: () => import('../views/ShadowingPlayerView.vue'),
       meta: { requiresAuth: true }

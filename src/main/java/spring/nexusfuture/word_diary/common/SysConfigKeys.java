@@ -43,11 +43,17 @@ public final class SysConfigKeys {
     /** 翻译练习：批改用户译文 */
     public static final String AI_SCENE_TRANSLATION_GRADE = "translation_grade";
 
+    /** 翻译练习：批改后结构化分析（单词拼写 + 句式命中），异步调用，返回 JSON */
+    public static final String AI_SCENE_TRANSLATION_GRADE_STRUCTURED = "translation_grade_structured";
+
     /** 翻译练习：Aiko 答疑（本条练习 + 通用语言学习） */
     public static final String AI_SCENE_TRANSLATION_CHAT = "translation_chat";
 
     /** 跟读：音频转写（ASR，非 Chat；须绑定阿里云 Paraformer 类模型） */
     public static final String AI_SCENE_SHADOWING_ASR = "shadowing_asr";
+
+    /** 跟读：AI 问答（台词单词讲解） */
+    public static final String AI_SCENE_SHADOWING_CHAT = "shadowing_chat";
 
     /** 未匹配场景时的回退 */
     public static final String AI_SCENE_DEFAULT = "default";

@@ -102,19 +102,24 @@ export const aiParseWordsStream = (notebookId: number, data: any): Promise<Respo
 export const batchAddWords = (notebookId: number, data: any) => api.post(`/notebooks/${notebookId}/words/batch-add`, data)
 
 // Study — 今日学习
-export const getStudyToday = () => api.get('/study-today')
-export const openStudySession = () => api.post('/study-today/session/open')
-export const getStudySessionQueue = (params?: { phase?: string }) =>
+export const getStudyToday = (params?: { sourceType?: string }) => api.get('/study-today', { params })
+export const openStudySession = (params?: { sourceType?: string }) => api.post('/study-today/session/open', null, { params })
+export const getStudySessionQueue = (params?: { phase?: string; sourceType?: string }) =>
   api.get('/study-today/session/queue', { params })
 export const submitStudyAnswer = (data: {
   wordId: number
   feedback: number
   phase: string
-}) => api.post('/study-today/answer', data)
+}, params?: { sourceType?: string }) => api.post('/study-today/answer', data, { params })
 export const getStudySettings = () => api.get('/study-today/settings')
 export const updateStudySettings = (data: { dailyNewLimit?: number; reviewUnlockHour?: number }) =>
   api.put('/study-today/settings', data)
-export const getTodayCompleted = () => api.get('/study-today/completed')
+export const getTodayCompleted = (params?: { sourceType?: string }) => api.get('/study-today/completed', { params })
+
+// Study — 编辑/删除当前单词
+export const updateStudyWord = (wordId: number, data: { wordProto?: string; partSpeechMean?: string; usPhonetic?: string; ukPhonetic?: string }) =>
+  api.put(`/study-today/words/${wordId}`, data)
+export const deleteStudyWord = (wordId: number) => api.delete(`/study-today/words/${wordId}`)
 
 // Study — 背单词计划
 export const getBrowseWords = (params?: { notebookId?: number; page?: number; pageSize?: number }) =>
@@ -143,6 +148,9 @@ export const getStudyDurationStats = (range: 'today' | 'all' = 'today') =>
 
 export const getPlanWords = (params?: { status?: 'pending' | 'learning' | 'mastered' | 'all' }) =>
   api.get('/study-plan/words', { params })
+
+// Quotes（激励语）
+export const getRandomQuote = () => api.get('/quotes/random')
 
 export default api
 
@@ -234,6 +242,8 @@ export const uploadBook = async (
 export const getBooks = () => api.get('/books')
 export const getBookDetail = (bookId: number) => api.get(`/books/${bookId}`)
 export const deleteBook = (bookId: number) => api.delete(`/books/${bookId}`)
+export const createBookShareCode = (bookId: number) => api.post(`/books/${bookId}/share-code`)
+export const importBookByShareCode = (shareCode: string) => api.post('/books/import-share', { shareCode })
 export const updateProgress = (bookId: number, data: any, config?: SoftRequestConfig) =>
   api.post(`/books/${bookId}/progress`, data, config)
 export const getBookFileUrl = (bookId: number) => `/api/books/${bookId}/file`
@@ -299,17 +309,11 @@ export const sendAbuseNoticeMailCode = (email: string) =>
 
 /** 投诉 / 建议（公开可匿名；须邮箱验证码；登录时带 Token 会绑定账号） */
 export const submitAbuseNotice = (data: {
-  noticeType: 'suggestion' | 'complaint' | 'copyright' | 'illegal'
-  complainantName: string
-  complainantEmail: string
-  emailCode: string
+  noticeType: 'suggestion' | 'complaint'
+  complainantName?: string
+  complainantEmail?: string
+  emailCode?: string
   complainantPhone?: string
-  organization?: string
-  rightDescription?: string
-  ownershipProof?: string
-  targetUrl?: string
-  targetBookId?: number
-  targetDescription?: string
   detail: string
   goodFaith?: boolean
 }) => api.post('/abuse-notices', data)
@@ -466,6 +470,17 @@ export const updateTranslationWords = (
 export const deleteTranslationPractice = (id: number) => api.delete(`/translation/${id}`)
 export const gradeTranslationPractice = (id: number) =>
   api.post(`/translation/${id}/grade`, null, { timeout: 180000 })
+
+/** 流式批改：返回 SSE EventSource 兼容的 fetch 响应 */
+export const gradeTranslationPracticeStream = (id: number) =>
+  fetch(`/api/translation/${id}/grade-stream`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'text/event-stream',
+      'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+    },
+    credentials: 'include'
+  })
 export const listTranslationGrades = (id: number) => api.get(`/translation/${id}/grades`)
 export const listTranslationGradeChatMessages = (practiceId: number, gradeId: number) =>
   api.get(`/translation/${practiceId}/grades/${gradeId}/chat-messages`)
@@ -475,6 +490,14 @@ export const getSpellingSession = () => api.get('/spelling/session')
 export const getSpellingQueue = () => api.get('/spelling/session')
 export const checkSpelling = (data: { posStatId: number; answer: string }) =>
   api.post('/spelling/check', data)
+
+// Spelling word management (CRUD for wd_word_pos_stat)
+export const listSpellingWords = () => api.get('/spelling/words')
+export const addSpellingWord = (data: { wordProto: string; pos: string; meaning?: string }) =>
+  api.post('/spelling/words', data)
+export const updateSpellingWord = (id: number, data: { wordProto?: string; pos?: string; meaning?: string }) =>
+  api.put(`/spelling/words/${id}`, data)
+export const deleteSpellingWord = (id: number) => api.delete(`/spelling/words/${id}`)
 
 export const getMyProficiency = () => api.get('/proficiency/me')
 

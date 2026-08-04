@@ -7,8 +7,8 @@ import java.util.List;
 @Mapper
 public interface WdWordBookMapper {
 
-    @Insert("INSERT INTO wd_word_book(user_id, book_id, book_name, book_desc, sort_num, status, create_time, update_time) " +
-            "VALUES(#{userId}, #{bookId}, #{bookName}, #{bookDesc}, #{sortNum}, #{status}, NOW(), NOW())")
+    @Insert("INSERT INTO wd_word_book(user_id, book_id, source_type, book_name, book_desc, sort_num, status, create_time, update_time) " +
+            "VALUES(#{userId}, #{bookId}, #{sourceType}, #{bookName}, #{bookDesc}, #{sortNum}, #{status}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdWordBook book);
 
@@ -26,7 +26,7 @@ public interface WdWordBookMapper {
     WdWordBook selectByIdAny(Long id);
 
     @Update("UPDATE wd_word_book SET book_name = #{bookName}, book_desc = #{bookDesc}, " +
-            "sort_num = #{sortNum}, update_time = NOW() WHERE id = #{id}")
+            "source_type = #{sourceType}, sort_num = #{sortNum}, update_time = NOW() WHERE id = #{id}")
     int update(WdWordBook book);
 
     /** status: 1参与每日学习 0不参与 */

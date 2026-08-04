@@ -25,6 +25,9 @@ public class WdWordBook {
     /** 所属阅读书籍ID；NULL=独立单词本，非空则仅属于该书 */
     private Long bookId;
 
+    /** 来源分类：阅读|听力 */
+    private String sourceType;
+
     /** 单词本名称 */
     private String bookName;
 

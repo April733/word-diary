@@ -2,7 +2,7 @@
 <configuration>
     <!-- 日志文件路径：Docker 容器用 /app/logs，本地开发用 ./logs -->
     <property name="LOG_PATH" value="${LOG_PATH:-./logs}" />
-    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n" />
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%X{traceId:-}] [%thread] %-5level %logger{36} - %msg%n" />
 
     <!-- 控制台输出（docker logs 仍能看到） -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

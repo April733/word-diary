@@ -30,6 +30,9 @@ public class DatabaseInitConfig implements ApplicationRunner {
              Statement stmt = conn.createStatement()) {
             ensureColumn(conn, stmt, "wd_book", "file_size",
                     "ALTER TABLE wd_book ADD COLUMN file_size bigint DEFAULT 0 COMMENT '文件大小(字节)' AFTER file_type");
+            ensureColumn(conn, stmt, "wd_book", "resource_id",
+                    "ALTER TABLE wd_book ADD COLUMN resource_id bigint DEFAULT NULL COMMENT '共享资源ID' AFTER file_path");
+            ensureBookSharingTables(conn, stmt);
 
             ensureColumn(conn, stmt, "wd_ai_message", "parent_id",
                     "ALTER TABLE wd_ai_message ADD COLUMN parent_id bigint DEFAULT NULL COMMENT '关联的问题ID' AFTER session_id");
@@ -104,6 +107,9 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 log.debug("清理文章专练表跳过: {}", e.getMessage());
             }
             ensureShadowingClipTable(conn, stmt);
+            ensureSentencePatternTable(conn, stmt);
+            ensureUserSentencePatternStatTable(conn, stmt);
+            ensureSentencePatternGuessTable(conn, stmt);
             ensureStudyDurationTable(conn, stmt);
             ensureStudyDurationRefNullable(conn, stmt);
             seedStudyIdleTimeoutConfig(conn);
@@ -138,6 +144,22 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     "ALTER TABLE sys_ai_feature ADD COLUMN description_i18n json DEFAULT NULL COMMENT '描述多语言 JSON: en/id/th/vi' AFTER name_i18n");
             ensureColumn(conn, stmt, "sys_ai_model", "billing_unit",
                     "ALTER TABLE sys_ai_model ADD COLUMN billing_unit varchar(16) NOT NULL DEFAULT 'token' COMMENT '计费单位 token|second' AFTER provider");
+
+            // wd_ai_call_log: 区分 reasoning tokens（思考开销）与 content tokens（用户可见内容）
+            ensureColumn(conn, stmt, "wd_ai_call_log", "reasoning_tokens",
+                    "ALTER TABLE wd_ai_call_log ADD COLUMN reasoning_tokens int NOT NULL DEFAULT 0 COMMENT '思考token数量（reasoning tokens，仅推理模型有）' AFTER completion_tokens");
+            ensureColumn(conn, stmt, "wd_ai_call_log", "content_tokens",
+                    "ALTER TABLE wd_ai_call_log ADD COLUMN content_tokens int NOT NULL DEFAULT 0 COMMENT '可见内容token数量（= completionTokens - reasoningTokens，给用户看的实际内容）' AFTER reasoning_tokens");
+
+            // 关闭所有场景绑定的思考模式，避免产生不必要的 reasoning tokens 开销
+            try {
+                int updated = stmt.executeUpdate(
+                        "UPDATE sys_ai_scene SET thinking_mode = 'disabled', reasoning_effort = NULL, thinking_budget = NULL WHERE is_deleted = 0");
+                log.info("已将 {} 条场景绑定的思考模式设为 disabled", updated);
+            } catch (Exception e) {
+                log.warn("关闭场景思考模式失败: {}", e.getMessage());
+            }
+
             seedWordFeatureI18nIfMissing(conn);
             seedParaformerBilling(conn);
         } catch (Exception e) {
@@ -186,6 +208,22 @@ public class DatabaseInitConfig implements ApplicationRunner {
             seedAiScenes(stmt);
         } catch (Exception e) {
             log.warn("sys_ai_scene.region 初始化警告: {}", e.getMessage());
+        }
+
+        // 语录表
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            ensureQuoteTable(conn, stmt);
+        } catch (Exception e) {
+            log.warn("sys_quote 初始化警告: {}", e.getMessage());
+        }
+
+        // 自学小 Tips 表
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            ensureStudyTipTable(conn, stmt);
+        } catch (Exception e) {
+            log.warn("sys_study_tip 初始化警告: {}", e.getMessage());
         }
     }
 
@@ -564,6 +602,48 @@ public class DatabaseInitConfig implements ApplicationRunner {
             log.debug("数据库字段初始化: {}.{} 已存在，跳过", table, column);
         }
         rs.close();
+    }
+
+    private void ensureBookSharingTables(Connection conn, Statement stmt) throws Exception {
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_book_resource` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `owner_user_id` bigint NOT NULL COMMENT '资源创建者用户ID',
+                  `title` varchar(256) NOT NULL COMMENT '书名',
+                  `author` varchar(128) DEFAULT '' COMMENT '作者',
+                  `cover_url` varchar(512) DEFAULT '' COMMENT '封面图URL',
+                  `file_path` varchar(512) NOT NULL COMMENT '文件在服务器上的存储路径',
+                  `file_type` varchar(16) NOT NULL DEFAULT 'epub' COMMENT '文件类型 epub/pdf/txt',
+                  `file_size` bigint DEFAULT 0 COMMENT '文件大小(字节)',
+                  `ref_count` int NOT NULL DEFAULT 1 COMMENT '引用计数',
+                  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+                  PRIMARY KEY (`id`),
+                  KEY `idx_owner_user_id` (`owner_user_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='共享书籍资源表'
+                """);
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS `wd_book_share_code` (
+                  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                  `resource_id` bigint NOT NULL COMMENT '共享资源ID',
+                  `owner_user_id` bigint NOT NULL COMMENT '发起分享的用户ID',
+                  `share_code` varchar(32) NOT NULL COMMENT '分享码',
+                  `expires_at` datetime NOT NULL COMMENT '过期时间',
+                  `used_by` bigint DEFAULT NULL COMMENT '核销用户ID',
+                  `used_time` datetime DEFAULT NULL COMMENT '核销时间',
+                  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+                  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+                  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+                  PRIMARY KEY (`id`),
+                  UNIQUE KEY `uk_share_code` (`share_code`),
+                  KEY `idx_resource_id` (`resource_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='书籍分享码表'
+                """);
     }
 
     /** 删除 sys_member_tier 及 wd_user.member_tier 列（幂等） */
@@ -1508,6 +1588,262 @@ public class DatabaseInitConfig implements ApplicationRunner {
         log.info("数据库表初始化完成: wd_shadowing_clip");
     }
 
+    /** 确保 sys_sentence_pattern 表存在 */
+    private void ensureSentencePatternTable(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_sentence_pattern", new String[]{"TABLE"});
+            boolean exists = tables.next();
+            tables.close();
+            if (!exists) {
+                stmt.execute("""
+                        CREATE TABLE IF NOT EXISTS `sys_sentence_pattern` (
+                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                          `pattern_key` varchar(64) NOT NULL COMMENT '句式key（唯一，创建后不可改）',
+                          `type` varchar(16) NOT NULL COMMENT '类型 written|spoken',
+                          `level` varchar(8) NOT NULL COMMENT '等级 L1~L5',
+                          `description` varchar(512) NOT NULL COMMENT '句式描述',
+                          `example` varchar(512) DEFAULT NULL COMMENT '句式示例',
+                          `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+                          `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+                          `create_by` bigint DEFAULT NULL,
+                          `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          `update_by` bigint DEFAULT NULL,
+                          `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                          `is_deleted` tinyint NOT NULL DEFAULT 0,
+                          PRIMARY KEY (`id`),
+                          UNIQUE KEY `uk_pattern_key` (`pattern_key`),
+                          KEY `idx_level_status` (`level`, `status`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='句式管理表'
+                        """);
+                log.info("数据库表创建完成: sys_sentence_pattern");
+            }
+            // 兼容已建表：补 pattern_key 列
+            ensureColumn(conn, stmt, "sys_sentence_pattern", "pattern_key",
+                    "ALTER TABLE `sys_sentence_pattern` ADD COLUMN `pattern_key` varchar(64) NOT NULL DEFAULT '' COMMENT '句式key（唯一，创建后不可改）' AFTER `id`");
+            // 兼容已建表：补 type 列
+            ensureColumn(conn, stmt, "sys_sentence_pattern", "type",
+                    "ALTER TABLE `sys_sentence_pattern` ADD COLUMN `type` varchar(16) NOT NULL DEFAULT 'written' COMMENT '类型 written|spoken' AFTER `pattern_key`");
+            // 兼容已建表：补 example 列
+            ensureColumn(conn, stmt, "sys_sentence_pattern", "example",
+                    "ALTER TABLE `sys_sentence_pattern` ADD COLUMN `example` varchar(512) DEFAULT NULL COMMENT '句式示例' AFTER `description`");
+            // 补唯一索引（已存在则忽略）
+            try {
+                stmt.execute("ALTER TABLE `sys_sentence_pattern` ADD UNIQUE KEY `uk_pattern_key` (`pattern_key`)");
+                log.info("数据库索引初始化完成: sys_sentence_pattern.uk_pattern_key");
+            } catch (Exception ignored) {
+                // 索引已存在
+            }
+            // 迁移：将旧 description（含"例：xxx"）拆分为纯 description + example
+            var migrateRs = stmt.executeQuery("SELECT COUNT(*) FROM sys_sentence_pattern WHERE example IS NULL AND is_deleted = 0");
+            migrateRs.next();
+            if (migrateRs.getInt(1) > 0) {
+                String[][] seedData = {
+                        {"simple_sv", "主谓简单句：主语 + 不及物动词，无宾语。", "The sun rises."},
+                        {"simple_svo", "主谓宾简单句：主语 + 及物动词 + 宾语。", "I read books."},
+                        {"simple_svp", "主系表简单句：主语 + 系动词 + 表语。", "She is happy."},
+                        {"simple_svOO", "主谓双宾语：主语+动词+间接宾语+直接宾语。", "He gave me a gift."},
+                        {"simple_svoc", "主谓宾补：主语+动词+宾语+宾语补足语。", "We keep the room clean."},
+                        {"compound_and", "并列句and连接：简单句 + and + 简单句，表并列递进。", "I like reading and I enjoy travelling."},
+                        {"compound_but", "并列句but连接：简单句 + but + 简单句，表转折。", "It is old but it works well."},
+                        {"adv_clause_time", "时间状语从句：when/after/before引导时间从句。", "When I arrived, he left."},
+                        {"adv_clause_condition", "条件状语从句：if引导条件从句，主将从现。", "If it rains, we will stay home."},
+                        {"att_clause_restrict", "限制性定语从句：that/which/who修饰名词，不可逗号隔开。", "The book that I bought is good."},
+                        {"att_clause_non_restrict", "非限制性定语从句：which引导，逗号隔开，补充说明。", "The house, which we visited, is historic."},
+                        {"noun_clause_object", "宾语从句：that引导作动词宾语。", "I think that he is right."},
+                        {"noun_clause_appositive", "同位语从句：that解释抽象名词。", "The news that he won surprised us."},
+                        {"non_verb_to_do", "to-do不定式作目的状语。", "I study hard to pass the exam."},
+                        {"non_verb_doing", "doing现在分词作伴随状语。", "He sat there reading a novel."},
+                        {"non_verb_done", "done过去分词作状语表被动。", "Seen from the hill, the city looks beautiful."},
+                        {"passive_general", "被动语态：be + done。", "The letter was written yesterday."},
+                        {"subjunctive_if", "if虚拟条件句，与现在事实相反。", "If I were you, I would take the chance."},
+                        {"inversion_partial", "部分倒装：否定词置于句首。", "Never have I seen such a place."},
+                        {"absolute_construction", "独立主格结构：名词 + 分词，书面高阶句式。", "Weather permitting, we will go hiking."}
+                };
+                try (var ps = conn.prepareStatement(
+                        "UPDATE sys_sentence_pattern SET description = ?, example = ? WHERE pattern_key = ? AND is_deleted = 0")) {
+                    for (String[] d : seedData) {
+                        ps.setString(1, d[1]);
+                        ps.setString(2, d[2]);
+                        ps.setString(3, d[0]);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+                log.info("数据库迁移完成: sys_sentence_pattern 拆分 description/example 共 20 行");
+            }
+            migrateRs.close();
+            // 迁移：补充口语种子数据（已有书面数据但缺口语时）
+            var spokenRs = stmt.executeQuery("SELECT COUNT(*) FROM sys_sentence_pattern WHERE type = 'spoken' AND is_deleted = 0");
+            spokenRs.next();
+            if (spokenRs.getInt(1) == 0) {
+                stmt.execute("""
+                        INSERT INTO `sys_sentence_pattern` (`pattern_key`, `type`, `level`, `description`, `example`, `status`, `sort_num`, `create_by`) VALUES
+                        ('spk_ellipsis_question', 'spoken', 'L1', '口语省略疑问句，省略主语助动词。仅限口语，写作禁用。', '(Are you) Coming tonight?', 1, 101, 0),
+                        ('spk_ellipsis_answer', 'spoken', 'L1', '口语简答碎片句，无完整主谓。仅限口语，写作禁止单独使用。', 'Sounds great.', 1, 102, 0),
+                        ('spk_contraction_informal', 'spoken', 'L1', '非正式缩略gonna/wanna/gotta。仅口语，书面严禁。', 'I''m gonna leave.', 1, 103, 0),
+                        ('spk_short_response', 'spoken', 'L1', '简短回应句式。对话应答，写作不要单独作为句子。', 'Not really. Probably not.', 1, 104, 0),
+                        ('spk_opinion_personally', 'spoken', 'L2', '口语表达个人观点框架。', 'Personally, I think it is a good idea.', 1, 105, 0),
+                        ('spk_gap_filler_reflect', 'spoken', 'L2', '口语思考缓冲句式，争取思考时间。', 'That''s an interesting question, let me think.', 1, 106, 0),
+                        ('spk_contrast_having_said_that', 'spoken', 'L2', '口语转折框架 having said that。', 'I like city life. Having said that, it is noisy.', 1, 107, 0),
+                        ('spk_speculation_reckon', 'spoken', 'L2', '口语委婉推测 I reckon / I suppose。', 'I reckon most young people prefer short-form videos.', 1, 108, 0),
+                        ('spk_example_frame', 'spoken', 'L2', '口语举例子框架。', 'A good example of this would be my hometown.', 1, 109, 0),
+                        ('spk_cleft_what_i_like', 'spoken', 'L3', '口语分裂强调句 what I like is…。', 'What I enjoy most is hanging out with friends.', 1, 110, 0),
+                        ('spk_wish_structure', 'spoken', 'L3', '口语wish表达愿望遗憾。', 'I wish I had more free time.', 1, 111, 0),
+                        ('spk_conditional_hypothetical_spoken', 'spoken', 'L3', '口语虚拟假设讨论。', 'If I had more time, I would travel more often.', 1, 112, 0),
+                        ('spk_relative_which_is_something', 'spoken', 'L3', '口语特色非限定从句 which is something…。', 'I love hiking, which is something I do every weekend.', 1, 113, 0),
+                        ('spk_on_one_hand_on_other', 'spoken', 'L4', '口语正反对比框架 on the one hand…on the other hand。适合讨论思辨话题。', 'On the one hand, city life is convenient; on the other hand, it is stressful.', 1, 114, 0),
+                        ('spk_point_to_make', 'spoken', 'L4', '正式口头表达论点。', 'The point I''m trying to make is that urban life has drawbacks.', 1, 115, 0)
+                        """);
+                log.info("数据库种子数据完成: sys_sentence_pattern 口语共 15 行");
+            }
+            spokenRs.close();
+            // 表为空时插入种子数据
+            var countRs = stmt.executeQuery("SELECT COUNT(*) FROM sys_sentence_pattern WHERE is_deleted = 0");
+            countRs.next();
+            if (countRs.getInt(1) == 0) {
+                stmt.execute("""
+                        INSERT INTO `sys_sentence_pattern` (`pattern_key`, `type`, `level`, `description`, `example`, `status`, `sort_num`, `create_by`) VALUES
+                        ('simple_sv', 'written', 'L1', '主谓简单句：主语 + 不及物动词，无宾语。', 'The sun rises.', 1, 1, 0),
+                        ('simple_svo', 'written', 'L1', '主谓宾简单句：主语 + 及物动词 + 宾语。', 'I read books.', 1, 2, 0),
+                        ('simple_svp', 'written', 'L1', '主系表简单句：主语 + 系动词 + 表语。', 'She is happy.', 1, 3, 0),
+                        ('simple_svOO', 'written', 'L1', '主谓双宾语：主语+动词+间接宾语+直接宾语。', 'He gave me a gift.', 1, 4, 0),
+                        ('simple_svoc', 'written', 'L1', '主谓宾补：主语+动词+宾语+宾语补足语。', 'We keep the room clean.', 1, 5, 0),
+                        ('compound_and', 'written', 'L2', '并列句and连接：简单句 + and + 简单句，表并列递进。', 'I like reading and I enjoy travelling.', 1, 6, 0),
+                        ('compound_but', 'written', 'L2', '并列句but连接：简单句 + but + 简单句，表转折。', 'It is old but it works well.', 1, 7, 0),
+                        ('adv_clause_time', 'written', 'L2', '时间状语从句：when/after/before引导时间从句。', 'When I arrived, he left.', 1, 8, 0),
+                        ('adv_clause_condition', 'written', 'L2', '条件状语从句：if引导条件从句，主将从现。', 'If it rains, we will stay home.', 1, 9, 0),
+                        ('att_clause_restrict', 'written', 'L2', '限制性定语从句：that/which/who修饰名词，不可逗号隔开。', 'The book that I bought is good.', 1, 10, 0),
+                        ('att_clause_non_restrict', 'written', 'L3', '非限制性定语从句：which引导，逗号隔开，补充说明。', 'The house, which we visited, is historic.', 1, 11, 0),
+                        ('noun_clause_object', 'written', 'L3', '宾语从句：that引导作动词宾语。', 'I think that he is right.', 1, 12, 0),
+                        ('noun_clause_appositive', 'written', 'L3', '同位语从句：that解释抽象名词。', 'The news that he won surprised us.', 1, 13, 0),
+                        ('non_verb_to_do', 'written', 'L3', 'to-do不定式作目的状语。', 'I study hard to pass the exam.', 1, 14, 0),
+                        ('non_verb_doing', 'written', 'L3', 'doing现在分词作伴随状语。', 'He sat there reading a novel.', 1, 15, 0),
+                        ('non_verb_done', 'written', 'L3', 'done过去分词作状语表被动。', 'Seen from the hill, the city looks beautiful.', 1, 16, 0),
+                        ('passive_general', 'written', 'L2', '被动语态：be + done。', 'The letter was written yesterday.', 1, 17, 0),
+                        ('subjunctive_if', 'written', 'L3', 'if虚拟条件句，与现在事实相反。', 'If I were you, I would take the chance.', 1, 18, 0),
+                        ('inversion_partial', 'written', 'L4', '部分倒装：否定词置于句首。', 'Never have I seen such a place.', 1, 19, 0),
+                        ('absolute_construction', 'written', 'L4', '独立主格结构：名词 + 分词，书面高阶句式。', 'Weather permitting, we will go hiking.', 1, 20, 0),
+                        ('spk_ellipsis_question', 'spoken', 'L1', '口语省略疑问句，省略主语助动词。仅限口语，写作禁用。', '(Are you) Coming tonight?', 1, 101, 0),
+                        ('spk_ellipsis_answer', 'spoken', 'L1', '口语简答碎片句，无完整主谓。仅限口语，写作禁止单独使用。', 'Sounds great.', 1, 102, 0),
+                        ('spk_contraction_informal', 'spoken', 'L1', '非正式缩略gonna/wanna/gotta。仅口语，书面严禁。', 'I''m gonna leave.', 1, 103, 0),
+                        ('spk_short_response', 'spoken', 'L1', '简短回应句式。对话应答，写作不要单独作为句子。', 'Not really. Probably not.', 1, 104, 0),
+                        ('spk_opinion_personally', 'spoken', 'L2', '口语表达个人观点框架。', 'Personally, I think it is a good idea.', 1, 105, 0),
+                        ('spk_gap_filler_reflect', 'spoken', 'L2', '口语思考缓冲句式，争取思考时间。', 'That''s an interesting question, let me think.', 1, 106, 0),
+                        ('spk_contrast_having_said_that', 'spoken', 'L2', '口语转折框架 having said that。', 'I like city life. Having said that, it is noisy.', 1, 107, 0),
+                        ('spk_speculation_reckon', 'spoken', 'L2', '口语委婉推测 I reckon / I suppose。', 'I reckon most young people prefer short-form videos.', 1, 108, 0),
+                        ('spk_example_frame', 'spoken', 'L2', '口语举例子框架。', 'A good example of this would be my hometown.', 1, 109, 0),
+                        ('spk_cleft_what_i_like', 'spoken', 'L3', '口语分裂强调句 what I like is…。', 'What I enjoy most is hanging out with friends.', 1, 110, 0),
+                        ('spk_wish_structure', 'spoken', 'L3', '口语wish表达愿望遗憾。', 'I wish I had more free time.', 1, 111, 0),
+                        ('spk_conditional_hypothetical_spoken', 'spoken', 'L3', '口语虚拟假设讨论。', 'If I had more time, I would travel more often.', 1, 112, 0),
+                        ('spk_relative_which_is_something', 'spoken', 'L3', '口语特色非限定从句 which is something…。', 'I love hiking, which is something I do every weekend.', 1, 113, 0),
+                        ('spk_on_one_hand_on_other', 'spoken', 'L4', '口语正反对比框架 on the one hand…on the other hand。适合讨论思辨话题。', 'On the one hand, city life is convenient; on the other hand, it is stressful.', 1, 114, 0),
+                        ('spk_point_to_make', 'spoken', 'L4', '正式口头表达论点。', 'The point I''m trying to make is that urban life has drawbacks.', 1, 115, 0)
+                        """);
+                log.info("数据库种子数据完成: sys_sentence_pattern 共 35 行");
+            }
+            countRs.close();
+            // 迁移：sort_num 统一乘以 10，为后续插入留出空间（幂等：检测 simple_sv 是否仍为旧值 1）
+            var sortCheckRs = stmt.executeQuery("SELECT COUNT(*) FROM sys_sentence_pattern WHERE pattern_key = 'simple_sv' AND sort_num = 1 AND is_deleted = 0");
+            sortCheckRs.next();
+            if (sortCheckRs.getInt(1) > 0) {
+                String[][] sortData = {
+                        {"simple_sv", "10"}, {"simple_svo", "20"}, {"simple_svp", "30"},
+                        {"simple_svOO", "40"}, {"simple_svoc", "50"}, {"compound_and", "60"},
+                        {"compound_but", "70"}, {"adv_clause_time", "80"}, {"adv_clause_condition", "90"},
+                        {"att_clause_restrict", "100"}, {"att_clause_non_restrict", "110"}, {"noun_clause_object", "120"},
+                        {"noun_clause_appositive", "130"}, {"non_verb_to_do", "140"}, {"non_verb_doing", "150"},
+                        {"non_verb_done", "160"}, {"passive_general", "170"}, {"subjunctive_if", "180"},
+                        {"inversion_partial", "190"}, {"absolute_construction", "200"},
+                        {"spk_ellipsis_question", "1010"}, {"spk_ellipsis_answer", "1020"}, {"spk_contraction_informal", "1030"},
+                        {"spk_short_response", "1040"}, {"spk_opinion_personally", "1050"}, {"spk_gap_filler_reflect", "1060"},
+                        {"spk_contrast_having_said_that", "1070"}, {"spk_speculation_reckon", "1080"}, {"spk_example_frame", "1090"},
+                        {"spk_cleft_what_i_like", "1100"}, {"spk_wish_structure", "1110"}, {"spk_conditional_hypothetical_spoken", "1120"},
+                        {"spk_relative_which_is_something", "1130"}, {"spk_on_one_hand_on_other", "1140"}, {"spk_point_to_make", "1150"}
+                };
+                try (var ps = conn.prepareStatement("UPDATE sys_sentence_pattern SET sort_num = ? WHERE pattern_key = ? AND is_deleted = 0")) {
+                    for (String[] d : sortData) {
+                        ps.setInt(1, Integer.parseInt(d[1]));
+                        ps.setString(2, d[0]);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+                log.info("数据库迁移完成: sys_sentence_pattern sort_num 扩展共 35 行");
+            }
+            sortCheckRs.close();
+        } catch (Exception e) {
+            log.warn("创建 sys_sentence_pattern 表失败: {}", e.getMessage());
+        }
+    }
+
+    /** 确保 wd_user_sentence_pattern_stat 表存在 */
+    private void ensureUserSentencePatternStatTable(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "wd_user_sentence_pattern_stat", new String[]{"TABLE"});
+            boolean exists = tables.next();
+            tables.close();
+            if (!exists) {
+                stmt.execute("""
+                        CREATE TABLE IF NOT EXISTS `wd_user_sentence_pattern_stat` (
+                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                          `user_id` bigint NOT NULL COMMENT '用户ID',
+                          `pattern_key` varchar(64) NOT NULL COMMENT '句式key',
+                          `pattern_description` varchar(512) NOT NULL COMMENT '句式描述（快照）',
+                          `total_count` int NOT NULL DEFAULT 0 COMMENT '总练习次数',
+                          `correct_count` int NOT NULL DEFAULT 0 COMMENT '正确次数',
+                          `wrong_count` int NOT NULL DEFAULT 0 COMMENT '错误次数',
+                          `last_error` varchar(500) DEFAULT NULL COMMENT '最近一次错误说明',
+                          `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                          `is_deleted` tinyint NOT NULL DEFAULT 0,
+                          PRIMARY KEY (`id`),
+                          UNIQUE KEY `uk_user_pattern` (`user_id`, `pattern_key`),
+                          KEY `idx_user_id` (`user_id`),
+                          KEY `idx_update_time` (`update_time`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户句式训练统计'
+                        """);
+                log.info("数据库表创建完成: wd_user_sentence_pattern_stat");
+            } else {
+                // 幂等迁移：确保已有表有 last_error 列
+                ensureColumn(conn, stmt, "wd_user_sentence_pattern_stat", "last_error",
+                        "ALTER TABLE wd_user_sentence_pattern_stat ADD COLUMN last_error varchar(500) DEFAULT NULL COMMENT '最近一次错误说明' AFTER wrong_count");
+            }
+        } catch (Exception e) {
+            log.warn("创建 wd_user_sentence_pattern_stat 表失败: {}", e.getMessage());
+        }
+    }
+
+    /** AI 句式猜测流水表 */
+    private void ensureSentencePatternGuessTable(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "wd_sentence_pattern_guess", new String[]{"TABLE"});
+            boolean exists = tables.next();
+            tables.close();
+            if (!exists) {
+                stmt.execute("""
+                        CREATE TABLE IF NOT EXISTS `wd_sentence_pattern_guess` (
+                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                          `user_id` bigint NOT NULL COMMENT '用户ID',
+                          `practice_id` bigint NOT NULL COMMENT '关联翻译练习ID',
+                          `guess_key` varchar(100) DEFAULT NULL COMMENT 'AI给的猜测key',
+                          `guess_desc` varchar(500) DEFAULT NULL COMMENT 'AI给的猜测描述',
+                          `user_sentence` text COMMENT '用户当时的译文',
+                          `direction` varchar(20) DEFAULT NULL COMMENT '翻译方向',
+                          `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          `is_deleted` tinyint NOT NULL DEFAULT 0,
+                          PRIMARY KEY (`id`),
+                          KEY `idx_user_id` (`user_id`),
+                          KEY `idx_practice_id` (`practice_id`),
+                          KEY `idx_create_time` (`create_time`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI句式猜测流水'
+                        """);
+                log.info("数据库表创建完成: wd_sentence_pattern_guess");
+            }
+        } catch (Exception e) {
+            log.warn("创建 wd_sentence_pattern_guess 表失败: {}", e.getMessage());
+        }
+    }
+
     /** 翻译场景提示词（仅缺省时插入；英文壳一次性改为中文） */
     private void seedTranslationScenePromptsIfMissing(Connection conn) {
         try {
@@ -1519,78 +1855,66 @@ public class DatabaseInitConfig implements ApplicationRunner {
             tables.close();
             String genPrompt = """
                     {global_constraint}
-                    你根据学习者已掌握的词汇，设计雅思风格的英语翻译练习题。
-                    受众：非英语母语学习者。
-                    请基于给定单词/短语出一道练习，并匹配学术雅思常见主题。
-                    只返回一个 JSON 对象，键包括：
-                    direction, theme, promptText, referenceAnswer, targetWords。
-                    优先使用给定词汇；篇幅适中；避免超纲生僻词。
-                    语言锁（覆盖全局「只用一种语言」规则）：
-                    promptText 只能用练习方向的源语言；referenceAnswer 只能用目标语言；
-                    theme 可用 {language}。不要把教练用语混进 promptText / referenceAnswer。
+                    你是翻译出题助手。根据给定词汇和翻译方向，避免生僻词，出一道翻译练习题。
+                    {proficiency_block}
+                    只返回一行/一小段：
+                    题目：<题目内容>
                     """;
             String gradePrompt = """
                     {global_constraint}
                     你是面向非英语母语学习者的雅思取向翻译教练。
-                    从准确性、流畅度、练习词汇使用三方面评分（0–9，可 0.5 步进）。
-                    只返回一个 JSON 对象，键包括：
-                    overallBand, accuracy, fluency, targetWordUse, summary, priorities, annotations,
-                    referenceAnswer。
-                    summary 与 referenceAnswer 句与句之间用 \\n 分隔。
-                    annotations：仅收录有具体错误且 excerpt / issue / fix 均非空的条目；空项省略。
-                    不要返回 polishedAnswer。中文教练评语用「练习词汇」而非「目标词」。
-                    严格语言锁（覆盖全局「只用一种语言 / 不要用中文」规则）：
-                    summary、priorities、issue、fix 中的讲解只用 {language}；
-                    referenceAnswer 与订正译文片段只用练习目标语
-                    （en2zh 用中文，en2id 用印尼语，en2th 用泰语，en2vi 用越南语，*2en 用英语）。
-                    评语须具体可执行。
+                    用 {language} 进行解释。
+                    评分：根据雅思标准打分 , 一句话概述
+                    解析错误与改进,语言精简
+                    参考译文：<用 {target_language}>
                     """;
             String chatPrompt = """
                     {global_constraint}
                     你是 Aiko，面向非英语母语学习者的翻译教练。
-                    回答语言学习相关问题。范围内包括：本条练习记录、词汇辨析（如 there 与 those）、语法、用法、发音、翻译技巧。
-                    相关时优先结合本条练习；也可回答一般英语学习问题。
-                    仅拒绝明显与语言学习无关的请求。
-                    不要编造用户当前并未在做的其它练习、书籍或题目。
-                    回答简洁、可执行，并用 {language}。
-                    引用订正时，目标语片段保持练习目标语。
-
-                    当前练习记录（相关时作上下文）：
-                    ---
-                    {context}
-                    ---
+                    回答简洁、使用 {language}。
+                    相关时优先结合本条练习；
+                    拒绝明显与语言学习无关的请求。
+                    当前练习记录（相关时作上下文）：{context}
                     """;
             insertScenePromptIfMissing(conn, "translation_generate", "翻译练习出题", genPrompt.trim(),
-                    "占位符 {global_constraint}/{language}");
+                    "占位符 {global_constraint}");
             insertScenePromptIfMissing(conn, "translation_grade", "翻译练习批改", gradePrompt.trim(),
-                    "占位符 {global_constraint}/{language}");
+                    "占位符 {global_constraint}/{language}/{target_language}");
             insertScenePromptIfMissing(conn, "translation_chat", "翻译练习答疑", chatPrompt.trim(),
                     "占位符 {global_constraint}/{language}/{context}");
+            String structuredGradePrompt = """
+                    你是英语写作结构化分析助手。根据给定的练习词汇、题目、用户译文和句式表，做三件事并严格以 JSON 返回（不要 Markdown 代码围栏，不要任何解释文字）：
+                    1. spellCheck：判断每个练习词汇在用户译文中的拼写是否正确。格式：{"word": true/false}。true=拼写正确，false=拼写错误或未使用。
+                    2. patternCheck：判断用户译文中包含了句式表里的哪些句式。完全没用到的句式不要返回。每个命中的句式返回对象：{"correct": true/false, "error": "具体错误说明（仅当 correct=false 时填写，说明哪里用错了、应该怎么改）"}。true=确实用了且语法正确，false=尝试使用但语法错误。
+                    3. patternNotFound：如果用户用了句式表里不存在的句式，给出你的猜测（guessKey=简短英文标识，guessDesc=中文描述）。
+                    返回格式：
+                    {"spellCheck":{"word1":true,"word2":false},"patternCheck":{"simple_sv":{"correct":true},"compound_and":{"correct":false,"error":"缺少连词，两个独立分句不能只用逗号连接"}},"patternNotFound":[{"guessKey":"xxx","guessDesc":"xxx"}]}
+                    """;
+            insertScenePromptIfMissing(conn, "translation_grade_structured", "翻译练习批改-结构化",
+                    structuredGradePrompt.trim(), "异步结构化分析：拼写+句式命中");
             // 已有环境：英文场景壳统一改为中文（不覆盖已手工改成中文的文案）
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
                     SET system_prompt = ?, remark = ?, update_time = NOW()
                     WHERE scene_key = 'translation_grade' AND is_deleted = 0
-                      AND system_prompt LIKE '%You are an IELTS-oriented translation coach%'
                     """)) {
                 ps.setString(1, gradePrompt.trim());
-                ps.setString(2, "占位符 {global_constraint}/{language}");
+                ps.setString(2, "占位符 {global_constraint}/{language}/{target_language}/{proficiency_block}");
                 int n = ps.executeUpdate();
                 if (n > 0) {
-                    log.info("数据库迁移完成: translation_grade 提示词已改为中文，共 {} 行", n);
+                    log.info("数据库迁移完成: translation_grade 提示词已更新，共 {} 行", n);
                 }
             }
             try (var ps = conn.prepareStatement("""
                     UPDATE sys_ai_scene_prompt
                     SET system_prompt = ?, remark = ?, update_time = NOW()
                     WHERE scene_key = 'translation_generate' AND is_deleted = 0
-                      AND system_prompt LIKE '%You design IELTS-style English translation drills%'
                     """)) {
                 ps.setString(1, genPrompt.trim());
-                ps.setString(2, "占位符 {global_constraint}/{language}");
+                ps.setString(2, "占位符 {global_constraint}/{proficiency_block}");
                 int n = ps.executeUpdate();
                 if (n > 0) {
-                    log.info("数据库迁移完成: translation_generate 提示词已改为中文，共 {} 行", n);
+                    log.info("数据库迁移完成: translation_generate 提示词已更新，共 {} 行", n);
                 }
             }
             try (var ps = conn.prepareStatement("""
@@ -2036,6 +2360,65 @@ public class DatabaseInitConfig implements ApplicationRunner {
             if (n > 0) {
                 log.info("数据库种子初始化完成: {} 场景提示词已写入", sceneKey);
             }
+        }
+    }
+
+    /** 确保 sys_quote 表存在 */
+    private void ensureQuoteTable(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_quote", new String[]{"TABLE"});
+            boolean exists = tables.next();
+            tables.close();
+            if (!exists) {
+                stmt.execute("""
+                        CREATE TABLE IF NOT EXISTS `sys_quote` (
+                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                          `content` varchar(512) NOT NULL COMMENT '语录内容',
+                          `author` varchar(128) DEFAULT '' COMMENT '作者/出处（可选）',
+                          `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+                          `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+                          `create_by` bigint DEFAULT NULL,
+                          `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          `update_by` bigint DEFAULT NULL,
+                          `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                          `is_deleted` tinyint NOT NULL DEFAULT 0,
+                          PRIMARY KEY (`id`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统语录（激励语）'
+                        """);
+                log.info("数据库表创建完成: sys_quote");
+            }
+        } catch (Exception e) {
+            log.warn("创建 sys_quote 表失败: {}", e.getMessage());
+        }
+    }
+
+    /** 确保 sys_study_tip 表存在 */
+    private void ensureStudyTipTable(Connection conn, Statement stmt) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_study_tip", new String[]{"TABLE"});
+            boolean exists = tables.next();
+            tables.close();
+            if (!exists) {
+                stmt.execute("""
+                        CREATE TABLE IF NOT EXISTS `sys_study_tip` (
+                          `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                          `question` varchar(512) NOT NULL COMMENT '问题',
+                          `answer` text NOT NULL COMMENT '回答/提示',
+                          `category` varchar(64) DEFAULT '' COMMENT '分类（如 vocabulary/reading/grammar）',
+                          `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+                          `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+                          `create_by` bigint DEFAULT NULL,
+                          `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          `update_by` bigint DEFAULT NULL,
+                          `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                          `is_deleted` tinyint NOT NULL DEFAULT 0,
+                          PRIMARY KEY (`id`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自学小Tips（一问一答）'
+                        """);
+                log.info("数据库表创建完成: sys_study_tip");
+            }
+        } catch (Exception e) {
+            log.warn("创建 sys_study_tip 表失败: {}", e.getMessage());
         }
     }
 }

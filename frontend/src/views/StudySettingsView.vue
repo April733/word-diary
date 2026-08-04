@@ -1,17 +1,6 @@
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" @click="router.push('/study')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ $t('study.settingsTitle') }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-right" aria-hidden="true" />
-    </header>
+    <PageHeader :title="$t('study.settingsTitle')" :back-to="backToStudy" />
 
     <div class="page-body">
       <t-form label-align="top">
@@ -29,14 +18,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getStudySettings, updateStudySettings } from '../api'
+import PageHeader from '../components/PageHeader.vue'
 
-const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
+const sourceType = computed(() => (route.query.sourceType as string) || undefined)
+const tab = computed(() => (route.query.tab as string) || (sourceType.value === '听力' ? 'listen' : 'read'))
+const backToStudy = computed(() => ({
+  path: '/study',
+  query: {
+    ...(sourceType.value ? { sourceType: sourceType.value } : {}),
+    ...(tab.value ? { tab: tab.value } : {})
+  }
+}))
 const saving = ref(false)
 const form = ref({
   dailyNewLimit: 20,
@@ -75,72 +74,11 @@ async function handleSave() {
   background: transparent;
 }
 
+/* 设置页面特有 header 样式 */
 .page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
   background: #fff;
+  border-bottom: none;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
-  max-width: 42%;
-  z-index: 1;
-}
-
-.page-header h1 {
-  font-size: 15px;
-  margin: 0;
-  font-weight: 650;
-  letter-spacing: 0.02em;
 }
 
 .page-body {

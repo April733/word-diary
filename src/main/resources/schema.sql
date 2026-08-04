@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS `wd_word_book` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '单词本ID',
   `user_id` bigint NOT NULL COMMENT '所属用户ID',
   `book_id` bigint DEFAULT NULL COMMENT '所属阅读书籍ID，NULL=独立单词本',
+  `source_type` varchar(16) NOT NULL DEFAULT '阅读' COMMENT '来源分类：阅读|听力',
   `book_name` varchar(64) NOT NULL COMMENT '单词本名称',
   `book_desc` varchar(255) DEFAULT '' COMMENT '单词本简介',
   `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序权重',
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS `wd_word` (
   `source_book_id` bigint DEFAULT NULL COMMENT '来源书籍ID',
   `source_snippet` text COMMENT '采集时原文片段',
   `source_location` varchar(255) DEFAULT '' COMMENT '定位信息',
+  `remark` varchar(512) DEFAULT '' COMMENT '用户备注',
   `is_public` tinyint NOT NULL DEFAULT 1 COMMENT '是否公开 1公开 0私有',
   `user_id` bigint DEFAULT NULL COMMENT '创建用户ID，NULL表示系统预置',
   `status` tinyint NOT NULL DEFAULT 0 COMMENT '学习状态: 0未学 1~6复习阶梯 7熟记',
@@ -114,7 +116,9 @@ CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
   `input_word_count` int NOT NULL DEFAULT 0 COMMENT '用户原始输入词数（中英混合）',
   `assembled_prompt_chars` int NOT NULL DEFAULT 0 COMMENT '拼装后 system+user 提示词总字符数',
   `prompt_tokens` int NOT NULL DEFAULT 0 COMMENT '提示词token数量（模型返回 usage）',
-  `completion_tokens` int NOT NULL DEFAULT 0 COMMENT '返回token数量（模型返回 usage）',
+  `completion_tokens` int NOT NULL DEFAULT 0 COMMENT '返回token数量（模型返回 usage，含 reasoning + content）',
+  `reasoning_tokens` int NOT NULL DEFAULT 0 COMMENT '思考token数量（reasoning tokens，仅推理模型有）',
+  `content_tokens` int NOT NULL DEFAULT 0 COMMENT '可见内容token数量（= completionTokens - reasoningTokens，给用户看的实际内容）',
   `total_tokens` int NOT NULL DEFAULT 0 COMMENT '总token数量',
   `estimated_cost` decimal(14,8) NOT NULL DEFAULT 0 COMMENT '按当时模型单价估算的成本（与 currency 一致）',
   `system_prompt` text COMMENT '系统提示词（拼装后）',
@@ -226,6 +230,25 @@ CREATE TABLE IF NOT EXISTS `sys_ai_scene` (
 -- =============================================
 -- 书籍表（阅读器）
 -- =============================================
+CREATE TABLE IF NOT EXISTS `wd_book_resource` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `owner_user_id` bigint NOT NULL COMMENT '资源创建者用户ID',
+  `title` varchar(256) NOT NULL COMMENT '书名',
+  `author` varchar(128) DEFAULT '' COMMENT '作者',
+  `cover_url` varchar(512) DEFAULT '' COMMENT '封面图URL',
+  `file_path` varchar(512) NOT NULL COMMENT '文件在服务器上的存储路径',
+  `file_type` varchar(16) NOT NULL DEFAULT 'epub' COMMENT '文件类型 epub/pdf/txt',
+  `file_size` bigint DEFAULT 0 COMMENT '文件大小(字节)',
+  `ref_count` int NOT NULL DEFAULT 1 COMMENT '引用计数',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_owner_user_id` (`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='共享书籍资源表';
+
 CREATE TABLE IF NOT EXISTS `wd_book` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `user_id` bigint NOT NULL COMMENT '所属用户ID',
@@ -233,6 +256,7 @@ CREATE TABLE IF NOT EXISTS `wd_book` (
   `author` varchar(128) DEFAULT '' COMMENT '作者',
   `cover_url` varchar(512) DEFAULT '' COMMENT '封面图URL',
   `file_path` varchar(512) NOT NULL COMMENT '文件在服务器上的存储路径',
+  `resource_id` bigint DEFAULT NULL COMMENT '共享资源ID',
   `file_type` varchar(16) NOT NULL DEFAULT 'epub' COMMENT '文件类型 epub/pdf/txt',
   `file_size` bigint DEFAULT 0 COMMENT '文件大小(字节)',
   `total_chapters` int DEFAULT 0 COMMENT '总章节数',
@@ -247,6 +271,7 @@ CREATE TABLE IF NOT EXISTS `wd_book` (
   `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
   PRIMARY KEY (`id`),
   KEY `idx_user_id` (`user_id`),
+  KEY `idx_resource_id` (`resource_id`),
   KEY `idx_user_deleted_read` (`user_id`, `is_deleted`, `last_read_at` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='书籍表';
 
@@ -587,3 +612,51 @@ CREATE TABLE IF NOT EXISTS `sys_ai_scene_prompt` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_scene_locale` (`scene_key`, `locale`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI场景系统提示词';
+
+-- 初始化 AI 场景提示词（包含 shadowing_chat 跟读对话场景）
+INSERT IGNORE INTO `sys_ai_scene_prompt`
+(`scene_key`, `locale`, `scene_name`, `system_prompt`, `remark`, `status`, `sort_num`)
+VALUES
+('word_parse', 'zh-CN', '单词解析', '你是一个专业的英语词汇学习助手。请用中文解释用户提供的单词或短语，包括：\n\n- 音标（美式/英式）\n- 词性和基本含义\n- 常见搭配和用法\n- 例句（至少2个）\n- 词根词缀解析（如果有）\n\n目标词：{context}\n\n请简洁清晰地回答，帮助用户理解和记忆这个单词。', '单词解析场景', 1, 1),
+('reading_chat', 'zh-CN', '阅读对话', '你是一个专业的英语阅读与语言学习助手。用户正在阅读英文内容，请用中文回答与语言学习相关的问题。\n\n你可以讲解：\n- 文章中出现的单词、短语、语法结构\n- 语境中的用法和搭配\n- 文化背景和表达习惯\n\n当前阅读的文本是：{context}\n\n请根据用户的问题，用简洁清晰的方式解答。', '阅读对话场景', 1, 2),
+('translation_chat', 'zh-CN', '翻译答疑', '你是 Aiko，翻译教练。回答语言学习相关问题\n（本条练习、词汇辨析、语法、用法、翻译技巧）。\n一般英语学习问答可以回答；仅拒绝明显跑题的请求。\n请用中文回复。', '翻译答疑场景', 1, 3),
+('translation_generate', 'zh-CN', '翻译出题', '你根据学习者已掌握的词汇，设计雅思风格的英语翻译练习题。\n受众：非英语母语学习者。\n请出一道练习：自然的一句或一小段，复用给定单词/短语，主题接近雅思学术\n（教育、环境、科技、城市生活、工作、健康等）。\n只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：\ndirection, theme, promptText, referenceAnswer, targetWords。\n优先使用给定词汇；篇幅适中；避免超纲生僻词。\n严格语言锁（覆盖全局「只用一种语言」规则）：\npromptText = 方向的源语言；referenceAnswer = 方向的目标语言；\n不要把教练用语混进 promptText 或 referenceAnswer。', '翻译出题场景', 1, 4),
+('writing_grade', 'zh-CN', '写作批改', '你是雅思学术写作考官兼写作教练，题型为 {task_type}。\n请批改作文，并产出保留学生原意的润色稿。\n同时提供同题高分范文（标明为范文，不是润色稿）。\n\n只返回一个 JSON 对象（不要 Markdown 代码围栏），键包括：\n- overallBand（数字，0–9，可 0.5 步进）\n- taskAchievement/taskResponse（数字）\n- coherence（数字）\n- lexical（数字）\n- grammar（数字）\n- summary（短评）\n- priorities（3–5 条可执行改进建议，影响最大的在前）\n- annotations（[{excerpt, issue, fix}]）\n- polishedEssay（学生作文的改进版）\n- modelEssay（同题高分范文）\n未读完作文不得臆造分数。评语须具体可执行。', '写作批改场景', 1, 5),
+('feature', 'zh-CN', '功能分析', '你是一个专业的英语语言学习助手。用户选中的文本可能包含多个需要分析的维度。\n\n请根据请求的功能标签，对以下文本进行多维度分析：\n{context}\n\n功能要求：{feature_prompts}\n\n请严格按照功能要求的格式返回结果，每个功能独立分析，保持结构清晰。', '功能分析场景', 1, 6),
+('shadowing_chat', 'zh-CN', '跟读对话', '你是一个专业的英语听力学习助手。用户正在跟读一段英文音频，请用中文回答与语言学习相关的问题。\n\n你可以讲解：\n- 台词中出现的单词、短语、语法结构\n- 发音要点和连读现象\n- 语境中的用法和搭配\n- 听力理解技巧\n\n当前跟读的音频台词是：{context}\n\n请根据用户的问题，用简洁清晰的方式解答，帮助用户更好地理解和掌握这段内容。', '跟读音频AI问答场景', 1, 7),
+('shadowing_asr', 'zh-CN', '跟读ASR', '你是一个专业的英语语音识别助手。请对用户提供的音频转录结果进行校对和优化。\n\n原始转录：{context}\n\n请：\n- 修正明显的识别错误\n- 优化标点符号\n- 保持原文语义不变\n\n返回优化后的文本。', '跟读ASR场景', 1, 8);
+
+-- =============================================
+-- 系统语录（激励语，客户端随机展示）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_quote` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `content` varchar(512) NOT NULL COMMENT '语录内容',
+  `author` varchar(128) DEFAULT '' COMMENT '作者/出处（可选）',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统语录（激励语）';
+
+-- =============================================
+-- 自学小 Tips（一问一答，管理员维护，客户端暂不展示）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `sys_study_tip` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `question` varchar(512) NOT NULL COMMENT '问题',
+  `answer` text NOT NULL COMMENT '回答/提示',
+  `category` varchar(64) DEFAULT '' COMMENT '分类（如 vocabulary/reading/grammar）',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+  `sort_num` int NOT NULL DEFAULT 0 COMMENT '排序',
+  `create_by` bigint DEFAULT NULL,
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_by` bigint DEFAULT NULL,
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_deleted` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自学小Tips（一问一答）';

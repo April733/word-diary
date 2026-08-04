@@ -84,6 +84,7 @@ public class StudyBrowseServiceImpl implements StudyBrowseService {
                 .partSpeechMean(word.getPartSpeechMean() != null ? word.getPartSpeechMean() : "")
                 .sentenceExample(word.getSentenceExample() != null ? word.getSentenceExample() : "")
                 .rootAffix(word.getRootAffix() != null ? word.getRootAffix() : "")
+                .remark(word.getRemark() != null ? word.getRemark() : "")
                 .learnStatus(word.getStatus())
                 .statusData(word.getStatusData())
                 .notebookName(book != null ? book.getBookName() : "")

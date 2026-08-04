@@ -1,33 +1,34 @@
-<template>
+ <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" @click="router.push('/')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ $t('wordbook.titleManage') }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-actions">
-        <t-button variant="text" size="small" class="nav-link" @click="router.push('/plan')">
-          {{ $t('wordbook.reciteProgress') }}
-        </t-button>
-        <t-button variant="text" size="small" class="nav-link" @click="showAddDialog = true">
-          {{ $t('wordbook.createShort') }}
-        </t-button>
-      </div>
-    </header>
+    <PageHeader :title="$t('wordbook.titleManage')" back-to="/">
+      <UserDropdown />
+    </PageHeader>
 
     <div class="page-body">
-      <p v-if="notebooks.length > 0" class="nb-summary">
-        {{ $t('wordbook.summary', { books: notebooks.length, words: totalWords }) }}
-      </p>
-      <ul v-if="notebooks.length > 0" class="nb-list">
-        <li v-for="book in notebooks" :key="book.id" class="nb-item">
-          <div class="nb-main">
-            <div class="nb-name" :title="book.bookName">{{ book.bookName }}</div>
+      <PageTabs v-model="sourceType" :tabs="sourceTabs" />
+
+      <div class="summary-row">
+        <p class="nb-summary">
+          {{ $t('wordbook.summary', { books: filteredNotebooks.length, words: filteredTotalWords }) }}
+        </p>
+        <div class="page-actions">
+          <button type="button" class="btn btn-secondary btn-sm" @click="router.push('/plan')">
+            <t-icon name="chart-bar" size="14px" />
+            <span>{{ $t('wordbook.reciteProgress') }}</span>
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" @click="showAddDialog = true">
+            <t-icon name="add" size="14px" />
+            <span>{{ $t('wordbook.createShort') }}</span>
+          </button>
+        </div>
+      </div>
+      <ul v-if="filteredNotebooks.length > 0" class="nb-list">
+        <li v-for="book in filteredNotebooks" :key="book.id" class="nb-item">
+          <div class="nb-main" @click="router.push(`/notebooks/${book.id}`)">
+            <div class="nb-name">
+              <span v-if="book.sourceType" class="nb-source-tag" :class="'nb-source-' + book.sourceType">{{ book.sourceType }}</span>
+              {{ book.bookName }}
+            </div>
             <div class="nb-desc" :title="book.bookDesc || $t('wordbook.noDesc')">
               {{ book.bookDesc || $t('wordbook.noDesc') }}
             </div>
@@ -82,7 +83,7 @@
           </div>
         </li>
       </ul>
-      <t-empty v-else :description="$t('wordbook.noWordbooks')" />
+      <t-empty v-else :description="sourceType ? $t('wordbook.noWordbooksForSource') : $t('wordbook.noWordbooks')" />
     </div>
 
     <t-dialog
@@ -98,13 +99,16 @@
         <t-form-item :label="$t('wordbook.desc')" name="bookDesc">
           <t-textarea v-model="form.bookDesc" :placeholder="$t('wordbook.descPlaceholder')" />
         </t-form-item>
+        <t-form-item :label="$t('wordbook.sourceType')" name="sourceType">
+          <t-select v-model="form.sourceType" :options="sourceOptions" />
+        </t-form-item>
       </t-form>
     </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -115,13 +119,34 @@ import {
   deleteNotebook,
   setNotebookStudyEnabled
 } from '../api'
+import { useUserStore } from '../stores/user'
+import UserDropdown from '../components/UserDropdown.vue'
+import PageTabs from '../components/PageTabs.vue'
+import PageHeader from '../components/PageHeader.vue'
 
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
+const userStore = useUserStore()
 const notebooks = ref<any[]>([])
 const totalWords = computed(() =>
   notebooks.value.reduce((sum, b) => sum + (Number(b.wordCount) || 0), 0)
+)
+
+// 来源类型 Tab
+const sourceType = ref('')
+const sourceTabs = computed(() => [
+  { label: t('wordbook.sourceAll'), value: '' },
+  { label: t('wordbook.sourceReading'), value: '阅读' },
+  { label: t('wordbook.sourceListening'), value: '听力' }
+])
+
+const filteredNotebooks = computed(() => {
+  if (!sourceType.value) return notebooks.value
+  return notebooks.value.filter(b => b.sourceType === sourceType.value)
+})
+const filteredTotalWords = computed(() =>
+  filteredNotebooks.value.reduce((sum, b) => sum + (Number(b.wordCount) || 0), 0)
 )
 const showAddDialog = ref(false)
 const saving = ref(false)
@@ -130,7 +155,12 @@ const togglingId = ref<number | null>(null)
 const studyToggleAt = ref<Record<number, number>>({})
 const STUDY_TOGGLE_COOLDOWN_MS = 5000
 const editingBook = ref<any>(null)
-const form = reactive({ bookName: '', bookDesc: '' })
+const form = reactive({ bookName: '', bookDesc: '', sourceType: '阅读' })
+
+const sourceOptions = computed(() => [
+  { label: t('wordbook.sourceReading'), value: '阅读' },
+  { label: t('wordbook.sourceListening'), value: '听力' }
+])
 
 /** 用于驱动冷却期 UI 刷新 */
 const cooldownTick = ref(0)
@@ -159,14 +189,20 @@ function isStudyToggleCooling(bookId: number) {
 }
 
 onMounted(async () => {
+  userStore.loadFromStorage()
   await loadNotebooks()
   if (route.query.create === '1') {
     editingBook.value = null
     form.bookName = ''
     form.bookDesc = ''
+    form.sourceType = '阅读'
     showAddDialog.value = true
     router.replace({ path: '/notebooks', query: {} })
   }
+})
+
+watch(sourceType, () => {
+  // Tab 切换时不需要重新请求，前端过滤即可
 })
 
 onUnmounted(() => {
@@ -192,6 +228,7 @@ function openEdit(book: any) {
   editingBook.value = book
   form.bookName = book.bookName
   form.bookDesc = book.bookDesc || ''
+  form.sourceType = book.sourceType || '阅读'
   showAddDialog.value = true
 }
 
@@ -213,6 +250,7 @@ async function handleSave() {
     editingBook.value = null
     form.bookName = ''
     form.bookDesc = ''
+    form.sourceType = '阅读'
     await loadNotebooks()
   } catch (e: any) {
     MessagePlugin.error(e.response?.data?.message || t('wordbook.error'))
@@ -273,91 +311,27 @@ async function handleDelete(id: number) {
   color: var(--brand-ink);
 }
 
-.page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
-  background: color-mix(in srgb, var(--brand-white) 72%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
-  backdrop-filter: blur(8px);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
-  max-width: 58%;
-  z-index: 1;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--brand-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-link {
-  color: var(--brand-ink) !important;
-}
-
 .page-body {
   max-width: 640px;
-  margin: 24px auto;
+  margin: 4px auto;
   padding: 0 24px;
 }
 
+.summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.page-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .nb-summary {
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0 2px;
   font-size: 13px;
   line-height: 1.4;
@@ -390,6 +364,7 @@ async function handleDelete(id: number) {
   min-width: 0;
   flex: 1;
   overflow: hidden;
+  cursor: pointer;
 }
 
 .nb-name,
@@ -404,6 +379,29 @@ async function handleDelete(id: number) {
   font-weight: 600;
   color: var(--brand-ink, #315c34);
   line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nb-source-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.nb-source-阅读 {
+  background: color-mix(in srgb, #4a90d9 15%, #fff);
+  color: #3a7bc8;
+}
+
+.nb-source-听力 {
+  background: color-mix(in srgb, #e8a835 15%, #fff);
+  color: #c88a20;
 }
 
 .nb-desc {

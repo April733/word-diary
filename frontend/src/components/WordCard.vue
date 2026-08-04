@@ -1,3 +1,4 @@
+
 <template>
   <div class="word-card" :class="{ revealed: showAnswer }" @click="onCardClick">
     <div class="card-front" v-if="!showAnswer">
@@ -47,6 +48,7 @@
       </div>
       <div class="meaning">{{ word.partSpeechMean }}</div>
       <div class="sentence" v-if="word.sentenceExample">{{ word.sentenceExample }}</div>
+      <div class="remark" v-if="word.remark">{{ word.remark }}</div>
       <div class="root" v-if="word.rootAffix">{{ word.rootAffix }}</div>
       <div class="review-info" v-if="word.learnStatus > 0">
         {{ statusLabel(word.learnStatus) }}
@@ -230,6 +232,13 @@ watch(
   color: color-mix(in srgb, var(--brand-ink) 62%, #666);
   margin-bottom: 8px;
   line-height: 1.65;
+}
+
+.remark {
+  font-size: 13px;
+  color: color-mix(in srgb, var(--brand-ink) 60%, #777);
+  margin-bottom: 8px;
+  line-height: 1.6;
 }
 
 .root {

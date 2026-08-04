@@ -5,13 +5,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.dao.DuplicateKeyException;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.PdfCompressor;
 import spring.nexusfuture.word_diary.dto.request.BookUploadCompleteReq;
 import spring.nexusfuture.word_diary.dto.request.BookUploadInitReq;
+import spring.nexusfuture.word_diary.dto.response.BookShareCodeVO;
 import spring.nexusfuture.word_diary.dto.response.BookUploadInitVO;
 import spring.nexusfuture.word_diary.entity.WdBook;
+import spring.nexusfuture.word_diary.entity.WdBookResource;
+import spring.nexusfuture.word_diary.entity.WdBookShareCode;
 import spring.nexusfuture.word_diary.mapper.WdBookMapper;
+import spring.nexusfuture.word_diary.mapper.WdBookResourceMapper;
+import spring.nexusfuture.word_diary.mapper.WdBookShareCodeMapper;
 import spring.nexusfuture.word_diary.service.BookService;
 import spring.nexusfuture.word_diary.service.CosService;
 
@@ -35,8 +41,12 @@ public class BookServiceImpl implements BookService {
     private static final long SKIP_COMPRESS_ABOVE_BYTES = 8L * 1024 * 1024;
 
     private static final long MAX_BOOK_BYTES = 100L * 1024 * 1024;
+    private static final int SHARE_CODE_EXPIRE_DAYS = 7;
+    private static final int SHARE_CODE_LEN = 10;
 
     private final WdBookMapper bookMapper;
+    private final WdBookResourceMapper bookResourceMapper;
+    private final WdBookShareCodeMapper bookShareCodeMapper;
     private final CosService cosService;
     private final PdfCompressor pdfCompressor;
 
@@ -158,6 +168,77 @@ public class BookServiceImpl implements BookService {
         return insertBook(userId, originalName, cosKey, ext, remoteSize > 0 ? remoteSize : reported);
     }
 
+    @Override
+    @Transactional
+    public BookShareCodeVO createShareCode(Long userId, Long bookId) {
+        WdBook book = bookMapper.selectById(bookId);
+        if (book == null || !book.getUserId().equals(userId)) {
+            throw new BizException("无权操作");
+        }
+        WdBookResource resource = ensureResource(book, userId);
+        LocalDateTime expiresAt = LocalDateTime.now().plusDays(SHARE_CODE_EXPIRE_DAYS);
+        for (int i = 0; i < 8; i++) {
+            String shareCode = generateShareCode();
+            WdBookShareCode share = WdBookShareCode.builder()
+                    .resourceId(resource.getId())
+                    .ownerUserId(userId)
+                    .shareCode(shareCode)
+                    .expiresAt(expiresAt)
+                    .createBy(userId)
+                    .createTime(LocalDateTime.now())
+                    .updateBy(userId)
+                    .updateTime(LocalDateTime.now())
+                    .isDeleted(0)
+                    .build();
+            try {
+                bookShareCodeMapper.insert(share);
+                return BookShareCodeVO.builder()
+                        .shareCode(shareCode)
+                        .expiresAt(expiresAt)
+                        .build();
+            } catch (DuplicateKeyException e) {
+                log.warn("生成分享码失败，重试 {}: {}", i + 1, e.getMessage());
+            }
+        }
+        throw new BizException("生成分享码失败，请重试");
+    }
+
+    @Override
+    @Transactional
+    public WdBook importSharedBook(Long userId, String shareCode) {
+        if (shareCode == null || shareCode.isBlank()) {
+            throw new BizException("请输入分享码");
+        }
+        String code = shareCode.trim().toUpperCase(Locale.ROOT);
+        WdBookShareCode share = bookShareCodeMapper.selectByCode(code);
+        if (share == null) {
+            throw new BizException("分享码不存在或已失效");
+        }
+        if (share.getUsedBy() != null) {
+            throw new BizException("分享码已被使用");
+        }
+        if (share.getExpiresAt() != null && share.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new BizException("分享码已过期");
+        }
+        WdBookResource resource = bookResourceMapper.selectById(share.getResourceId());
+        if (resource == null) {
+            throw new BizException("共享资源不存在");
+        }
+        if (bookMapper.selectByUserIdAndResourceId(userId, resource.getId()) != null) {
+            throw new BizException("你已导入过这本书");
+        }
+        ensureSlot(userId);
+        int used = bookShareCodeMapper.markUsed(code, userId, userId);
+        if (used <= 0) {
+            throw new BizException("分享码已失效");
+        }
+        int inc = bookResourceMapper.increaseRefCount(resource.getId(), userId);
+        if (inc <= 0) {
+            throw new BizException("共享资源已失效");
+        }
+        return insertBookFromResource(userId, resource);
+    }
+
     private void ensureSlot(Long userId) {
         int existing = bookMapper.countByUserId(userId);
         if (existing >= MAX_BOOKS_PER_USER) {
@@ -200,12 +281,30 @@ public class BookServiceImpl implements BookService {
                 ? originalName.substring(0, originalName.lastIndexOf('.'))
                 : originalName;
 
-        WdBook book = WdBook.builder()
-                .userId(userId)
+        WdBookResource resource = WdBookResource.builder()
+                .ownerUserId(userId)
                 .title(title != null && !title.isBlank() ? title : "未命名")
                 .author("")
                 .coverUrl("")
                 .filePath(filePath)
+                .fileType(ext.replace(".", ""))
+                .fileSize(fileSize)
+                .refCount(1)
+                .createBy(userId)
+                .createTime(LocalDateTime.now())
+                .updateBy(userId)
+                .updateTime(LocalDateTime.now())
+                .isDeleted(0)
+                .build();
+        bookResourceMapper.insert(resource);
+
+        WdBook book = WdBook.builder()
+                .userId(userId)
+                .title(resource.getTitle())
+                .author("")
+                .coverUrl("")
+                .filePath(filePath)
+                .resourceId(resource.getId())
                 .fileType(ext.replace(".", ""))
                 .fileSize(fileSize)
                 .totalChapters(0)
@@ -222,6 +321,63 @@ public class BookServiceImpl implements BookService {
 
         bookMapper.insert(book);
         return book;
+    }
+
+    private WdBook insertBookFromResource(Long userId, WdBookResource resource) {
+        WdBook book = WdBook.builder()
+                .userId(userId)
+                .title(resource.getTitle())
+                .author(resource.getAuthor())
+                .coverUrl(resource.getCoverUrl())
+                .filePath(resource.getFilePath())
+                .resourceId(resource.getId())
+                .fileType(resource.getFileType())
+                .fileSize(resource.getFileSize())
+                .totalChapters(0)
+                .currentChapter(0)
+                .currentCfi("")
+                .progressPercent(BigDecimal.ZERO)
+                .lastReadAt(LocalDateTime.now())
+                .createBy(userId)
+                .createTime(LocalDateTime.now())
+                .updateBy(userId)
+                .updateTime(LocalDateTime.now())
+                .isDeleted(0)
+                .build();
+        bookMapper.insert(book);
+        return book;
+    }
+
+    private WdBookResource ensureResource(WdBook book, Long userId) {
+        if (book.getResourceId() != null) {
+            WdBookResource resource = bookResourceMapper.selectById(book.getResourceId());
+            if (resource != null) {
+                return resource;
+            }
+        }
+        WdBookResource resource = WdBookResource.builder()
+                .ownerUserId(userId)
+                .title(book.getTitle())
+                .author(book.getAuthor())
+                .coverUrl(book.getCoverUrl())
+                .filePath(book.getFilePath())
+                .fileType(book.getFileType())
+                .fileSize(book.getFileSize())
+                .refCount(1)
+                .createBy(userId)
+                .createTime(LocalDateTime.now())
+                .updateBy(userId)
+                .updateTime(LocalDateTime.now())
+                .isDeleted(0)
+                .build();
+        bookResourceMapper.insert(resource);
+        bookMapper.updateResourceId(book.getId(), userId, resource.getId());
+        book.setResourceId(resource.getId());
+        return resource;
+    }
+
+    private static String generateShareCode() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, SHARE_CODE_LEN).toUpperCase(Locale.ROOT);
     }
 
     @Override
@@ -245,10 +401,32 @@ public class BookServiceImpl implements BookService {
         if (book == null || !book.getUserId().equals(userId)) {
             throw new BizException("无权操作");
         }
-        try {
-            cosService.delete(book.getFilePath());
-        } catch (Exception e) {
-            log.error("COS 删除文件失败，key={}", book.getFilePath(), e);
+        if (book.getResourceId() != null) {
+            WdBookResource resource = bookResourceMapper.selectById(book.getResourceId());
+            if (resource != null) {
+                bookResourceMapper.decreaseRefCount(resource.getId(), userId);
+                WdBookResource updated = bookResourceMapper.selectById(resource.getId());
+                if (updated == null || updated.getRefCount() == null || updated.getRefCount() <= 0) {
+                    try {
+                        cosService.delete(resource.getFilePath());
+                    } catch (Exception e) {
+                        log.error("COS 删除文件失败，key={}", resource.getFilePath(), e);
+                    }
+                    bookResourceMapper.softDelete(resource.getId(), userId);
+                }
+            } else {
+                try {
+                    cosService.delete(book.getFilePath());
+                } catch (Exception e) {
+                    log.error("COS 删除文件失败，key={}", book.getFilePath(), e);
+                }
+            }
+        } else {
+            try {
+                cosService.delete(book.getFilePath());
+            } catch (Exception e) {
+                log.error("COS 删除文件失败，key={}", book.getFilePath(), e);
+            }
         }
         bookMapper.deleteById(bookId, userId);
     }

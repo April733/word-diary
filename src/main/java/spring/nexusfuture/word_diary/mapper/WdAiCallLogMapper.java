@@ -17,10 +17,10 @@ import java.util.Map;
 public interface WdAiCallLogMapper {
 
     @Insert("INSERT INTO wd_ai_call_log(user_id, model_name, call_scene, input_text, input_char_count, input_word_count, " +
-            "assembled_prompt_chars, prompt_tokens, completion_tokens, total_tokens, estimated_cost, " +
+            "assembled_prompt_chars, prompt_tokens, completion_tokens, reasoning_tokens, content_tokens, total_tokens, estimated_cost, " +
             "system_prompt, user_prompt, response_data, duration_ms, create_time, update_time) " +
             "VALUES(#{userId}, #{modelName}, #{callScene}, #{inputText}, #{inputCharCount}, #{inputWordCount}, " +
-            "#{assembledPromptChars}, #{promptTokens}, #{completionTokens}, #{totalTokens}, #{estimatedCost}, " +
+            "#{assembledPromptChars}, #{promptTokens}, #{completionTokens}, #{reasoningTokens}, #{contentTokens}, #{totalTokens}, #{estimatedCost}, " +
             "#{systemPrompt}, #{userPrompt}, #{responseData}, #{durationMs}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(WdAiCallLog log);
@@ -34,6 +34,8 @@ public interface WdAiCallLogMapper {
             "COALESCE(SUM(assembled_prompt_chars),0) AS assembled_chars, " +
             "COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, " +
             "COALESCE(SUM(completion_tokens),0) AS completion_tokens, " +
+            "COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens, " +
+            "COALESCE(SUM(content_tokens),0) AS content_tokens, " +
             "COALESCE(SUM(total_tokens),0) AS total_tokens, " +
             "COALESCE(SUM(estimated_cost),0) AS estimated_cost " +
             "FROM wd_ai_call_log WHERE is_deleted = 0 " +
@@ -62,7 +64,8 @@ public interface WdAiCallLogMapper {
             SELECT l.id, l.user_id AS userId, u.username AS username, l.model_name AS modelName,
                    l.call_scene AS callScene, l.input_char_count AS inputCharCount,
                    l.input_word_count AS inputWordCount, l.prompt_tokens AS promptTokens,
-                   l.completion_tokens AS completionTokens, l.total_tokens AS totalTokens,
+                   l.completion_tokens AS completionTokens, l.reasoning_tokens AS reasoningTokens,
+                   l.content_tokens AS contentTokens, l.total_tokens AS totalTokens,
                    l.estimated_cost AS estimatedCost, l.duration_ms AS durationMs,
                    l.create_time AS createTime
             FROM wd_ai_call_log l
@@ -91,6 +94,7 @@ public interface WdAiCallLogMapper {
                    l.input_char_count AS inputCharCount, l.input_word_count AS inputWordCount,
                    l.assembled_prompt_chars AS assembledPromptChars,
                    l.prompt_tokens AS promptTokens, l.completion_tokens AS completionTokens,
+                   l.reasoning_tokens AS reasoningTokens, l.content_tokens AS contentTokens,
                    l.total_tokens AS totalTokens, l.estimated_cost AS estimatedCost,
                    l.system_prompt AS systemPrompt, l.user_prompt AS userPrompt,
                    l.response_data AS responseData, l.duration_ms AS durationMs,
@@ -176,7 +180,7 @@ public interface WdAiCallLogMapper {
               ON d.model_key = ds.model_key AND d.is_deleted = 0 AND d.is_enabled = 1
             SET l.estimated_cost = ROUND(
               COALESCE(l.prompt_tokens, 0) / 1000000 * COALESCE(COALESCE(m.input_price_per_million, d.input_price_per_million), 0)
-            + COALESCE(l.completion_tokens, 0) / 1000000 * COALESCE(COALESCE(m.output_price_per_million, d.output_price_per_million), 0)
+            + COALESCE(l.content_tokens, l.completion_tokens, 0) / 1000000 * COALESCE(COALESCE(m.output_price_per_million, d.output_price_per_million), 0)
             , 8),
             l.update_time = NOW()
             WHERE l.is_deleted = 0

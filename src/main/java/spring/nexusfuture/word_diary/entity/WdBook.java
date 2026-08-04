@@ -35,6 +35,9 @@ public class WdBook {
     /** 文件存储路径 */
     private String filePath;
 
+    /** 共享资源ID */
+    private Long resourceId;
+
     /** 文件类型，如 epub / pdf / txt */
     private String fileType;
 

@@ -14,7 +14,7 @@ public interface StudyService {
      * @param userId 当前用户 ID
      * @return 已完成任务 VO 列表
      */
-    List<StudyTaskVO> getTodayCompleted(Long userId);
+    List<StudyTaskVO> getTodayCompleted(Long userId, String sourceType);
 
     /**
      * 获取用户学习统计数据（总量、连续天数、今日进度等）。
@@ -22,7 +22,7 @@ public interface StudyService {
      * @param userId 当前用户 ID
      * @return 统计 VO
      */
-    StatsVO getStats(Long userId);
+    StatsVO getStats(Long userId, String sourceType);
 
     /**
      * 按计划状态筛选词表。
@@ -32,7 +32,7 @@ public interface StudyService {
      * @param status 筛选状态，可为空表示 all
      * @return 匹配的学习任务 VO 列表
      */
-    List<StudyTaskVO> listPlanWords(Long userId, String status);
+    List<StudyTaskVO> listPlanWords(Long userId, String status, String sourceType);
 
     /**
      * 调试：导出用户全部词的 SRS 字段快照。

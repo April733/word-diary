@@ -155,9 +155,6 @@
         </div>
         <div v-else-if="!savedWords.length" class="hint">
           <p>{{ $t('reader.collectSavedEmpty') }}</p>
-          <t-button theme="primary" size="small" @click="openAddWord">
-            {{ $t('reader.collectAddWord') }}
-          </t-button>
         </div>
         <div v-else class="entry-table-wrap">
           <table class="entry-table">
@@ -167,7 +164,7 @@
                 <th class="col-meaning">{{ $t('reader.collectMeaning') }}</th>
                 <th>{{ $t('reader.collectRootAffix') }}</th>
                 <th>{{ $t('reader.collectExample') }}</th>
-                <th style="width: 112px"></th>
+                <th style="width: 64px"></th>
               </tr>
             </thead>
             <tbody>
@@ -219,15 +216,15 @@
                   <span v-else>—</span>
                 </td>
                 <td class="row-actions">
-                  <t-button variant="text" theme="primary" size="small" @click="openEditWord(word)">
-                    {{ $t('reader.collectEditWord') }}
+                  <t-button variant="text" theme="primary" size="small" shape="square" @click="openEditWord(word)">
+                    <template #icon><t-icon name="edit" size="16px" /></template>
                   </t-button>
                   <t-popconfirm
                     :content="$t('reader.collectRemoveConfirm')"
                     @confirm="removeWord(word.id)"
                   >
-                    <t-button variant="text" theme="danger" size="small">
-                      {{ $t('reader.collectRemove') }}
+                    <t-button variant="text" theme="danger" size="small" shape="square">
+                      <template #icon><t-icon name="delete" size="16px" /></template>
                     </t-button>
                   </t-popconfirm>
                 </td>

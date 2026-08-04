@@ -36,3 +36,117 @@ body {
 #app {
   min-height: 100vh;
 }
+
+/* ============================================
+   通用按钮样式系统
+   ============================================ */
+
+/* 基础按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 主要按钮 - 深绿色背景 */
+.btn-primary {
+  background: var(--brand-ink);
+  border-color: var(--brand-ink);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-ink-hover);
+  border-color: var(--brand-ink-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--brand-ink-active);
+  border-color: var(--brand-ink-active);
+}
+
+/* 次要按钮 - 白色背景 + 边框 */
+.btn-secondary {
+  background: #fff;
+  border-color: color-mix(in srgb, var(--brand-lizard) 50%, transparent);
+  color: var(--brand-ink);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-lizard) 12%, #fff);
+  border-color: var(--brand-lizard);
+}
+
+.btn-secondary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-lizard) 20%, #fff);
+}
+
+/* 文字按钮 - 无边框 */
+.btn-text {
+  background: transparent;
+  border-color: transparent;
+  color: var(--brand-ink);
+  padding: 6px 8px;
+}
+
+.btn-text:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-lizard) 12%, transparent);
+}
+
+.btn-text:active:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-lizard) 20%, transparent);
+}
+
+/* 危险按钮 - 红色 */
+.btn-danger {
+  background: #fff;
+  border-color: color-mix(in srgb, #d54941 40%, transparent);
+  color: #d54941;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #d54941 8%, #fff);
+  border-color: #d54941;
+}
+
+/* 图标按钮 - 方形 */
+.btn-icon {
+  padding: 6px;
+  border-radius: 6px;
+}
+
+/* 尺寸变体 */
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.btn-lg {
+  padding: 10px 20px;
+  font-size: 15px;
+}
+
+/* 全宽按钮 */
+.btn-block {
+  width: 100%;
+}
+
+.nav-link {
+  color: var(--brand-ink) !important;
+}

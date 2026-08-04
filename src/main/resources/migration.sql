@@ -33,6 +33,44 @@ CREATE TABLE IF NOT EXISTS `wd_ai_call_log` (
 
 -- 书籍表：新增 file_size 字段
 ALTER TABLE wd_book ADD COLUMN file_size bigint DEFAULT 0 COMMENT '文件大小(字节)' AFTER file_type;
+ALTER TABLE wd_book ADD COLUMN resource_id bigint DEFAULT NULL COMMENT '共享资源ID' AFTER file_path;
+
+CREATE TABLE IF NOT EXISTS `wd_book_resource` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `owner_user_id` bigint NOT NULL COMMENT '资源创建者用户ID',
+  `title` varchar(256) NOT NULL COMMENT '书名',
+  `author` varchar(128) DEFAULT '' COMMENT '作者',
+  `cover_url` varchar(512) DEFAULT '' COMMENT '封面图URL',
+  `file_path` varchar(512) NOT NULL COMMENT '文件在服务器上的存储路径',
+  `file_type` varchar(16) NOT NULL DEFAULT 'epub' COMMENT '文件类型 epub/pdf/txt',
+  `file_size` bigint DEFAULT 0 COMMENT '文件大小(字节)',
+  `ref_count` int NOT NULL DEFAULT 1 COMMENT '引用计数',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  KEY `idx_owner_user_id` (`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='共享书籍资源表';
+
+CREATE TABLE IF NOT EXISTS `wd_book_share_code` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `resource_id` bigint NOT NULL COMMENT '共享资源ID',
+  `owner_user_id` bigint NOT NULL COMMENT '发起分享的用户ID',
+  `share_code` varchar(32) NOT NULL COMMENT '分享码',
+  `expires_at` datetime NOT NULL COMMENT '过期时间',
+  `used_by` bigint DEFAULT NULL COMMENT '核销用户ID',
+  `used_time` datetime DEFAULT NULL COMMENT '核销时间',
+  `create_by` bigint DEFAULT NULL COMMENT '创建人',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '修改人',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `is_deleted` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 1已删除 0未删除',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_share_code` (`share_code`),
+  KEY `idx_resource_id` (`resource_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='书籍分享码表';
 
 -- 用户 AI 功能偏好表：新增 feature_order 字段（保存用户自定义排序）
 ALTER TABLE wd_user_ai_preference ADD COLUMN feature_order VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '用户自定义功能排序，JSON数组，如 ["word","example","collocation"]' AFTER feature_keys;
@@ -696,6 +734,22 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- =============================================
+-- 2026-07-29: wd_word 表新增 remark 备注字段
+-- =============================================
+SET @sql := (
+  SELECT IF(
+    COUNT(*) = 0,
+    'ALTER TABLE `wd_word` ADD COLUMN `remark` varchar(512) DEFAULT \'\' COMMENT \'用户备注\' AFTER `source_location`',
+    'SELECT 1'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'wd_word' AND COLUMN_NAME = 'remark'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- 会员等级列下线（幂等）
 SET @sql := (
   SELECT IF(
@@ -709,3 +763,17 @@ SET @sql := (
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+-- =============================================
+-- 2026-07-29: 单词本来源分类（阅读/听力），用于今日背诵按来源隔离查询
+-- =============================================
+SET @has_source_type := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wd_word_book' AND COLUMN_NAME = 'source_type'
+);
+SET @sql_source_type := IF(@has_source_type = 0,
+  'ALTER TABLE `wd_word_book` ADD COLUMN `source_type` varchar(16) NOT NULL DEFAULT ''阅读'' COMMENT ''来源分类：阅读|听力'' AFTER `book_id`',
+  'SELECT 1');
+PREPARE stmt_source_type FROM @sql_source_type;
+EXECUTE stmt_source_type;
+DEALLOCATE PREPARE stmt_source_type;

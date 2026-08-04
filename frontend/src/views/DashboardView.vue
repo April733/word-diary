@@ -1,7 +1,7 @@
 <template>
   <div class="home">
     <header class="top">
-      <div class="brand-row">
+      <div class="brand-row" @click="router.push({ path: '/study', query: { sourceType: activeTab === 'listen' ? '听力' : '阅读' } })">
         <img class="brand-logo" src="/brand/logo-circle-64.png" width="36" height="36" alt="" decoding="async" />
         <div>
           <div class="brand">{{ $t('common.appName') }}</div>
@@ -11,12 +11,7 @@
       <div class="top-right">
         <AiRegionSwitcher />
         <LocaleSwitcher />
-        <t-button variant="text" size="small" class="top-action-btn" @click="router.push('/report')">
-          {{ $t('login.reportLink') }}
-        </t-button>
-        <t-button variant="text" size="small" class="top-action-btn" @click="handleLogout">
-          {{ $t('dashboard.logout') }}
-        </t-button>
+        <UserDropdown />
       </div>
     </header>
 
@@ -25,77 +20,145 @@
     </main>
 
     <main v-else class="body">
-      <!-- 有书：只推一本书、一个按钮（不要「阅读」小标题） -->
-      <section v-if="focusBook" class="block">
-        <h1 class="book-name">{{ focusBook.title }}</h1>
-        <p class="muted">{{ bookStatusText }}</p>
-        <t-button theme="primary" size="large" block class="btn" @click="openBook">
-          {{ bookButtonText }}
-        </t-button>
+      <!-- Tab 切换 -->
+      <div class="tab-bar">
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: activeTab === 'read' }"
+          @click="activeTab = 'read'"
+        >
+          {{ $t('dashboard.tabRead') }}
+        </button>
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: activeTab === 'listen' }"
+          @click="listenEnabled ? activeTab = 'listen' : showListenHint()"
+        >
+          {{ $t('dashboard.tabListen') }}
+        </button>
+      </div>
+
+      <!-- 读写训练：展示书籍 -->
+      <section v-if="activeTab === 'read'" class="block">
+        <template v-if="focusBook">
+          <h1 class="book-name">{{ focusBook.title }}</h1>
+          <p class="muted">{{ bookStatusText }}</p>
+          <t-button theme="primary" size="large" block class="btn" @click="openBook">
+            {{ bookButtonText }}
+          </t-button>
+        </template>
+        <template v-else>
+          <h1 class="book-name">{{ $t('dashboard.homeNoBookTitle') }}</h1>
+          <p class="muted">{{ $t('dashboard.homeNoBookHint') }}</p>
+          <t-button theme="primary" size="large" block class="btn" @click="router.push('/bookshelf')">
+            {{ $t('dashboard.importBook') }}
+          </t-button>
+        </template>
       </section>
 
-      <!-- 没书 -->
+      <!-- 听说训练：白名单用户展示内容，非白名单显示建设中 -->
       <section v-else class="block">
-        <h1 class="book-name">{{ $t('dashboard.homeNoBookTitle') }}</h1>
-        <p class="muted">{{ $t('dashboard.homeNoBookHint') }}</p>
-        <t-button theme="primary" size="large" block class="btn" @click="router.push('/bookshelf')">
-          {{ $t('dashboard.importBook') }}
-        </t-button>
+        <template v-if="!listenEnabled">
+          <div class="under-construction">
+            <t-icon name="construction" size="48px" class="uc-icon" />
+            <h1 class="book-name">{{ $t('dashboard.listenUnderConstruction') }}</h1>
+            <p class="muted">{{ $t('dashboard.listenUnderConstructionHint') }}</p>
+          </div>
+        </template>
+        <template v-else-if="latestShadowing">
+          <h1 class="book-name">{{ latestShadowing.title }}</h1>
+          <p class="muted">{{ $t('dashboard.continueShadowing') }}</p>
+          <t-button theme="primary" size="large" block class="btn" @click="openShadowing(latestShadowing.id)">
+            {{ $t('dashboard.continueShadowing') }}
+          </t-button>
+        </template>
+        <template v-else>
+          <h1 class="book-name">{{ $t('dashboard.noShadowing') }}</h1>
+          <t-button theme="primary" size="large" block class="btn" @click="router.push('/shadowing')">
+            {{ $t('dashboard.goShadowing') }}
+          </t-button>
+        </template>
       </section>
 
+      <!-- 中间菜单：按 Tab 分组 -->
       <nav class="nav">
-        <button type="button" @click="router.push('/study')">
-          <t-icon name="calendar" size="18px" class="nav-icon" />
-          <span>{{ $t('study.sessionTitle') }}</span>
-        </button>
-        <button type="button" @click="router.push('/spelling')">
-          <t-icon name="task" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.spelling') }}</span>
-        </button>
-        <button type="button" @click="router.push('/translation')">
-          <t-icon name="translate" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.translation') }}</span>
-        </button>
-        <button type="button" @click="router.push('/writing')">
-          <t-icon name="edit" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.writing') }}</span>
-        </button>
-        <button type="button" @click="router.push('/shadowing')">
-          <t-icon name="sound" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.shadowing') }}</span>
-        </button>
-        <button type="button" @click="router.push('/notebooks')">
-          <t-icon name="root-list" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.wordbook') }}</span>
-        </button>
-        <button type="button" @click="router.push('/bookshelf')">
-          <t-icon name="book-open" size="18px" class="nav-icon" />
-          <span>{{ $t('bookshelf.title') }}</span>
-        </button>
-        <button type="button" @click="router.push('/study-duration')">
-          <t-icon name="chart-bar" size="18px" class="nav-icon" />
-          <span>{{ $t('nav.studyDuration') }}</span>
-        </button>
+        <!-- 读写训练菜单 -->
+        <template v-if="activeTab === 'read'">
+          <button type="button" @click="router.push({ path: '/study', query: { sourceType: '阅读', tab: 'read' } })">
+            <t-icon name="calendar" size="18px" class="nav-icon" />
+            <span>{{ $t('study.sessionTitle') }}</span>
+          </button>
+          <button type="button" @click="router.push({ path: '/translation', query: { tab: 'read' } })">
+            <t-icon name="translate" size="18px" class="nav-icon" />
+            <span>{{ $t('nav.translation') }}</span>
+          </button>
+          <button type="button" @click="router.push({ path: '/spelling', query: { tab: 'read' } })">
+            <t-icon name="task" size="18px" class="nav-icon" />
+            <span>{{ $t('nav.spelling') }}</span>
+          </button>
+          <button type="button" @click="router.push({ path: '/writing', query: { tab: 'read' } })">
+            <t-icon name="edit" size="18px" class="nav-icon" />
+            <span>{{ $t('nav.writing') }}</span>
+          </button>
+          <button type="button" @click="router.push({ path: '/bookshelf', query: { tab: 'read' } })">
+            <t-icon name="book-open" size="18px" class="nav-icon" />
+            <span>{{ $t('bookshelf.title') }}</span>
+          </button>
+        </template>
+        <!-- 听说训练菜单 -->
+        <template v-else-if="listenEnabled">
+          <button type="button" @click="router.push({ path: '/study', query: { sourceType: '听力', tab: 'listen' } })">
+            <t-icon name="calendar" size="18px" class="nav-icon" />
+            <span>{{ $t('study.sessionTitle') }}</span>
+          </button>
+          <button type="button" @click="router.push({ path: '/shadowing', query: { tab: 'listen' } })">
+            <t-icon name="sound" size="18px" class="nav-icon" />
+            <span>{{ $t('nav.shadowing') }}</span>
+          </button>
+        </template>
       </nav>
+
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { useUserStore } from '../stores/user'
-import { getBooks } from '../api'
+import { getBooks, listShadowingClips } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
 import AiRegionSwitcher from '../components/AiRegionSwitcher.vue'
+import UserDropdown from '../components/UserDropdown.vue'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const userStore = useUserStore()
 
+// 听说功能白名单（用户名），非白名单用户显示"正在建设中"
+const LISTEN_SPEAK_WHITELIST = ['April']
+
+const listenEnabled = computed(() => {
+  const u = userStore.user
+  if (!u) return false
+  return LISTEN_SPEAK_WHITELIST.includes(u.username) || LISTEN_SPEAK_WHITELIST.includes(u.nickname)
+})
+
 const loading = ref(true)
 const books = ref<any[]>([])
+const shadowingClips = ref<any[]>([])
+const activeTab = ref<'read' | 'listen'>('read')
+
+function resolveTab(tab: unknown): 'read' | 'listen' {
+  const t = String(tab || '').toLowerCase()
+  if (t === 'listen' && listenEnabled.value) return 'listen'
+  return 'read'
+}
 
 function progressOf(b: any) {
   return Math.round(Number(b.progressPercent ?? 0))
@@ -127,24 +190,53 @@ const bookButtonText = computed(() =>
   bookStarted.value ? t('dashboard.continueReading') : t('dashboard.startReading')
 )
 
+/** 最近一个跟读文件（按 updateTime 降序） */
+const latestShadowing = computed(() => {
+  if (!shadowingClips.value.length) return null
+  return [...shadowingClips.value]
+    .sort((a, b) => {
+      const ta = new Date(a.updateTime || a.createTime || 0).getTime()
+      const tb = new Date(b.updateTime || b.createTime || 0).getTime()
+      return tb - ta
+    })[0]
+})
+
 function openBook() {
   if (focusBook.value) router.push(`/reader/${focusBook.value.id}`)
 }
 
+function openShadowing(id: number) {
+  router.push(`/shadowing/player/${id}`)
+}
+
+function showListenHint() {
+  MessagePlugin.info(`${t('dashboard.listenUnderConstruction')}，${t('dashboard.listenUnderConstructionHint')}`)
+}
+
 onMounted(async () => {
   userStore.loadFromStorage()
+  activeTab.value = resolveTab(route.query.tab)
   try {
-    const booksRes = await getBooks().catch(() => null)
+    const [booksRes, shadowingRes] = await Promise.all([
+      getBooks().catch(() => null),
+      listShadowingClips().catch(() => null)
+    ])
     books.value = booksRes?.data?.data || []
+    shadowingClips.value = shadowingRes?.data?.data || []
   } finally {
     loading.value = false
   }
 })
 
-function handleLogout() {
-  userStore.logout()
-  router.push('/login')
-}
+watch(
+  () => route.query.tab,
+  (tab) => {
+    activeTab.value = resolveTab(tab)
+  }
+)
+
+onBeforeUnmount(() => {
+})
 </script>
 
 <style scoped>
@@ -165,6 +257,7 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
 }
 
 .brand-logo {
@@ -194,27 +287,55 @@ function handleLogout() {
   max-width: min(100%, 420px);
 }
 
-.top-action-btn {
-  color: var(--td-text-color-secondary);
-  font-weight: 500;
-  transition: color 0.2s;
-}
-
-.top-action-btn:hover {
-  color: var(--td-text-color-primary);
-  background: transparent;
-}
-
 .body {
   max-width: 440px;
   margin: 0 auto;
-  padding: 16px 24px 56px;
+  padding: 16px 24px 24px;
 }
 
 .center {
   display: flex;
   justify-content: center;
   padding-top: 80px;
+}
+
+/* Tab 切换栏 */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 2px solid color-mix(in srgb, var(--brand-lizard) 30%, var(--brand-white));
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.tab-btn.active {
+  color: var(--brand-ink);
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--brand-ink);
+}
+
+.tab-btn:hover {
+  color: var(--brand-ink);
 }
 
 .block {
@@ -278,9 +399,25 @@ function handleLogout() {
   opacity: 1;
 }
 
+
+
 @media (max-width: 480px) {
   .body {
     padding: 12px 20px 48px;
   }
+}
+
+.under-construction {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0 32px;
+  text-align: center;
+}
+
+.uc-icon {
+  color: var(--td-text-color-placeholder);
+  margin-bottom: 16px;
 }
 </style>

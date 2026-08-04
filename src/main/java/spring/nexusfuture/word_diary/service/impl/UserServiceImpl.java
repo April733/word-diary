@@ -82,6 +82,8 @@ public class UserServiceImpl implements UserService {
                 .role(UserRoles.normalize(user.getRole()))
                 .preferredLocale(user.getPreferredLocale())
                 .preferredAiRegion(user.getPreferredAiRegion() != null ? user.getPreferredAiRegion() : AiRegions.PREF_AUTO)
+                .phone(maskPhone(user.getPhone()))
+                .email(maskEmail(user.getEmail()))
                 .build();
     }
 
@@ -129,5 +131,19 @@ public class UserServiceImpl implements UserService {
             return null;
         }
         return userMapper.selectById(userId);
+    }
+
+    /** 脱敏手机号：保留前3后4，中间用****替换 */
+    private static String maskPhone(String phone) {
+        if (phone == null || phone.length() < 7) return phone;
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
+    }
+
+    /** 脱敏邮箱：保留首字母和域名，中间用***替换 */
+    private static String maskEmail(String email) {
+        if (email == null || !email.contains("@")) return email;
+        int at = email.indexOf('@');
+        if (at <= 1) return email;
+        return email.charAt(0) + "***" + email.substring(at);
     }
 }

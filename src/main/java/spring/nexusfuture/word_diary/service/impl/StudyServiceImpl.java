@@ -41,25 +41,25 @@ public class StudyServiceImpl implements StudyService {
     }
 
     @Override
-    public List<StudyTaskVO> getTodayCompleted(Long userId) {
+    public List<StudyTaskVO> getTodayCompleted(Long userId, String sourceType) {
         LocalDate today = calendarService.currentStudyDate(userId);
         Set<Long> completedWordIds = passStore.allCompletedWordIds(userId, today, 2);
         if (completedWordIds.isEmpty()) {
             return List.of();
         }
-        return wordMapper.selectAllByUserId(userId).stream()
+        return wordMapper.selectAllInStudyPlan(userId, sourceType).stream()
                 .filter(w -> w.getId() != null && completedWordIds.contains(w.getId()))
                 .map(this::toTaskVO)
                 .collect(Collectors.toList());
     }
 
     @Override
-    public StatsVO getStats(Long userId) {
-        List<WdWord> inPlan = wordMapper.selectAllInStudyPlan(userId);
+    public StatsVO getStats(Long userId, String sourceType) {
+        List<WdWord> inPlan = wordMapper.selectAllInStudyPlan(userId, sourceType);
         LocalDate studyDate = calendarService.currentStudyDate(userId);
-        List<WdWord> reviewTasks = wordMapper.selectReviewTasks(userId, studyDate);
-        int reviewPending = reviewPoolService.listPending(userId, studyDate).size();
-        int newPending = newWordPoolService.listPending(userId, studyDate).size();
+        List<WdWord> reviewTasks = wordMapper.selectReviewTasks(userId, studyDate, sourceType);
+        int reviewPending = reviewPoolService.listPending(userId, studyDate, sourceType).size();
+        int newPending = newWordPoolService.listPending(userId, studyDate, sourceType).size();
         boolean reviewPhaseDone = reviewPending == 0;
 
         long pending = inPlan.stream().filter(w -> codeOf(w) == 0).count();
@@ -75,7 +75,7 @@ public class StudyServiceImpl implements StudyService {
                 .newWords(pending)
                 .reviewingWords(learning)
                 .masteredWords(mastered)
-                .pausedWords(wordMapper.countPausedByUserId(userId))
+                .pausedWords(wordMapper.countPausedByUserId(userId, sourceType))
                 .todayReviewCount(reviewTasks.size())
                 .todayReviewPending(reviewPending)
                 .todayNewPending(newPending)
@@ -84,9 +84,9 @@ public class StudyServiceImpl implements StudyService {
     }
 
     @Override
-    public List<StudyTaskVO> listPlanWords(Long userId, String status) {
+    public List<StudyTaskVO> listPlanWords(Long userId, String status, String sourceType) {
         String key = status == null || status.isBlank() ? "all" : status.trim().toLowerCase();
-        return wordMapper.selectAllInStudyPlan(userId).stream()
+        return wordMapper.selectAllInStudyPlan(userId, sourceType).stream()
                 .filter(w -> matchPlanFilter(codeOf(w), key))
                 .sorted((a, b) -> {
                     int cmp = Integer.compare(statusSortKey(codeOf(a)), statusSortKey(codeOf(b)));
@@ -127,6 +127,7 @@ public class StudyServiceImpl implements StudyService {
                 .partSpeechMean(word.getPartSpeechMean() != null ? word.getPartSpeechMean() : "")
                 .sentenceExample(word.getSentenceExample() != null ? word.getSentenceExample() : "")
                 .rootAffix(word.getRootAffix() != null ? word.getRootAffix() : "")
+                .remark(word.getRemark() != null ? word.getRemark() : "")
                 .learnStatus(word.getStatus())
                 .statusData(word.getStatusData())
                 .notebookName(book != null ? book.getBookName() : "")

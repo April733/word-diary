@@ -1,24 +1,16 @@
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="header-left">
-        <t-button variant="text" class="back-btn" @click="router.push('/')">
-          <template #icon><t-icon name="chevron-left" /></template>
-        </t-button>
-        <h1>{{ $t('study.sessionTitle') }}</h1>
-      </div>
-      <div class="header-center">
-        <span class="header-brand">{{ $t('common.appName') }}</span>
-      </div>
-      <div class="header-actions">
-        <t-button variant="text" size="small" class="nav-link" @click="router.push('/study/browse')">
-          {{ $t('study.browse') }}
-        </t-button>
-        <t-button variant="text" size="small" class="nav-link" @click="router.push('/study/settings')">
-          <template #icon><t-icon name="setting" /></template>
-        </t-button>
-      </div>
-    </header>
+    <PageHeader :title="$t('study.sessionTitle')" :back-to="backToHome">
+      <button type="button" class="btn btn-text btn-icon" :disabled="!currentWord" @click="openEditCurrent">
+        <t-icon name="edit" size="16px" />
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm" @click="goBrowse">
+        {{ $t('study.browse') }}
+      </button>
+      <button type="button" class="btn btn-text btn-icon" @click="goSettings">
+        <t-icon name="setting" size="16px" />
+      </button>
+    </PageHeader>
 
     <div class="page-body">
       <div class="today-stats" role="group" :aria-label="$t('study.sessionTitle')">
@@ -71,6 +63,41 @@
       <!-- 进度区下方禁止再挂列表/折叠等功能模块 -->
     </div>
 
+    <!-- 编辑当前单词弹窗 -->
+    <t-dialog
+      v-model:visible="editVisible"
+      :header="$t('study.editCurrentWord')"
+      :footer="false"
+      width="420px"
+      :close-on-overlay-click="true"
+    >
+      <div v-if="!currentWord" class="edit-empty">{{ $t('study.noCurrentWord') }}</div>
+      <div v-else class="edit-form">
+        <div v-if="currentWord.notebookName" class="edit-notebook">
+          <t-icon name="book-open" />
+          <span>{{ currentWord.notebookName }}</span>
+        </div>
+        <div class="form-item">
+          <label>{{ $t('study.word') }}</label>
+          <t-input v-model="editForm.wordProto" />
+        </div>
+        <div class="form-item">
+          <label>{{ $t('study.definition') }}</label>
+          <t-input v-model="editForm.partSpeechMean" />
+        </div>
+        <div class="edit-actions">
+          <t-popconfirm :content="$t('study.deleteWordConfirm')" @confirm="deleteCurrent">
+            <t-button size="small" variant="outline" theme="danger" :loading="deleting">
+              {{ $t('study.deleteWord') }}
+            </t-button>
+          </t-popconfirm>
+          <t-button theme="primary" size="small" :loading="saving" @click="saveEdit">
+            {{ $t('study.save') }}
+          </t-button>
+        </div>
+      </div>
+    </t-dialog>
+
     <t-drawer
       v-model:visible="queueListVisible"
       size="min(400px, 100%)"
@@ -100,18 +127,23 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { openStudySession, submitStudyAnswer, getTodayCompleted, getStudySessionQueue } from '../api'
+import { openStudySession, submitStudyAnswer, getTodayCompleted, getStudySessionQueue, updateStudyWord, deleteStudyWord } from '../api'
 import WordCard from '../components/WordCard.vue'
 import {
   createStudyDurationTracker,
   type StudyDurationTracker
 } from '../utils/studyDurationTracker'
+import PageHeader from '../components/PageHeader.vue'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
+const sourceType = computed(() => (route.query.sourceType as string) || undefined)
+const tab = computed(() => (route.query.tab as string) || (sourceType.value === '听力' ? 'listen' : 'read'))
+const backToHome = computed(() => ({ path: '/', query: { tab: tab.value } }))
 const loading = ref(true)
 const answering = ref(false)
 const showAnswer = ref(false)
@@ -131,6 +163,12 @@ const queueListVisible = ref(false)
 const queueListLoading = ref(false)
 const queueListPhase = ref<'review' | 'new' | 'completed'>('review')
 const queueListItems = ref<any[]>([])
+
+// 编辑当前单词
+const editVisible = ref(false)
+const saving = ref(false)
+const deleting = ref(false)
+const editForm = ref({ wordProto: '', partSpeechMean: '' })
 
 /** 今日背诵时长（无单一业务 ID） */
 let studyDurationTracker: StudyDurationTracker | null = null
@@ -157,13 +195,39 @@ onBeforeUnmount(() => {
   studyDurationTracker = null
 })
 
+function goBrowse() {
+  router.push({
+    path: '/study/browse',
+    query: {
+      ...(sourceType.value ? { sourceType: sourceType.value } : {}),
+      ...(tab.value ? { tab: tab.value } : {})
+    }
+  })
+}
+
+function goSettings() {
+  router.push({
+    path: '/study/settings',
+    query: {
+      ...(sourceType.value ? { sourceType: sourceType.value } : {}),
+      ...(tab.value ? { tab: tab.value } : {})
+    }
+  })
+}
+
 async function loadSession() {
   loading.value = true
   try {
-    const res = await openStudySession()
+    const res = await openStudySession(sourceType.value ? { sourceType: sourceType.value } : undefined)
     applySession(res.data.data)
-  } catch {
-    MessagePlugin.error(t('study.loadFailed'))
+  } catch (e: any) {
+    // 无可用单词时静默处理，不弹错误提示
+    const code = e?.response?.data?.code
+    const msg = e?.response?.data?.msg || e?.message || ''
+    const isEmptyState = code === 404 || msg.includes('无') || msg.includes('empty') || msg.includes('no word') || msg.includes('暂无')
+    if (!isEmptyState) {
+      MessagePlugin.error(t('study.loadFailed'))
+    }
   } finally {
     loading.value = false
   }
@@ -187,7 +251,7 @@ async function handleAnswer(feedback: number) {
       wordId,
       feedback,
       phase: answeredPhase
-    })
+    }, sourceType.value ? { sourceType: sourceType.value } : undefined)
     const data = res.data.data
     if (data.today) {
       today.value = data.today
@@ -229,7 +293,7 @@ async function openQueueList(phaseKey: 'review' | 'new') {
   queueListLoading.value = true
   queueListItems.value = []
   try {
-    const res = await getStudySessionQueue({ phase: phaseKey })
+    const res = await getStudySessionQueue({ phase: phaseKey, ...(sourceType.value ? { sourceType: sourceType.value } : {}) })
     queueListItems.value = res.data?.data || []
   } catch {
     MessagePlugin.error(t('study.loadFailed'))
@@ -244,12 +308,57 @@ async function openCompletedList() {
   queueListLoading.value = true
   queueListItems.value = []
   try {
-    const res = await getTodayCompleted()
+    const res = await getTodayCompleted(sourceType.value ? { sourceType: sourceType.value } : undefined)
     queueListItems.value = res.data?.data || []
   } catch {
     MessagePlugin.error(t('study.loadFailed'))
   } finally {
     queueListLoading.value = false
+  }
+}
+
+function openEditCurrent() {
+  if (!currentWord.value) return
+  editForm.value = {
+    wordProto: currentWord.value.wordProto || '',
+    partSpeechMean: currentWord.value.partSpeechMean || ''
+  }
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  if (!editForm.value.wordProto.trim()) {
+    MessagePlugin.warning(t('study.wordRequired'))
+    return
+  }
+  saving.value = true
+  try {
+    await updateStudyWord(currentWord.value.wordId, {
+      wordProto: editForm.value.wordProto.trim(),
+      partSpeechMean: editForm.value.partSpeechMean.trim() || undefined,
+    })
+    MessagePlugin.success(t('study.editSuccess'))
+    editVisible.value = false
+    // 重新加载会话以获取下一个词
+    await loadSession()
+  } catch (e: any) {
+    MessagePlugin.error(e?.response?.data?.msg || e?.message || t('study.editFailed'))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function deleteCurrent() {
+  deleting.value = true
+  try {
+    await deleteStudyWord(currentWord.value.wordId)
+    MessagePlugin.success(t('study.deleteSuccess'))
+    editVisible.value = false
+    await loadSession()
+  } catch (e: any) {
+    MessagePlugin.error(e?.response?.data?.msg || e?.message || t('study.deleteFailed'))
+  } finally {
+    deleting.value = false
   }
 }
 </script>
@@ -261,81 +370,11 @@ async function openCompletedList() {
   color: var(--brand-ink);
 }
 
-.page-header {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px 10px 6px;
-  background: color-mix(in srgb, var(--brand-white) 72%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--brand-lizard) 40%, transparent);
-  backdrop-filter: blur(8px);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: min(42%, 160px);
-  flex: 0 1 auto;
-  z-index: 1;
-}
-
-.header-left :deep(.t-button) {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-
-.header-left :deep(.t-icon) {
-  font-size: 18px;
-}
-
-.header-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.header-brand {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--brand-ink, #315c34);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
 .header-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  justify-content: flex-end;
-  margin-left: auto;
-  flex: 0 0 auto;
   max-width: 42%;
-  z-index: 1;
 }
 
-.page-header h1 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--brand-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.back-btn :deep(.t-icon),
-.nav-link {
+.back-btn :deep(.t-icon) {
   color: var(--brand-ink) !important;
 }
 
@@ -560,5 +599,53 @@ async function openCompletedList() {
     height: 46px;
     font-size: 15px;
   }
+}
+
+/* 编辑当前单词 */
+.edit-empty {
+  text-align: center;
+  padding: 24px 0;
+  color: #888;
+}
+
+.edit-form {
+  padding: 4px 0;
+}
+
+.edit-notebook {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--brand-lizard) 10%, #fff);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand-ink);
+}
+
+.edit-notebook :deep(.t-icon) {
+  font-size: 15px;
+  opacity: 0.7;
+}
+
+.form-item {
+  margin-bottom: 12px;
+}
+
+.form-item label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b6b6b;
+  margin-bottom: 4px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

@@ -57,6 +57,7 @@ public class WordServiceImpl implements WordService {
                 .partSpeechMean(WordPosParser.canonicalize(req.getPartSpeechMean()))
                 .sentenceExample(req.getSentenceExample())
                 .rootAffix(req.getRootAffix())
+                .remark(req.getRemark())
                 .entryType("word")
                 .isPublic(0)
                 .status(WordStudyStatus.UN_STUDY.getCode())
@@ -140,6 +141,7 @@ public class WordServiceImpl implements WordService {
         word.setPartSpeechMean(WordPosParser.canonicalize(req.getPartSpeechMean()));
         word.setSentenceExample(req.getSentenceExample());
         word.setRootAffix(req.getRootAffix());
+        word.setRemark(req.getRemark());
         wordMapper.update(word);
     }
 
@@ -186,6 +188,7 @@ public class WordServiceImpl implements WordService {
                 .partSpeechMean(word.getPartSpeechMean())
                 .sentenceExample(word.getSentenceExample())
                 .rootAffix(word.getRootAffix())
+                .remark(word.getRemark())
                 .entryType(word.getEntryType())
                 .learnStatus(word.getStatus() != null ? word.getStatus() : WordStudyStatus.UN_STUDY.getCode())
                 .statusData(word.getStatusData())

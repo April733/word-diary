@@ -52,6 +52,9 @@ public class WdWord {
     /** 定位信息 */
     private String sourceLocation;
 
+    /** 用户备注 */
+    private String remark;
+
     /** 是否公开 1公开 0私有 */
     private Integer isPublic;
 

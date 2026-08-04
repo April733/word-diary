@@ -448,6 +448,7 @@
     </t-dialog>
 
     <ReaderCollectDrawer
+      v-if="!wordbookDrawerVisible"
       v-model:visible="showCollectDrawer"
       :book-id="bookId"
       :current-entries="currentCollectEntries"
@@ -458,6 +459,10 @@
       :target-notebook-id="collectTargetNotebookId"
       @open-link-dialog="showNotebookLinkDialog = true"
       @select-notebook="onDrawerSelectNotebook"
+    />
+    <WordbookDrawer
+      v-model:visible="wordbookDrawerVisible"
+      :notebook-id="wordbookDrawerNotebookId"
     />
     <ReaderNotebookLinkDialog
       v-model:visible="showNotebookLinkDialog"
@@ -486,6 +491,7 @@ import {
   getBookNotebookLinks
 } from '../api'
 import ReaderCollectDrawer from '../components/ReaderCollectDrawer.vue'
+import WordbookDrawer from '../components/WordbookDrawer.vue'
 import ReaderNotebookLinkDialog from '../components/ReaderNotebookLinkDialog.vue'
 import ReaderGuideTour, { type GuideStep } from '../components/ReaderGuideTour.vue'
 import {
@@ -660,7 +666,16 @@ const selectedContext = ref('')
 /** 双击选中的目标词：按片段下标（同一词多次出现互不影响） */
 const targetWordIndexes = ref<number[]>([])
 
-const contextSegments = computed(() => tokenizeContextSegments(selectedContext.value || ''))
+const contextSegments = ref<ReturnType<typeof tokenizeContextSegments>>([])
+let contextSegmentsTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(selectedContext, (newText) => {
+  // 防抖：延迟 150ms 再计算分词，避免频繁触发
+  if (contextSegmentsTimer) clearTimeout(contextSegmentsTimer)
+  contextSegmentsTimer = setTimeout(() => {
+    contextSegments.value = tokenizeContextSegments(newText || '')
+  }, 150)
+}, { immediate: true })
 
 /** 发给后端的去重词形（保留首次点击时的写法） */
 const targetWords = computed(() => {
@@ -802,6 +817,8 @@ const lastErrorDetail = ref('')
 // 阅读收录
 const showCollectDrawer = ref(false)
 const showNotebookLinkDialog = ref(false)
+const wordbookDrawerVisible = ref(false)
+const wordbookDrawerNotebookId = ref<number | undefined>()
 const linkedNotebooks = ref<{ notebookId: number; notebookName: string }[]>([])
 const currentCollectEntries = ref<CollectEntry[]>([])
 const collectSourceSnippet = ref('')
@@ -866,14 +883,11 @@ function openOperationGuide() {
   }
 }
 
-/** 顶栏：点当前单词本 → 查看该本词表 */
+/** 顶栏：点当前单词本 → 查看该本词表（用通用 WordbookDrawer） */
 function openNotebookWords(notebookId: number) {
-  currentCollectEntries.value = []
-  collectSourceSnippet.value = ''
-  collectSourceLocation.value = ''
-  collectTargetNotebookId.value = notebookId
-  collectDrawerPreferredMode.value = 'notebook'
-  showCollectDrawer.value = true
+  showCollectDrawer.value = false
+  wordbookDrawerNotebookId.value = notebookId
+  wordbookDrawerVisible.value = true
 }
 
 /** 仅单词 / 固定搭配（短语）可加入单词本 */
@@ -1540,15 +1554,7 @@ const messagesHasMore = ref(false)
 const contextCollapsed = ref(false)
 
 function goBack() {
-  console.log('[Reader] goBack 被调用, 当前路径:', route.path)
-  // 使用 router 导航到书架，避免原生 history.back() 与 vue-router 不同步
-  router.push('/bookshelf').then(() => {
-    console.log('[Reader] 已导航到书架:', router.currentRoute.value.path)
-  }).catch((err) => {
-    console.error('[Reader] 导航到书架失败:', err)
-    // 兜底：强制跳转
-    window.location.href = '/bookshelf'
-  })
+  router.back()
 }
 
 /** 从后端获取当前书籍全部笔记，并在 EPUB 中渲染高亮 */
@@ -1749,8 +1755,32 @@ function onPdfReady(pages: number) {
   maybeShowPdfSelectTip()
 }
 
+function parsePdfPageFromTocLabel(label: string): number | null {
+  const text = (label || '').trim()
+  let m = text.match(/^第\s*(\d+)\s*页$/)
+  if (m) {
+    const n = parseInt(m[1], 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  m = text.match(/^page\s*(\d+)$/i)
+  if (m) {
+    const n = parseInt(m[1], 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  m = text.match(/^(\d{1,5})$/)
+  if (m) {
+    const n = parseInt(m[1], 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  return null
+}
+
 function onPdfToc(items: Array<{ label: string; href: string; level: number }>) {
-  toc.value = items as any
+  toc.value = items.map((item) => {
+    const pageFromLabel = parsePdfPageFromTocLabel(item.label)
+    if (!pageFromLabel) return item
+    return { ...item, href: String(pageFromLabel) }
+  }) as any
   console.log('[Reader] PDF 目录加载完成, 共', items.length, '条')
 }
 
