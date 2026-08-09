@@ -6,12 +6,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import spring.nexusfuture.word_diary.common.AiFeatureKeys;
+import spring.nexusfuture.word_diary.common.AiFeaturePromptEnum;
 import spring.nexusfuture.word_diary.dto.response.AiFeaturePreferenceVO;
 import spring.nexusfuture.word_diary.entity.WdUserAiPreference;
 import spring.nexusfuture.word_diary.mapper.WdUserAiPreferenceMapper;
 import spring.nexusfuture.word_diary.service.AiFeatureService;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -19,6 +22,16 @@ public class AiFeatureServiceImpl implements AiFeatureService {
 
     private final WdUserAiPreferenceMapper preferenceMapper;
     private final ObjectMapper objectMapper;
+
+    @Override
+    public List<AiFeaturePreferenceVO.FeatureCatalogItem> getCatalog() {
+        return Arrays.stream(AiFeaturePromptEnum.values())
+                .map(e -> AiFeaturePreferenceVO.FeatureCatalogItem.builder()
+                        .key(e.getKey())
+                        .label(e.getLabel())
+                        .build())
+                .collect(Collectors.toList());
+    }
 
     @Override
     public AiFeaturePreferenceVO getPreferences(Long userId, String locale) {
@@ -43,6 +56,7 @@ public class AiFeatureServiceImpl implements AiFeatureService {
 
         AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(preferredKeys, featureOrder);
         return AiFeaturePreferenceVO.builder()
+                .catalog(getCatalog())
                 .preferredKeys(normalized.preferredKeys())
                 .featureOrder(normalized.featureOrder())
                 .build();

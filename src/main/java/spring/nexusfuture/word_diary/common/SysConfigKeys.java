@@ -55,6 +55,18 @@ public final class SysConfigKeys {
     /** 跟读：AI 问答（台词单词讲解） */
     public static final String AI_SCENE_SHADOWING_CHAT = "shadowing_chat";
 
+    /** 跟读：AI 多选功能解析（与阅读 feature 对齐） */
+    public static final String AI_SCENE_SHADOWING_ANALYZE = "shadowing_analyze";
+
+    /** 口语练习：与 AI 语音对话（Chat，DeepSeek） */
+    public static final String AI_SCENE_ORAL_CHAT = "oral_chat";
+
+    /** 口语练习：用户录音转文字（ASR，非 Chat；须绑定阿里云 Qwen-Audio-3.0-ASR-Flash） */
+    public static final String AI_SCENE_ORAL_ASR = "oral_asr";
+
+    /** 口语练习：AI 回复合成语音（TTS，非 Chat；须绑定阿里云 cosyvoice-v3-flash） */
+    public static final String AI_SCENE_ORAL_TTS = "oral_tts";
+
     /** 未匹配场景时的回退 */
     public static final String AI_SCENE_DEFAULT = "default";
 

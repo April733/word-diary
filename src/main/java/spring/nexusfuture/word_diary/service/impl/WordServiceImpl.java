@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.WordPosParser;
-import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.common.WordStudyStatusEnum;
 import spring.nexusfuture.word_diary.dto.response.AiParseResult;
 import spring.nexusfuture.word_diary.dto.request.WordAddReq;
 import spring.nexusfuture.word_diary.dto.response.WordVO;
@@ -60,7 +60,7 @@ public class WordServiceImpl implements WordService {
                 .remark(req.getRemark())
                 .entryType("word")
                 .isPublic(0)
-                .status(WordStudyStatus.UN_STUDY.getCode())
+                .status(WordStudyStatusEnum.UN_STUDY.getCode())
                 .statusData(java.time.LocalDateTime.now())
                 .build();
         wordMapper.insert(word);
@@ -115,7 +115,7 @@ public class WordServiceImpl implements WordService {
                         .rootAffix(r.getRootAffix())
                         .entryType("word")
                         .isPublic(0)
-                        .status(WordStudyStatus.UN_STUDY.getCode())
+                        .status(WordStudyStatusEnum.UN_STUDY.getCode())
                         .statusData(java.time.LocalDateTime.now())
                         .build();
                 wordMapper.insert(word);
@@ -190,7 +190,7 @@ public class WordServiceImpl implements WordService {
                 .rootAffix(word.getRootAffix())
                 .remark(word.getRemark())
                 .entryType(word.getEntryType())
-                .learnStatus(word.getStatus() != null ? word.getStatus() : WordStudyStatus.UN_STUDY.getCode())
+                .learnStatus(word.getStatus() != null ? word.getStatus() : WordStudyStatusEnum.UN_STUDY.getCode())
                 .statusData(word.getStatusData())
                 .build();
     }

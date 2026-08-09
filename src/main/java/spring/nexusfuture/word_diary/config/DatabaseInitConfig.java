@@ -76,6 +76,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
             migrateWordFeaturePromptV3(conn, stmt);
             migrateGrammarSentencePatternSplit(conn, stmt);
             migrateFeatureKeyBasedJsonContract(conn, stmt);
+            migrateShadowingAnalyzeScenePrompt(conn);
             migrateWordFeaturePosMeaningContract(conn, stmt);
             migrateSplitAiModelAndScene(conn, stmt);
             ensureAiProviderTable(conn, stmt);
@@ -107,6 +108,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
                 log.debug("清理文章专练表跳过: {}", e.getMessage());
             }
             ensureShadowingClipTable(conn, stmt);
+            ensureOralTables(conn, stmt);
             ensureSentencePatternTable(conn, stmt);
             ensureUserSentencePatternStatTable(conn, stmt);
             ensureSentencePatternGuessTable(conn, stmt);
@@ -162,6 +164,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
 
             seedWordFeatureI18nIfMissing(conn);
             seedParaformerBilling(conn);
+            migrateOralAsrModelBinding(conn);
         } catch (Exception e) {
             log.warn("数据库字段初始化警告: {}", e.getMessage());
         }
@@ -206,6 +209,7 @@ public class DatabaseInitConfig implements ApplicationRunner {
             migrateAiSceneRegion(conn, stmt);
             migrateAiSceneCallParams(stmt);
             seedAiScenes(stmt);
+            migrateOralAsrModelBinding(conn);
         } catch (Exception e) {
             log.warn("sys_ai_scene.region 初始化警告: {}", e.getMessage());
         }
@@ -300,6 +304,37 @@ public class DatabaseInitConfig implements ApplicationRunner {
         }
     }
 
+    /** 口语 ASR 默认改为 qwen-audio-3.0-asr-flash（兼容历史 qwen3/paraformer 绑定）。 */
+    private void migrateOralAsrModelBinding(Connection conn) {
+        try (var psModel = conn.prepareStatement("""
+                INSERT IGNORE INTO sys_ai_model
+                (model_key, display_name, provider, billing_unit, currency,
+                 input_price_per_million, output_price_per_million, sort_num, is_enabled, remark)
+                VALUES
+                ('qwen-audio-3.0-asr-flash', 'Qwen-Audio-3.0-ASR-Flash（语音识别）', 'aliyun', 'second', 'CNY',
+                 0.00004, 0, 11, 1, '口语练习 ASR；短音频同步转写')
+                """);
+             var psScene = conn.prepareStatement("""
+                UPDATE sys_ai_scene
+                SET model_key = 'qwen-audio-3.0-asr-flash',
+                    remark = CASE
+                        WHEN remark IS NULL OR remark = '' THEN '口语录音 ASR，须绑定阿里云 Qwen-Audio-3.0-ASR-Flash'
+                        ELSE remark
+                    END,
+                    update_time = NOW()
+                WHERE scene_key = 'oral_asr' AND is_deleted = 0
+                  AND model_key IN ('qwen3-asr-flash', 'paraformer-v2')
+                """)) {
+            psModel.executeUpdate();
+            int n = psScene.executeUpdate();
+            if (n > 0) {
+                log.info("数据库迁移完成: oral_asr 绑定更新为 qwen-audio-3.0-asr-flash，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 oral_asr 默认模型失败: {}", e.getMessage());
+        }
+    }
+
     /**
      * sys_ai_scene 增加 region（cn/global），唯一键改为 (scene_key, region)，并为已有场景补 global 行。
      * 用「直接 ALTER + 忽略重复」避免 DatabaseMetaData 误判导致跳过。
@@ -379,6 +414,16 @@ public class DatabaseInitConfig implements ApplicationRunner {
                      '跟读 ASR；input 价=元/秒（有效语音）')
                     """);
             stmt.executeUpdate("""
+                    INSERT IGNORE INTO sys_ai_model
+                    (model_key, display_name, provider, billing_unit, currency,
+                     input_price_per_million, output_price_per_million, sort_num, is_enabled, remark)
+                    VALUES
+                    ('qwen-audio-3.0-asr-flash', 'Qwen-Audio-3.0-ASR-Flash（语音识别）', 'aliyun', 'second', 'CNY', 0.00004, 0, 11, 1,
+                     '口语练习 ASR；短音频同步转写'),
+                    ('cosyvoice-v3-flash', 'CosyVoice V3 Flash（语音合成）', 'aliyun', 'character', 'CNY', 0.7, 0, 12, 1,
+                     '口语练习 TTS；input 价=元/千字符')
+                    """);
+            stmt.executeUpdate("""
                     INSERT IGNORE INTO sys_ai_scene
                     (scene_key, scene_name, region, model_key, sort_num, is_enabled, remark)
                     VALUES
@@ -398,6 +443,16 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     ('translation_chat', '翻译练习答疑', 'global', 'deepseek-v4-flash', 7, 1, '海外线路'),
                     ('shadowing_asr', '跟读台词转写', 'cn', 'paraformer-v2', 8, 1, '跟读音频 ASR，须绑定阿里云 Paraformer'),
                     ('shadowing_asr', '跟读台词转写', 'global', 'paraformer-v2', 8, 1, '海外线路，可改为同供应商其它 ASR 模型'),
+                    ('shadowing_chat', '跟读 AI 问答', 'cn', 'deepseek-v4-flash', 9, 1, '跟读 AI 台词单词讲解'),
+                    ('shadowing_chat', '跟读 AI 问答', 'global', 'deepseek-v4-flash', 9, 1, '海外线路'),
+                    ('shadowing_analyze', '跟读 AI 解析', 'cn', 'deepseek-v4-flash', 10, 1, '跟读勾选单词/释义等功能'),
+                    ('shadowing_analyze', '跟读 AI 解析', 'global', 'deepseek-v4-flash', 10, 1, '海外线路'),
+                    ('oral_chat', '口语练习对话', 'cn', 'deepseek-v4-flash', 11, 1, '口语语音对话 LLM，口语风格回复'),
+                    ('oral_chat', '口语练习对话', 'global', 'deepseek-v4-flash', 11, 1, '海外线路'),
+                    ('oral_asr', '口语练习转写', 'cn', 'qwen-audio-3.0-asr-flash', 12, 1, '口语录音 ASR，须绑定阿里云 Qwen-Audio-3.0-ASR-Flash'),
+                    ('oral_asr', '口语练习转写', 'global', 'qwen-audio-3.0-asr-flash', 12, 1, '海外线路，可改为同供应商其它 ASR 模型'),
+                    ('oral_tts', '口语练习合成', 'cn', 'cosyvoice-v3-flash', 13, 1, '口语回复 TTS，须绑定阿里云 CosyVoice'),
+                    ('oral_tts', '口语练习合成', 'global', 'cosyvoice-v3-flash', 13, 1, '海外线路，可改为同供应商其它 TTS 模型'),
                     ('default', '未匹配场景回退', 'cn', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退'),
                     ('default', '未匹配场景回退', 'global', 'deepseek-v4-flash', 99, 1, '未知 scene 时回退')
                     """);
@@ -939,7 +994,28 @@ public class DatabaseInitConfig implements ApplicationRunner {
 未勾选的键不要写。
 文本类功能：值为字符串。
 词条类功能（word / collocation / root_affix / example）：值为数组，元素含 word、meaning。',
-                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON', 1, 3)
+                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON', 1, 3),
+                ('shadowing_chat', 'zh-CN', '跟读对话',
+                '{global_constraint}
+                你是 Aiko，英语听读学习助手。用户正在听英文音频，以下为音频台词上下文。
+                请围绕台词中出现的单词和表达，用{language}进行讲解。
+
+                【音频台词上下文】
+                {context}',
+                '占位符 {global_constraint}/{language}/{locale}/{context}', 1, 4),
+                ('shadowing_analyze', 'zh-CN', '跟读功能解析',
+                '{global_constraint}
+你是英语听读解析助手。用户正在听英文音频并选中了若干台词。
+{feature_prompts}
+用户选中台词："{context}"
+若有目标词：{target_words}
+
+【输出】只返回一个 JSON 对象，不要 Markdown。
+顶层键必须与上方勾选功能的 feature_key 完全一致（如 meaning / word / collocation / grammar / sentence_pattern / phonetic）。
+未勾选的键不要写。
+文本类功能：值为字符串。
+词条类功能（word / collocation / root_affix / example）：值为数组，元素含 word、meaning。',
+                '占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON', 1, 5)
                 """);
         log.info("数据库种子初始化完成: sys_ai_scene_prompt 默认场景提示词已写入");
     }
@@ -1308,6 +1384,50 @@ public class DatabaseInitConfig implements ApplicationRunner {
     }
 
     /**
+     * 为已部署的数据库补写 shadowing_analyze 场景壳（幂等：已含 {feature_prompts} 则跳过）。
+     */
+    private void migrateShadowingAnalyzeScenePrompt(Connection conn) {
+        try {
+            var tables = conn.getMetaData().getTables(null, null, "sys_ai_scene_prompt", new String[]{"TABLE"});
+            if (!tables.next()) {
+                tables.close();
+                return;
+            }
+            tables.close();
+
+            String prompt = """
+                    {global_constraint}
+                    你是英语听读解析助手。用户正在听英文音频并选中了若干台词。
+                    {feature_prompts}
+                    用户选中台词："{context}"
+                    若有目标词：{target_words}
+
+                    【输出】只返回一个 JSON 对象，不要 Markdown。
+                    顶层键必须与上方勾选功能的 feature_key 完全一致（如 meaning / word / collocation / grammar / sentence_pattern / phonetic）。
+                    未勾选的键不要写。
+                    文本类功能：值为字符串。
+                    词条类功能（word / collocation / root_affix / example）：值为数组，元素含 word、meaning。""";
+
+            try (var ps = conn.prepareStatement(
+                    "INSERT IGNORE INTO sys_ai_scene_prompt "
+                    + "(scene_key, locale, scene_name, system_prompt, remark, status, sort_num) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                ps.setString(1, "shadowing_analyze");
+                ps.setString(2, "zh-CN");
+                ps.setString(3, "跟读功能解析");
+                ps.setString(4, prompt);
+                ps.setString(5, "占位符 {global_constraint}/{language}/{feature_prompts}/{context}/{target_words}；按 feature_key 分包 JSON");
+                ps.setInt(6, 1);
+                ps.setInt(7, 5);
+                int n = ps.executeUpdate();
+                if (n > 0) log.info("数据库迁移完成: shadowing_analyze 场景壳已写入，共 {} 行", n);
+            }
+        } catch (Exception e) {
+            log.warn("迁移 shadowing_analyze 场景壳失败: {}", e.getMessage());
+        }
+    }
+
+    /**
      * 阅读「单词」功能：收紧 meaning 与 WordPosParser 一致（n. 释义；v. 释义）。
      * 幂等：已含【词性释义格式】则跳过。
      */
@@ -1588,6 +1708,119 @@ public class DatabaseInitConfig implements ApplicationRunner {
         log.info("数据库表初始化完成: wd_shadowing_clip");
     }
 
+    /** 确保口语练习表存在：wd_oral_session（会话主表）+ wd_oral_message（带音频的对话消息） */
+    private void ensureOralTables(Connection conn, Statement stmt) throws Exception {
+        var tables = conn.getMetaData().getTables(null, null, "wd_oral_session", new String[]{"TABLE"});
+        boolean sessionExists = tables.next();
+        tables.close();
+        if (!sessionExists) {
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `wd_oral_session` (
+                      `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                      `user_id` bigint NOT NULL COMMENT '用户ID',
+                      `title` varchar(160) NOT NULL DEFAULT '' COMMENT '口语主题',
+                      `source_words_json` mediumtext COMMENT '练习词JSON快照',
+                      `direction` varchar(16) NOT NULL DEFAULT 'oral' COMMENT '预留方向',
+                      `status` varchar(16) NOT NULL DEFAULT 'active' COMMENT 'active|ended',
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      `is_deleted` tinyint NOT NULL DEFAULT 0,
+                      PRIMARY KEY (`id`),
+                      KEY `idx_user_update` (`user_id`, `update_time`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='口语练习会话'
+                    """);
+            log.info("数据库表初始化完成: wd_oral_session");
+        }
+        var msgTables = conn.getMetaData().getTables(null, null, "wd_oral_message", new String[]{"TABLE"});
+        boolean msgExists = msgTables.next();
+        msgTables.close();
+        if (!msgExists) {
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS `wd_oral_message` (
+                      `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+                      `oral_session_id` bigint NOT NULL COMMENT '口语会话ID',
+                      `user_id` bigint NOT NULL COMMENT '用户ID',
+                      `role` varchar(16) NOT NULL COMMENT 'user|assistant',
+                      `content` mediumtext COMMENT '文字内容（user=ASR转写，assistant=LLM回复）',
+                      `audio_url` varchar(1024) DEFAULT NULL COMMENT '音频COS地址（user录音/assistant TTS）',
+                      `duration_ms` int NOT NULL DEFAULT 0 COMMENT '音频时长毫秒',
+                      `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY (`id`),
+                      KEY `idx_session_time` (`oral_session_id`, `create_time`),
+                      KEY `idx_user_session` (`user_id`, `oral_session_id`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='口语对话消息'
+                    """);
+            log.info("数据库表初始化完成: wd_oral_message");
+        }
+        seedOralScenePromptIfMissing(conn);
+        forceUpdateOralScenePrompt(conn);
+    }
+
+    /** 口语对话场景提示词（sys_ai_scene_prompt: oral_chat），幂等写入。 */
+    private void seedOralScenePromptIfMissing(Connection conn) {
+        try (var ps = conn.prepareStatement(
+                "SELECT COUNT(*) FROM sys_ai_scene_prompt WHERE scene_key = 'oral_chat' AND is_deleted = 0")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getInt(1) > 0) {
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("检查 oral_chat 场景提示词失败: {}", e.getMessage());
+            return;
+        }
+        String oralChatPrompt = """
+                [Important Global Rule] Always respond to the user in English only. Never output Chinese or any other language. All dialogue must be natural spoken English.
+                You are the user's English oral conversation partner. The user is practicing spoken English; please engage in natural, idiomatic spoken English dialogue with them.
+
+                Conversation rules:
+                1. Respond in colloquial, natural spoken English, using short sentences and spoken expressions (e.g., well, you know, I mean, actually).
+                2. Keep each reply brief (1-3 sentences), like a real chat — avoid long essays or written language.
+                3. Guide the topic deeper when appropriate; ask open-ended questions to encourage the user to speak more.
+                4. Naturally incorporate the target vocabulary without forcing or stacking them.
+                5. When the user makes serious errors, gently model the correct way, but prioritize conversation fluency over correction — do not grade every sentence.
+                6. Strictly prohibit any Markdown symbols (e.g., **, -, #, `, ~, >); output only plain text.
+                7. Output only the conversation itself — no explanations, rules, or comments.
+                """;
+        try (var ps = conn.prepareStatement(
+                "INSERT INTO sys_ai_scene_prompt (scene_key, locale, scene_name, system_prompt, remark, status, sort_num) "
+                        + "VALUES ('oral_chat', 'zh-CN', '口语对话', ?, '口语练习对话场景；占位符 {global_constraint}', 1, 9)")) {
+            ps.setString(1, oralChatPrompt);
+            ps.executeUpdate();
+            log.info("数据库种子初始化完成: sys_ai_scene_prompt 默认场景提示词已写入 oral_chat");
+        } catch (Exception e) {
+            log.warn("写入 oral_chat 场景提示词失败: {}", e.getMessage());
+        }
+    }
+
+    /** 强制更新 oral_chat 提示词为英文版（覆盖旧的中文版本） */
+    private void forceUpdateOralScenePrompt(Connection conn) {
+        String oralChatPrompt = """
+                [Important Global Rule] Always respond to the user in English only. Never output Chinese or any other language. All dialogue must be natural spoken English.
+                You are the user's English oral conversation partner. The user is practicing spoken English; please engage in natural, idiomatic spoken English dialogue with them.
+
+                Conversation rules:
+                1. Respond in colloquial, natural spoken English, using short sentences and spoken expressions (e.g., well, you know, I mean, actually).
+                2. Keep each reply brief (1-3 sentences), like a real chat — avoid long essays or written language.
+                3. Guide the topic deeper when appropriate; ask open-ended questions to encourage the user to speak more.
+                4. Naturally incorporate the target vocabulary without forcing or stacking them.
+                5. When the user makes serious errors, gently model the correct way, but prioritize conversation fluency over correction — do not grade every sentence.
+                6. Strictly prohibit any Markdown symbols (e.g., **, -, #, `, ~, >); output only plain text.
+                7. Output only the conversation itself — no explanations, rules, or comments.
+                """;
+        try (var ps = conn.prepareStatement(
+                "UPDATE sys_ai_scene_prompt SET system_prompt = ?, remark = '口语练习对话场景（强制英文输出）' "
+                        + "WHERE scene_key = 'oral_chat' AND is_deleted = 0")) {
+            ps.setString(1, oralChatPrompt);
+            int n = ps.executeUpdate();
+            if (n > 0) {
+                log.info("数据库种子初始化完成: oral_chat 提示词已更新为英文版 ({} 行)", n);
+            }
+        } catch (Exception e) {
+            log.warn("更新 oral_chat 场景提示词失败: {}", e.getMessage());
+        }
+    }
+
     /** 确保 sys_sentence_pattern 表存在 */
     private void ensureSentencePatternTable(Connection conn, Statement stmt) {
         try {
@@ -1857,8 +2090,8 @@ public class DatabaseInitConfig implements ApplicationRunner {
                     {global_constraint}
                     你是翻译出题助手。根据给定词汇和翻译方向，避免生僻词，出一道翻译练习题。
                     {proficiency_block}
-                    只返回一行/一小段：
-                    题目：<题目内容>
+                    严格输出格式：只返回一行以"题目："开头的句子，不要输出任何其他内容（包括解释、规则、说明等）。
+                    语言规则：promptText 必须仅为方向的源语言。referenceAnswer 必须仅为方向的目标语言。theme 可用{language}。
                     """;
             String gradePrompt = """
                     {global_constraint}

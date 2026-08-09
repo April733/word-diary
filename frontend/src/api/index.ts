@@ -155,6 +155,9 @@ export const getRandomQuote = () => api.get('/quotes/random')
 export default api
 
 // ========== 阅读器 ==========
+/** 获取 AI 功能目录（key + 标签名，来自 AiFeaturePromptEnum） */
+export const getAiFeatureCatalog = () =>
+  api.get('/books/ai-features/catalog')
 export const getAiFeaturePreferences = (locale?: string) =>
   api.get('/books/ai-features/preferences', { params: { locale: locale || 'zh-CN' } })
 export const saveAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
@@ -484,6 +487,37 @@ export const gradeTranslationPracticeStream = (id: number) =>
 export const listTranslationGrades = (id: number) => api.get(`/translation/${id}/grades`)
 export const listTranslationGradeChatMessages = (practiceId: number, gradeId: number) =>
   api.get(`/translation/${practiceId}/grades/${gradeId}/chat-messages`)
+
+// Oral speaking practice (voice conversation with AI)
+export const getOralPool = (poolMode: 'learned' | 'mastered' = 'learned') =>
+  api.get('/oral/pool', { params: { poolMode } })
+export const listOralSessions = () => api.get('/oral')
+export const createOralSession = (data: {
+  title: string
+  poolMode?: 'learned' | 'mastered'
+  pickMode?: 'random' | 'manual'
+  wordCount?: number
+  wordIds?: number[]
+}) => api.post('/oral', data)
+export const getOralSession = (id: number) => api.get(`/oral/${id}`)
+export const deleteOralSession = (id: number) => api.delete(`/oral/${id}`)
+export const resetOralSession = (id: number) => api.delete(`/oral/${id}/messages`)
+export const openOralSession = (id: number) =>
+  api.post(`/oral/${id}/open`, null, { timeout: 180000 })
+
+/** 上传录音文件，返回 COS 地址 */
+export const uploadOralAudio = (file: Blob) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/oral/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  })
+}
+
+/** 语音对话回复（同步 JSON） */
+export const replyOralStream = (id: number, audioUrl: string, durationMs?: number) =>
+  api.post(`/oral/${id}/reply`, { audioUrl, durationMs }, { timeout: 180000 })
 
 // Spelling practice (wrong pos-stat words → write English from meaning; SRS like daily study)
 export const getSpellingSession = () => api.get('/spelling/session')

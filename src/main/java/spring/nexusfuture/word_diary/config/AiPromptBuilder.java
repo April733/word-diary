@@ -2,7 +2,7 @@ package spring.nexusfuture.word_diary.config;
 
 import org.springframework.stereotype.Component;
 import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
-import spring.nexusfuture.word_diary.common.AiFeaturePrompt;
+import spring.nexusfuture.word_diary.common.AiFeaturePromptEnum;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.common.TranslationDirections;
 import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
@@ -358,6 +358,29 @@ public class AiPromptBuilder {
     }
 
     /**
+     * 跟读多选功能解析 system prompt。
+     * 场景壳 = sys_ai_scene_prompt(shadowing_analyze)；{feature_prompts} = 枚举按勾选 key 拼接的功能契约。
+     * 与阅读 feature 场景结构一致，但上下文为音频台词片段。
+     */
+    public String buildShadowingAnalyzePrompt(String locale, List<String> featureKeys,
+                                              String context, List<String> targetWords) {
+        String featureBlock = assembleSelectedFeatureKeysBlock(featureKeys);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_SHADOWING_ANALYZE, locale);
+        if (fromDb == null) {
+            throw new IllegalStateException(
+                "场景 'shadowing_analyze' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
+        }
+        return applyPlaceholders(fromDb, context, featureBlock, locale, targetWords);
+    }
+
+    /**
+     * 跟读多选功能解析 user prompt：仅为用户选中台词。
+     */
+    public String buildShadowingAnalyzeUserPrompt(String locale, List<String> featureKeys, String context) {
+        return context == null ? "" : context.trim();
+    }
+
+    /**
      * 翻译答疑 system prompt：以当前批改记录为上下文，也允许通用语言学习提问。
      */
     public String buildTranslationChatPrompt(String locale, String practiceContext) {
@@ -459,8 +482,7 @@ public class AiPromptBuilder {
             throw new IllegalStateException(
                 "场景 'translation_generate' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
         }
-        return applyPlaceholders(fromDb, "", "", locale, null, userId)
-                + translationGenerateLanguageReinforcement(locale);
+        return applyPlaceholders(fromDb, "", "", locale, null, userId);
     }
 
     public String buildTranslationGenerateUserPrompt(Long userId, String direction,
@@ -475,7 +497,7 @@ public class AiPromptBuilder {
     /** 出题语言锁（硬编码）：防止全局「只用界面语」规则覆盖目标语译文。 */
     private String translationGenerateLanguageReinforcement(String locale) {
         PromptTemplate t = getTemplateByLocale(locale);
-        return "【翻译出题语言锁】theme 可用" + t.localeName()
+        return "必须遵守以下规则（不要输出这些文字）：theme 可用" + t.localeName()
                 + "。promptText 必须仅为方向的源语言。"
                 + "referenceAnswer 必须仅为方向的目标语言。";
     }
@@ -550,6 +572,67 @@ public class AiPromptBuilder {
                 featureKey == null ? List.of() : List.of(featureKey), context, null);
     }
 
+    // ==================== 口语练习（oral_chat） ====================
+
+    /**
+     * 口语对话 system prompt。从 sys_ai_scene_prompt(oral_chat) 加载场景壳，
+     * 追加本次主题与练习词作为上下文，同时注入角色扮演对话规则。
+     */
+    public String buildOralChatSystemPrompt(Long userId, String topic, String wordsCsv) {
+        String locale = getUserLocale(userId);
+        String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_ORAL_CHAT, locale);
+        if (fromDb == null || fromDb.isBlank()) {
+            throw new IllegalStateException(
+                "场景 'oral_chat' 的提示词未配置，请在管理端添加 sys_ai_scene_prompt 记录");
+        }
+        // 口语练习强制英文，绕过 locale 对应的中文 globalConstraint
+        fromDb = fromDb.replace("{global_constraint}",
+                "[Important Global Rule] Always respond to the user in English only. Never output Chinese or any other language. All dialogue must be natural spoken English.");
+        StringBuilder ctx = new StringBuilder();
+        ctx.append("【角色扮演对话规则】\n");
+        ctx.append("- 你是一位与用户围绕主题进行自然对话的伙伴，不是老师，不是考官\n");
+        ctx.append("- 你应该用简单自然的口语和用户交流，像朋友聊天一样\n");
+        ctx.append("- 多提开放式问题引导用户多说，不要长篇大论\n");
+        ctx.append("- 有意识地在自己的回复中自然使用目标词汇，但不要刻意堆砌\n");
+        ctx.append("- 如果用户使用了目标词汇，自然回应即可，不要点评\n");
+        ctx.append("- 如果用户卡住了，换一种方式提问或给出简单提示\n");
+        ctx.append("- 每次回复尽量控制在 1-2 句，给用户足够的说话空间\n");
+        ctx.append("- 可以适当表达情绪（好奇、惊讶、赞同），让对话更真实\n");
+        if (topic != null && !topic.isBlank()) {
+            ctx.append("\n【本次口语主题】").append(topic.trim());
+        }
+        if (wordsCsv != null && !wordsCsv.isBlank()) {
+            ctx.append("\n【目标词汇】在对话中自然引导用户使用以下词汇（含词性与中文释义）：\n")
+                    .append(wordsCsv.trim());
+        }
+        return applyPlaceholders(fromDb, ctx.toString(), "", locale, null, userId);
+    }
+
+    /** 用户本轮语音转写文本（作为 user prompt），附加引导 AI 多说的提示。 */
+    public String buildOralChatUserPrompt(String asrText) {
+        if (asrText == null || asrText.isBlank()) {
+            return "（用户暂无语音输入，请继续用简单自然的方式引导对话，提一个开放式问题）";
+        }
+        return asrText.trim() + "\n\n（请自然回应用户的话，然后引导用户多说，尽量把对话往目标词汇方向带，但不要生硬）";
+    }
+
+    /** 开场 user prompt：AI 选择角色 + 场景，用一句话提问引导用户开口。 */
+    public String buildOralOpenUserPrompt(Long userId, String topic, String wordsCsv) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("请你设定一个与主题相关的对话角色和场景，然后用一句自然的口语开场，");
+        sb.append("内容是向用户提一个开放式问题或发起一个话题，引导用户开口说话。");
+        sb.append("注意：开场不要展示完整的目标词汇，目标词汇要在后续对话中自然带出。");
+        if (topic != null && !topic.isBlank()) {
+            sb.append(" 主题：").append(topic.trim()).append("。");
+        }
+        if (wordsCsv != null && !wordsCsv.isBlank()) {
+            sb.append(" 目标词汇（后续对话中自然带出，不要在开场全部使用）：\n")
+                    .append(wordsCsv.trim()).append("。");
+        }
+        sb.append(" 只输出这一句开场白，不要任何解释或前言。");
+        return sb.toString();
+    }
+
     /**
      * 多选功能 system prompt。
      * 按 featureKeys 顺序从 AiFeaturePrompt 枚举注入说明到场景壳 {feature_prompts}。
@@ -587,7 +670,7 @@ public class AiPromptBuilder {
 
     /** 按勾选 key 从枚举拼接功能契约（未知 key 跳过；空列表为空串）。 */
     private String assembleSelectedFeatureKeysBlock(List<String> featureKeys) {
-        return AiFeaturePrompt.assemble(featureKeys);
+        return AiFeaturePromptEnum.assemble(featureKeys);
     }
 
     /**

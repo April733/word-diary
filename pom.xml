@@ -107,6 +107,12 @@
 			<artifactId>cos_api</artifactId>
 			<version>5.6.227</version>
 		</dependency>
+		<!-- DashScope Java SDK（ASR/TTS/LLM 统一接入） -->
+		<dependency>
+			<groupId>com.alibaba</groupId>
+			<artifactId>dashscope-sdk-java</artifactId>
+			<version>2.22.4</version>
+		</dependency>
 		<!-- 阿里云号码认证短信服务 -->
 		<dependency>
 			<groupId>com.aliyun</groupId>

@@ -273,4 +273,18 @@ public class CosServiceImpl implements CosService {
             return -1;
         }
     }
+
+    @Override
+    public String getFullUrl(String key) {
+        ensureClient();
+        if (key == null || key.isBlank()) {
+            throw new BizException("文件路径为空");
+        }
+        String fullKey = buildKey(key);
+        URL url = cosClient.getObjectUrl(bucket, fullKey);
+        if (url == null) {
+            throw new BizException("生成完整 URL 失败");
+        }
+        return url.toString();
+    }
 }

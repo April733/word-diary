@@ -139,6 +139,24 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/oral',
+      name: 'Oral',
+      component: () => import('../views/OralListView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/oral/new',
+      name: 'OralNew',
+      component: () => import('../views/OralEditView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/oral/:id',
+      name: 'OralChat',
+      component: () => import('../views/OralChatView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/spelling',
       name: 'Spelling',
       component: () => import('../views/SpellingPracticeView.vue'),

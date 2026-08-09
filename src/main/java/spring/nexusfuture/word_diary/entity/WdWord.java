@@ -62,7 +62,7 @@ public class WdWord {
     private Long userId;
 
     /**
-     * 学习状态（见 {@link spring.nexusfuture.word_diary.common.WordStudyStatus}）：
+     * 学习状态（见 {@link spring.nexusfuture.word_diary.common.WordStudyStatusEnum}）：
      * 0未学 1~5复习阶梯 6熟记
      */
     private Integer status;

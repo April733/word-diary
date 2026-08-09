@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.StudyFeedback;
-import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.common.WordStudyStatusEnum;
 import spring.nexusfuture.word_diary.dto.request.StudyBrowseAnswerReq;
 import spring.nexusfuture.word_diary.dto.response.StudyBrowsePageVO;
 import spring.nexusfuture.word_diary.dto.response.StudyTaskVO;
@@ -67,7 +67,7 @@ public class StudyBrowseServiceImpl implements StudyBrowseService {
                 throw new BizException("单词不存在");
             }
         }
-        WordStudyStatus status = WordStudyStatus.fromCode(word.getStatus());
+        WordStudyStatusEnum status = WordStudyStatusEnum.fromCode(word.getStatus());
         if (!status.isInReviewPipeline() && !status.isMastered()) {
             throw new BizException("该单词不可回顾");
         }

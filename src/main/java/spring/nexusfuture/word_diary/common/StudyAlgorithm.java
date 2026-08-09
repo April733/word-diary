@@ -21,7 +21,7 @@ public final class StudyAlgorithm {
      * @param studyDate 当前学习日（默认每天 7:00 换日）
      */
     public static void applyKnow(WdWord word, LocalDate studyDate) {
-        WordStudyStatus next = WordStudyStatus.fromCode(word.getStatus()).nextOnKnow();
+        WordStudyStatusEnum next = WordStudyStatusEnum.fromCode(word.getStatus()).nextOnKnow();
         word.setStatus(next.getCode());
         word.setStatusData(studyDate.atStartOfDay());
     }
@@ -35,7 +35,7 @@ public final class StudyAlgorithm {
             applyKnow(word, studyDate);
             return;
         }
-        word.setStatus(WordStudyStatus.UN_STUDY.getCode());
+        word.setStatus(WordStudyStatusEnum.UN_STUDY.getCode());
         word.setStatusData(LocalDateTime.now());
     }
 }

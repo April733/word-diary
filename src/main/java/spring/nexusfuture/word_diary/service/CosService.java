@@ -55,4 +55,12 @@ public interface CosService {
      * @return 文件大小（字节），文件不存在返回 -1
      */
     long getFileSize(String key);
+
+    /**
+     * 获取 COS 对象的完整公网访问 URL（不签名，纯拼接）。
+     *
+     * @param key COS 对象键
+     * @return 完整 URL（如 https://bucket.cos.region.myqcloud.com/key）
+     */
+    String getFullUrl(String key);
 }

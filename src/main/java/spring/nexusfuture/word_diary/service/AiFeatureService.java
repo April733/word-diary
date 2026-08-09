@@ -8,7 +8,12 @@ import java.util.List;
 public interface AiFeatureService {
 
     /**
-     * 获取用户偏好（preferredKeys / featureOrder）；非法 key 已过滤，缺省=全部启用。
+     * 获取功能目录（key + 标签）；由 AiFeaturePromptEnum 驱动。
+     */
+    List<AiFeaturePreferenceVO.FeatureCatalogItem> getCatalog();
+
+    /**
+     * 获取用户偏好（catalog + preferredKeys / featureOrder）；非法 key 已过滤，缺省=全部启用。
      *
      * @param userId 当前用户 ID
      * @param locale 语言区域（保留参数，前端自带目录文案）

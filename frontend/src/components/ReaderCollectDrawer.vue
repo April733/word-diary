@@ -290,7 +290,7 @@ interface SavedWord {
 
 const props = defineProps<{
   visible: boolean
-  bookId: number
+  bookId?: number
   currentEntries: CollectEntry[]
   linkedNotebooks: { notebookId: number; notebookName: string }[]
   sourceSnippet?: string
@@ -515,29 +515,69 @@ async function saveToNotebook() {
 
   saving.value = true
   try {
-    const res = await collectBookWords(props.bookId, {
-      notebookId: notebookId.value,
-      sourceSnippet: props.sourceSnippet || '',
-      sourceLocation: props.sourceLocation || '',
-      overwriteExisting,
-      items: checkedEntries.value.map(e => ({
-        entryType: e.entryType,
-        wordProto: e.wordProto,
-        partSpeechMean: e.partSpeechMean,
-        usPhonetic: e.usPhonetic,
-        ukPhonetic: e.ukPhonetic,
-        rootAffix: e.rootAffix,
-        overwrite: overwriteExisting
-      }))
+    const baseData = (e: CollectEntry) => ({
+      wordProto: e.wordProto,
+      usPhonetic: e.usPhonetic?.trim() || '',
+      ukPhonetic: e.ukPhonetic?.trim() || '',
+      partSpeechMean: e.partSpeechMean?.trim() || '',
+      sentenceExample: e.sentenceExample?.trim() || '',
+      rootAffix: e.rootAffix?.trim() || '',
     })
-    const data = res.data.data
-    MessagePlugin.success(
-      t('reader.collectSaveResult', {
-        added: data.added,
-        skipped: data.skipped,
-        updated: data.updated
+    if (props.bookId != null) {
+      const res = await collectBookWords(props.bookId, {
+        notebookId: notebookId.value,
+        sourceSnippet: props.sourceSnippet || '',
+        sourceLocation: props.sourceLocation || '',
+        overwriteExisting,
+        items: checkedEntries.value.map(e => ({
+          entryType: e.entryType,
+          wordProto: e.wordProto,
+          partSpeechMean: e.partSpeechMean,
+          usPhonetic: e.usPhonetic,
+          ukPhonetic: e.ukPhonetic,
+          rootAffix: e.rootAffix,
+          overwrite: overwriteExisting
+        }))
       })
-    )
+      const data = res.data.data
+      MessagePlugin.success(
+        t('reader.collectSaveResult', {
+          added: data.added,
+          skipped: data.skipped,
+          updated: data.updated
+        })
+      )
+    } else {
+      let added = 0
+      let skipped = 0
+      let updated = 0
+      const existingByKey = new Map(
+        savedWords.value.map(w => [String(w.wordProto || '').trim().toLowerCase(), w])
+      )
+      for (const entry of checkedEntries.value) {
+        const key = entry.wordProto.trim().toLowerCase()
+        const existing = existingByKey.get(key)
+        const payload = baseData(entry)
+        if (existing) {
+          if (!overwriteExisting) {
+            skipped++
+            continue
+          }
+          await updateWord(notebookId.value, existing.id, payload)
+          updated++
+          continue
+        }
+        await addWord(notebookId.value, payload)
+        added++
+      }
+      MessagePlugin.success(
+        t('reader.collectSaveResult', {
+          added,
+          skipped,
+          updated
+        })
+      )
+    }
     checkedKeys.value = new Set()
     emit('saved')
     visibleModel.value = false

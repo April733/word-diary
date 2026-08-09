@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import spring.nexusfuture.word_diary.common.BizException;
 import spring.nexusfuture.word_diary.common.WordPosParser;
-import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.common.WordStudyStatusEnum;
 import spring.nexusfuture.word_diary.dto.request.BookCollectReq;
 import spring.nexusfuture.word_diary.dto.response.BookCollectResultVO;
 import spring.nexusfuture.word_diary.dto.response.CollectEntryDTO;
@@ -108,7 +108,7 @@ public class BookCollectServiceImpl implements BookCollectService {
                     .sourceSnippet(emptyToNull(sentence))
                     .sourceLocation(emptyToNull(req.getSourceLocation()))
                     .isPublic(0)
-                    .status(WordStudyStatus.UN_STUDY.getCode())
+                    .status(WordStudyStatusEnum.UN_STUDY.getCode())
                     .statusData(java.time.LocalDateTime.now())
                     .build();
             wordMapper.insert(word);

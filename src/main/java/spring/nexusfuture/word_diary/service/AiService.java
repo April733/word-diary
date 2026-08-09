@@ -85,4 +85,23 @@ public interface AiService {
     String chatOnce(Long userId, String callScene, String inputText,
                     String systemPrompt, String userPrompt,
                     List<org.springframework.ai.content.Media> media);
+
+    /**
+     * 同步单轮调用，可附带多轮历史与图片等媒体。
+     * history / media 为空时等价于无记忆单轮调用。
+     * 口语练习的 AI 开场与回复统一走此方法：基于 sessionId 查得的会话历史
+     * 由此传入，确保 AI 主动开场与被动回复使用同一上下文逻辑。
+     *
+     * @param userId 当前用户 ID
+     * @param callScene 场景标识
+     * @param inputText 用户原始输入
+     * @param systemPrompt 系统 Prompt
+     * @param userPrompt 用户 Prompt
+     * @param history 历史消息列表，可为空
+     * @param media 媒体列表，可为空
+     * @return 助手完整回复文本
+     */
+    String chatOnce(Long userId, String callScene, String inputText,
+                    String systemPrompt, String userPrompt,
+                    List<Message> history, List<org.springframework.ai.content.Media> media);
 }

@@ -463,6 +463,9 @@
     <WordbookDrawer
       v-model:visible="wordbookDrawerVisible"
       :notebook-id="wordbookDrawerNotebookId"
+      :book-id="bookId"
+      :book-title="book?.title"
+      @update:notebook-id="onWordbookDrawerNotebookChange"
     />
     <ReaderNotebookLinkDialog
       v-model:visible="showNotebookLinkDialog"
@@ -486,7 +489,7 @@ import {
   getBookDetail, getBookFileUrl,
   getChapterAnnotations, getAnnotations,
   getReaderSettings, saveReaderSettings,
-  getAiFeaturePreferences, saveAiFeaturePreferences,
+  getAiFeatureCatalog, getAiFeaturePreferences, saveAiFeaturePreferences,
   getAiSessions, getAiMessagesPaged,
   getBookNotebookLinks
 } from '../api'
@@ -509,6 +512,10 @@ import { normalizeSelectedText, pickSentenceForLemma, tokenizeContextSegments } 
 import {
   AI_FEATURE_CATALOG,
   AI_FEATURE_KEYS,
+  getAiFeatureCatalog,
+  setAiFeatureCatalog,
+  getAiFeatureKeys,
+  buildCatalogFromResponse,
   normalizeAiFeatureKeys,
   type AiFeatureDef
 } from '../utils/aiFeatures'
@@ -868,6 +875,13 @@ function onHeaderNotebookClick() {
 
 function onDrawerSelectNotebook(notebookId: number) {
   activeNotebookId.value = notebookId
+}
+
+function onWordbookDrawerNotebookChange(notebookId?: number) {
+  wordbookDrawerNotebookId.value = notebookId
+  if (notebookId != null) {
+    activeNotebookId.value = notebookId
+  }
 }
 
 /** 手动打开操作引导（不受「下次不再提醒」限制） */
@@ -1285,6 +1299,17 @@ let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
 async function loadAiFeatures() {
   aiFeaturesLoading.value = true
   try {
+    // 1. 先加载功能目录（从 AiFeaturePromptEnum）
+    try {
+      const catalogRes = await getAiFeatureCatalog()
+      const catalogData = catalogRes.data?.data || catalogRes.data || []
+      const catalog = buildCatalogFromResponse(catalogData)
+      setAiFeatureCatalog(catalog)
+    } catch (e) {
+      console.warn('[Reader] 加载AI功能目录失败，使用默认:', e)
+    }
+
+    // 2. 再加载用户偏好
     const prefRes = await getAiFeaturePreferences(locale.value)
     const data = prefRes.data.data || {}
     const normalized = normalizeAiFeatureKeys(data.preferredKeys, data.featureOrder)
@@ -1293,9 +1318,10 @@ async function loadAiFeatures() {
     selectedFeatureKeysForQuery.value = [...normalized.preferredKeys]
   } catch (e) {
     console.warn('[Reader] 加载AI功能偏好失败，使用默认全部启用:', e)
-    preferredFeatureKeys.value = [...AI_FEATURE_KEYS]
-    featureOrder.value = [...AI_FEATURE_KEYS]
-    selectedFeatureKeysForQuery.value = [...AI_FEATURE_KEYS]
+    const defaultKeys = getAiFeatureKeys()
+    preferredFeatureKeys.value = [...defaultKeys]
+    featureOrder.value = [...defaultKeys]
+    selectedFeatureKeysForQuery.value = [...defaultKeys]
   } finally {
     aiFeaturesLoading.value = false
   }

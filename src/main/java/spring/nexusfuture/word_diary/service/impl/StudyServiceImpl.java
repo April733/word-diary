@@ -1,7 +1,7 @@
 package spring.nexusfuture.word_diary.service.impl;
 
 import org.springframework.stereotype.Service;
-import spring.nexusfuture.word_diary.common.WordStudyStatus;
+import spring.nexusfuture.word_diary.common.WordStudyStatusEnum;
 import spring.nexusfuture.word_diary.dto.response.StatsVO;
 import spring.nexusfuture.word_diary.dto.response.StudyTaskVO;
 import spring.nexusfuture.word_diary.entity.*;
@@ -63,7 +63,7 @@ public class StudyServiceImpl implements StudyService {
         boolean reviewPhaseDone = reviewPending == 0;
 
         long pending = inPlan.stream().filter(w -> codeOf(w) == 0).count();
-        int masteredCode = WordStudyStatus.MASTERED.getCode();
+        int masteredCode = WordStudyStatusEnum.MASTERED.getCode();
         long learning = inPlan.stream().filter(w -> {
             int s = codeOf(w);
             return s != 0 && s != masteredCode;
@@ -102,7 +102,7 @@ public class StudyServiceImpl implements StudyService {
     }
 
     private static boolean matchPlanFilter(int status, String key) {
-        int mastered = WordStudyStatus.MASTERED.getCode();
+        int mastered = WordStudyStatusEnum.MASTERED.getCode();
         return switch (key) {
             case "pending" -> status == 0;
             case "learning" -> status != 0 && status != mastered;
@@ -113,7 +113,7 @@ public class StudyServiceImpl implements StudyService {
 
     private static int statusSortKey(int status) {
         if (status == 0) return 0;
-        if (status == WordStudyStatus.MASTERED.getCode()) return 2;
+        if (status == WordStudyStatusEnum.MASTERED.getCode()) return 2;
         return 1;
     }
 

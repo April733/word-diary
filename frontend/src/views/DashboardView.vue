@@ -34,7 +34,7 @@
           type="button"
           class="tab-btn"
           :class="{ active: activeTab === 'listen' }"
-          @click="listenEnabled ? activeTab = 'listen' : showListenHint()"
+          @click="activeTab = 'listen'"
         >
           {{ $t('dashboard.tabListen') }}
         </button>
@@ -60,14 +60,7 @@
 
       <!-- 听说训练：白名单用户展示内容，非白名单显示建设中 -->
       <section v-else class="block">
-        <template v-if="!listenEnabled">
-          <div class="under-construction">
-            <t-icon name="construction" size="48px" class="uc-icon" />
-            <h1 class="book-name">{{ $t('dashboard.listenUnderConstruction') }}</h1>
-            <p class="muted">{{ $t('dashboard.listenUnderConstructionHint') }}</p>
-          </div>
-        </template>
-        <template v-else-if="latestShadowing">
+        <template v-if="latestShadowing">
           <h1 class="book-name">{{ latestShadowing.title }}</h1>
           <p class="muted">{{ $t('dashboard.continueShadowing') }}</p>
           <t-button theme="primary" size="large" block class="btn" @click="openShadowing(latestShadowing.id)">
@@ -108,10 +101,17 @@
           </button>
         </template>
         <!-- 听说训练菜单 -->
-        <template v-else-if="listenEnabled">
+        <template v-else>
           <button type="button" @click="router.push({ path: '/study', query: { sourceType: '听力', tab: 'listen' } })">
             <t-icon name="calendar" size="18px" class="nav-icon" />
             <span>{{ $t('study.sessionTitle') }}</span>
+          </button>
+          <button
+            type="button"
+            @click="router.push({ path: '/oral', query: { sourceType: '听力', tab: 'listen' } })"
+          >
+            <t-icon name="chat" size="18px" class="nav-icon" />
+            <span>{{ $t('nav.oral') }}</span>
           </button>
           <button type="button" @click="router.push({ path: '/shadowing', query: { tab: 'listen' } })">
             <t-icon name="sound" size="18px" class="nav-icon" />
@@ -128,7 +128,6 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { MessagePlugin } from 'tdesign-vue-next'
 import { useUserStore } from '../stores/user'
 import { getBooks, listShadowingClips } from '../api'
 import LocaleSwitcher from '../components/LocaleSwitcher.vue'
@@ -140,14 +139,8 @@ const route = useRoute()
 const { t } = useI18n()
 const userStore = useUserStore()
 
-// 听说功能白名单（用户名），非白名单用户显示"正在建设中"
-const LISTEN_SPEAK_WHITELIST = ['April']
-
-const listenEnabled = computed(() => {
-  const u = userStore.user
-  if (!u) return false
-  return LISTEN_SPEAK_WHITELIST.includes(u.username) || LISTEN_SPEAK_WHITELIST.includes(u.nickname)
-})
+// 听说功能已全量开放
+const listenEnabled = computed(() => true)
 
 const loading = ref(true)
 const books = ref<any[]>([])
@@ -207,10 +200,6 @@ function openBook() {
 
 function openShadowing(id: number) {
   router.push(`/shadowing/player/${id}`)
-}
-
-function showListenHint() {
-  MessagePlugin.info(`${t('dashboard.listenUnderConstruction')}，${t('dashboard.listenUnderConstructionHint')}`)
 }
 
 onMounted(async () => {

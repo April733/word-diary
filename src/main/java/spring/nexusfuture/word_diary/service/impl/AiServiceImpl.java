@@ -294,12 +294,20 @@ public class AiServiceImpl implements AiService {
     @Override
     public String chatOnce(Long userId, String callScene, String inputText,
                            String systemPrompt, String userPrompt) {
-        return chatOnce(userId, callScene, inputText, systemPrompt, userPrompt, null);
+        return chatOnce(userId, callScene, inputText, systemPrompt, userPrompt, null, null);
     }
 
     @Override
     public String chatOnce(Long userId, String callScene, String inputText,
                            String systemPrompt, String userPrompt,
+                           List<org.springframework.ai.content.Media> media) {
+        return chatOnce(userId, callScene, inputText, systemPrompt, userPrompt, null, media);
+    }
+
+    @Override
+    public String chatOnce(Long userId, String callScene, String inputText,
+                           String systemPrompt, String userPrompt,
+                           List<Message> history,
                            List<org.springframework.ai.content.Media> media) {
         long startTime = System.currentTimeMillis();
         String traceId = TraceIdSupport.getOrCreate();
@@ -308,11 +316,13 @@ public class AiServiceImpl implements AiService {
         String usedModelKey = null;
         String usedProvider = null;
         boolean wantMedia = media != null && !media.isEmpty();
+        List<Message> historyMessages = history == null ? Collections.emptyList() : history;
         try {
-            log.info("[ai-latency][{}] chatOnce start userId={}, scene={}, inputWords={}, media={}, sysChars={}, userChars={}",
+            log.info("[ai-latency][{}] chatOnce start userId={}, scene={}, inputWords={}, media={}, sysChars={}, userChars={}, historyMsgs={}",
                     traceId, userId, scene, TextMetrics.wordCount(rawInput), wantMedia ? media.size() : 0,
                     systemPrompt != null ? systemPrompt.length() : 0,
-                    userPrompt != null ? userPrompt.length() : 0);
+                    userPrompt != null ? userPrompt.length() : 0,
+                    historyMessages.size());
             long tResolveStart = System.currentTimeMillis();
             SceneCall call = resolveCall(userId, scene);
             usedModelKey = call.modelKey();
@@ -329,13 +339,13 @@ public class AiServiceImpl implements AiService {
                 effectiveUser = effectiveUser + VISION_FALLBACK_NOTE;
             }
             try {
-                return invokeOnce(call, systemPrompt, effectiveUser, useMedia ? media : null,
-                        userId, scene, rawInput, startTime, traceId);
+                return invokeOnce(call, systemPrompt, effectiveUser, historyMessages,
+                        useMedia ? media : null, userId, scene, rawInput, startTime, traceId);
             } catch (Exception first) {
                 if (useMedia && isLikelyVisionUnsupported(first)) {
                     log.warn("[ai-once] 识图调用失败，降级纯文本 scene={} err={}", scene, first.getMessage());
                     return invokeOnce(call, systemPrompt, (userPrompt != null ? userPrompt : "") + VISION_FALLBACK_NOTE,
-                            null, userId, scene, rawInput, startTime, traceId);
+                            historyMessages, null, userId, scene, rawInput, startTime, traceId);
                 }
                 throw first;
             }
@@ -362,6 +372,7 @@ public class AiServiceImpl implements AiService {
             """;
 
     private String invokeOnce(SceneCall call, String systemPrompt, String userPrompt,
+                              List<Message> history,
                               List<org.springframework.ai.content.Media> media,
                               Long userId, String scene, String rawInput, long startTime, String traceId) {
         AiSceneChatOptionsSupport.bindExtraBody(call.params());
@@ -369,6 +380,9 @@ public class AiServiceImpl implements AiService {
             var promptSpec = call.client().prompt()
                     .options(call.options())
                     .system(systemPrompt != null ? systemPrompt : "");
+            if (history != null && !history.isEmpty()) {
+                promptSpec = promptSpec.messages(history);
+            }
             ChatResponse chatResponse;
             long tProviderStart = System.currentTimeMillis();
             if (media != null && !media.isEmpty()) {
