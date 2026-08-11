@@ -443,12 +443,14 @@
       "sentence_pattern": { "name": "Cấu trúc câu", "desc": "Phân tích khung câu chính" },
       "modifier_attachment": { "name": "Bổ ngữ", "desc": "Cụm từ/mệnh đề gắn vào khung câu thế nào" },
       "collocation": { "name": "Cụm từ cố định", "desc": "Giải thích cụm từ và cách dùng" },
-      "grammar": { "name": "Ngữ pháp", "desc": "Quy tắc chọn từ và dựng câu" }
+      "grammar": { "name": "Ngữ pháp", "desc": "Quy tắc chọn từ và dựng câu" },
+      "pronunciation": { "name": "Phát âm", "desc": "Kỹ thuật nối âm, âm yếu, trọng âm và ngữ điệu để luyện tập shadowing" },
+      "usage": { "name": "Cách dùng", "desc": "Cách diễn đạt tự nhiên, ngữ cảnh sử dụng và phân biệt cách dùng trong tiếng Anh nói" }
     },
     "aiFeatures": "Tính năng AI",
     "aiSend": "Hỏi AI",
     "aiAnalyze": "Phân tích",
-    "selectionTooLong": "Văn bản đã chọn quá dài ({actual} ký tự), đã tự động cắt xuống còn {max} ký tự. Nên chọn nhiều phần nhỏ.",
+    "selectionTooLong": "Văn bản đã chọn quá dài, đã cắt lấy {max} ký tự đầu tiên",
     "aiEmptyTitle": "Trợ lý AI đã sẵn sàng",
     "aiEmptyDesc": "Chọn văn bản từ sách để sử dụng các tính năng AI như định nghĩa từ và phân tích ngữ pháp",
     "guideSkip": "Bỏ qua",

@@ -3,6 +3,7 @@ package spring.nexusfuture.word_diary.config;
 import org.springframework.stereotype.Component;
 import spring.nexusfuture.word_diary.common.AiFeatureI18nSupport;
 import spring.nexusfuture.word_diary.common.AiFeaturePromptEnum;
+import spring.nexusfuture.word_diary.common.AiFeaturePromptOralEnum;
 import spring.nexusfuture.word_diary.common.SysConfigKeys;
 import spring.nexusfuture.word_diary.common.TranslationDirections;
 import spring.nexusfuture.word_diary.entity.SysAiScenePrompt;
@@ -359,12 +360,12 @@ public class AiPromptBuilder {
 
     /**
      * 跟读多选功能解析 system prompt。
-     * 场景壳 = sys_ai_scene_prompt(shadowing_analyze)；{feature_prompts} = 枚举按勾选 key 拼接的功能契约。
-     * 与阅读 feature 场景结构一致，但上下文为音频台词片段。
+     * 场景壳 = sys_ai_scene_prompt(shadowing_analyze)；{feature_prompts} = AiFeaturePromptOralEnum 按勾选 key 拼接的功能契约。
+     * 与阅读 feature 场景结构一致，但上下文为音频台词片段，功能枚举独立（含发音/用法等）。
      */
     public String buildShadowingAnalyzePrompt(String locale, List<String> featureKeys,
                                               String context, List<String> targetWords) {
-        String featureBlock = assembleSelectedFeatureKeysBlock(featureKeys);
+        String featureBlock = AiFeaturePromptOralEnum.assemble(featureKeys);
         String fromDb = loadScenePrompt(SysConfigKeys.AI_SCENE_SHADOWING_ANALYZE, locale);
         if (fromDb == null) {
             throw new IllegalStateException(

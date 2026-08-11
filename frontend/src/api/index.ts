@@ -163,6 +163,15 @@ export const getAiFeaturePreferences = (locale?: string) =>
 export const saveAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
   api.put('/books/ai-features/preferences', data)
 
+// ========== 跟读 AI 功能偏好（使用 AiFeaturePromptOralEnum） ==========
+/** 获取跟读 AI 功能目录（key + 标签名，来自 AiFeaturePromptOralEnum） */
+export const getOralAiFeatureCatalog = () =>
+  api.get('/shadowing/ai-features/catalog')
+export const getOralAiFeaturePreferences = (locale?: string) =>
+  api.get('/shadowing/ai-features/preferences', { params: { locale: locale || 'zh-CN' } })
+export const saveOralAiFeaturePreferences = (data: { featureKeys: string[]; featureOrder?: string[] }) =>
+  api.put('/shadowing/ai-features/preferences', data)
+
 export const uploadBook = async (
   file: File,
   onProgress?: (percent: number) => void

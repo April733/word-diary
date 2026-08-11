@@ -445,12 +445,20 @@
       "grammar": {
         "name": "语法",
         "desc": "解释选词与造句的规则体系"
+      },
+      "pronunciation": {
+        "name": "发音",
+        "desc": "连读、弱读、重音等发音技巧，辅助跟读练习"
+      },
+      "usage": {
+        "name": "用法",
+        "desc": "口语中的地道表达、语用场景与用法区分"
       }
     },
     "aiFeatures": "AI 功能",
     "aiSend": "Aiko 问答",
     "aiAnalyze": "解析",
-    "selectionTooLong": "选中内容过长（当前 {actual} 字符），已自动截断至 {max} 字符，建议分多次选择。",
+    "selectionTooLong": "选中内容过长，已截取前 {max} 字",
     "aiEmptyTitle": "AI 助手已就绪",
     "aiEmptyDesc": "选中书中的文字，即可调用 AI 功能进行单词释义、语法分析等",
     "guideSkip": "跳过",
@@ -1002,6 +1010,8 @@
     "noMicPermission": "未获得麦克风权限",
     "loadFailed": "加载失败",
     "micDenied": "麦克风被拒绝，请在浏览器设置中允许使用麦克风",
+    "transcriptEmpty": "暂无转写结果",
+    "transcribing": "转写中…",
     "you": "我",
     "ai": "AI"
   },

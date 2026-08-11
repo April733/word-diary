@@ -443,12 +443,14 @@
       "sentence_pattern": { "name": "Pola kalimat", "desc": "Analisis kerangka kalimat" },
       "modifier_attachment": { "name": "Modifikasi", "desc": "Bagaimana frasa/klausa menempel ke kerangka" },
       "collocation": { "name": "Kolokasi", "desc": "Frasa tetap dan penggunaannya" },
-      "grammar": { "name": "Tata bahasa", "desc": "Aturan pemilihan kata dan penyusunan kalimat" }
+      "grammar": { "name": "Tata bahasa", "desc": "Aturan pemilihan kata dan penyusunan kalimat" },
+      "pronunciation": { "name": "Pelafalan", "desc": "Tips linking, weak form, penekanan, dan intonasi untuk latihan shadowing" },
+      "usage": { "name": "Penggunaan", "desc": "Ekspresi alami, konteks pragmatik, dan perbedaan penggunaan dalam bahasa Inggris lisan" }
     },
     "aiFeatures": "Fitur AI",
     "aiSend": "Tanya AI",
     "aiAnalyze": "Analisis",
-    "selectionTooLong": "Teks yang dipilih terlalu panjang ({actual} karakter), dipotong menjadi {max} karakter. Pertimbangkan untuk memilih beberapa bagian.",
+    "selectionTooLong": "Teks yang dipilih terlalu panjang, dipotong menjadi {max} karakter pertama",
     "aiEmptyTitle": "Asisten AI Siap",
     "aiEmptyDesc": "Pilih teks dari buku untuk menggunakan fitur AI seperti definisi kata dan analisis tata bahasa",
     "guideSkip": "Lewati",

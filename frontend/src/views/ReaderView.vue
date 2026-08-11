@@ -489,7 +489,7 @@ import {
   getBookDetail, getBookFileUrl,
   getChapterAnnotations, getAnnotations,
   getReaderSettings, saveReaderSettings,
-  getAiFeatureCatalog, getAiFeaturePreferences, saveAiFeaturePreferences,
+  getAiFeatureCatalog as fetchAiFeatureCatalog, getAiFeaturePreferences, saveAiFeaturePreferences,
   getAiSessions, getAiMessagesPaged,
   getBookNotebookLinks
 } from '../api'
@@ -539,6 +539,19 @@ import {
 } from '../utils/studyDurationTracker'
 
 const PdfReader = defineAsyncComponent(() => import('../components/PdfReader.vue'))
+
+/**
+ * Toast 去重：500ms 内同 key 的提示只弹一次，避免拖蓝/EPUB 多 frame/selectionchange
+ * 把同一条消息连续弹多份。
+ */
+const lastNotifyAt = new Map<string, number>()
+function notifyOnce(key: string, fn: () => void, intervalMs = 500) {
+  const now = Date.now()
+  const last = lastNotifyAt.get(key) || 0
+  if (now - last < intervalMs) return
+  lastNotifyAt.set(key, now)
+  fn()
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -1301,7 +1314,7 @@ async function loadAiFeatures() {
   try {
     // 1. 先加载功能目录（从 AiFeaturePromptEnum）
     try {
-      const catalogRes = await getAiFeatureCatalog()
+      const catalogRes = await fetchAiFeatureCatalog()
       const catalogData = catalogRes.data?.data || catalogRes.data || []
       const catalog = buildCatalogFromResponse(catalogData)
       setAiFeatureCatalog(catalog)
@@ -2124,7 +2137,9 @@ function mountRendition(initialCfi?: string) {
     // 限制选中长度，避免过长文本导致 AI 处理效果下降
     if (text.length > MAX_SELECTION_LENGTH) {
       selectedText = text.substring(0, MAX_SELECTION_LENGTH)
-      MessagePlugin.warning(t('reader.selectionTooLong', { max: MAX_SELECTION_LENGTH, actual: text.length }))
+      notifyOnce('selectionTooLong', () =>
+        MessagePlugin.warning(t('reader.selectionTooLong', { max: MAX_SELECTION_LENGTH }))
+      )
     } else {
       selectedText = text
     }

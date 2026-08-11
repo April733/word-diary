@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import spring.nexusfuture.word_diary.common.AiFeatureKeys;
 import spring.nexusfuture.word_diary.common.AiFeaturePromptEnum;
+import spring.nexusfuture.word_diary.common.AiFeaturePromptOralEnum;
 import spring.nexusfuture.word_diary.dto.response.AiFeaturePreferenceVO;
 import spring.nexusfuture.word_diary.entity.WdUserAiPreference;
 import spring.nexusfuture.word_diary.mapper.WdUserAiPreferenceMapper;
@@ -34,7 +35,26 @@ public class AiFeatureServiceImpl implements AiFeatureService {
     }
 
     @Override
+    public List<AiFeaturePreferenceVO.FeatureCatalogItem> getOralCatalog() {
+        return Arrays.stream(AiFeaturePromptOralEnum.values())
+                .map(e -> AiFeaturePreferenceVO.FeatureCatalogItem.builder()
+                        .key(e.getKey())
+                        .label(e.getLabel())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public AiFeaturePreferenceVO getPreferences(Long userId, String locale) {
+        return getPreferencesInternal(userId, locale, false);
+    }
+
+    @Override
+    public AiFeaturePreferenceVO getOralPreferences(Long userId, String locale) {
+        return getPreferencesInternal(userId, locale, true);
+    }
+
+    private AiFeaturePreferenceVO getPreferencesInternal(Long userId, String locale, boolean oral) {
         List<String> preferredKeys = List.of();
         List<String> featureOrder = List.of();
 
@@ -54,9 +74,9 @@ public class AiFeatureServiceImpl implements AiFeatureService {
             }
         }
 
-        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(preferredKeys, featureOrder);
+        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(preferredKeys, featureOrder, oral);
         return AiFeaturePreferenceVO.builder()
-                .catalog(getCatalog())
+                .catalog(oral ? getOralCatalog() : getCatalog())
                 .preferredKeys(normalized.preferredKeys())
                 .featureOrder(normalized.featureOrder())
                 .build();
@@ -64,7 +84,16 @@ public class AiFeatureServiceImpl implements AiFeatureService {
 
     @Override
     public void savePreferences(Long userId, List<String> featureKeys, List<String> featureOrder) {
-        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(featureKeys, featureOrder);
+        savePreferencesInternal(userId, featureKeys, featureOrder, false);
+    }
+
+    @Override
+    public void saveOralPreferences(Long userId, List<String> featureKeys, List<String> featureOrder) {
+        savePreferencesInternal(userId, featureKeys, featureOrder, true);
+    }
+
+    private void savePreferencesInternal(Long userId, List<String> featureKeys, List<String> featureOrder, boolean oral) {
+        AiFeatureKeys.Normalized normalized = AiFeatureKeys.normalize(featureKeys, featureOrder, oral);
         try {
             String keysJson = objectMapper.writeValueAsString(normalized.preferredKeys());
             String orderJson = objectMapper.writeValueAsString(normalized.featureOrder());

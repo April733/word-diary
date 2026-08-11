@@ -459,12 +459,20 @@
       "grammar": {
         "name": "Grammar",
         "desc": "Explain rules of word choice and sentence building"
+      },
+      "pronunciation": {
+        "name": "Pronunciation",
+        "desc": "Linking, weak forms, stress, and intonation tips for shadowing practice"
+      },
+      "usage": {
+        "name": "Usage",
+        "desc": "Natural expressions, pragmatic contexts, and usage distinctions in spoken English"
       }
     },
     "aiFeatures": "AI Features",
     "aiSend": "Aiko Ask",
     "aiAnalyze": "Analyze",
-    "selectionTooLong": "Selection is too long ({actual} characters) and has been truncated to {max} characters. Consider selecting in multiple parts.",
+    "selectionTooLong": "Selection is too long, truncated to the first {max} characters",
     "aiEmptyTitle": "AI Assistant Ready",
     "aiEmptyDesc": "Select text from the book to use AI features like word definitions and grammar analysis",
     "guideSkip": "Skip",
